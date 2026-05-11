@@ -45,6 +45,7 @@ api/.data/
 # uv
 .uv-cache/
 uv.lock
+!api/uv.lock
 
 # Local build helpers
 .build/

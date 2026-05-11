@@ -1,6 +1,6 @@
-# Automata Agent UI Demo
+# Automata Agent UI
 
-Minimal desktop demo for the local coding agent shell. It uses Tauri 2, React,
+Minimal desktop shell for the local coding agent. It uses Tauri 2, React,
 TypeScript, Vite, and a small Rust command to prove the desktop bridge is wired.
 
 ## Desktop App
@@ -26,6 +26,6 @@ To compile without launching:
 .\run.ps1 -Mode build
 ```
 
-The React UI is compiled into the Tauri desktop executable. The fake FastAPI
+The React UI is compiled into the Tauri desktop executable. The FastAPI
 streaming backend is bundled as a Tauri sidecar and started by the desktop
 process.

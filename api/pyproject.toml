@@ -1,0 +1,29 @@
+[project]
+name = "automata-api"
+version = "0.1.0"
+description = "FastAPI backend for the Automata desktop agent"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi==0.136.1",
+  "httpx==0.28.1",
+  "uvicorn==0.46.0",
+  "websockets==16.0",
+]
+
+[project.optional-dependencies]
+build = [
+  "pyinstaller>=6.11",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.uv]
+package = false

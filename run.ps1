@@ -22,6 +22,34 @@ function Write-Step {
   Write-Host "==> $Message" -ForegroundColor Cyan
 }
 
+function Import-DotEnv {
+  param([string]$Path)
+
+  if (-not (Test-Path $Path)) {
+    return
+  }
+
+  Write-Step "Loading environment from $Path"
+  foreach ($Line in Get-Content -LiteralPath $Path) {
+    $Trimmed = $Line.Trim()
+    if (-not $Trimmed -or $Trimmed.StartsWith("#") -or -not $Trimmed.Contains("=")) {
+      continue
+    }
+
+    $Parts = $Trimmed.Split("=", 2)
+    $Name = $Parts[0].Trim()
+    $Value = $Parts[1].Trim().Trim('"').Trim("'")
+    if ($Name) {
+      [Environment]::SetEnvironmentVariable($Name, $Value, "Process")
+    }
+  }
+}
+
+function Import-LocalEnvironment {
+  Import-DotEnv (Join-Path $RootDir ".env")
+  Import-DotEnv (Join-Path $ApiDir ".env")
+}
+
 function Require-Command {
   param(
     [string]$Name,
@@ -68,10 +96,18 @@ function Build-ApiSidecar {
   $BinariesDir = Join-Path $SrcTauriDir "binaries"
   $SidecarPath = Join-Path $BinariesDir "$SidecarName-$TargetTriple.exe"
   $ApiEntry = Join-Path $ApiDir "main.py"
+  $ApiProject = Join-Path $ApiDir "pyproject.toml"
+  $ApiLock = Join-Path $ApiDir "uv.lock"
 
   $ShouldBuild = $ForceSidecarBuild -or -not (Test-Path $SidecarPath)
   if (-not $ShouldBuild) {
     $ShouldBuild = (Get-Item $ApiEntry).LastWriteTimeUtc -gt (Get-Item $SidecarPath).LastWriteTimeUtc
+  }
+  if (-not $ShouldBuild) {
+    $ShouldBuild = (Get-Item $ApiProject).LastWriteTimeUtc -gt (Get-Item $SidecarPath).LastWriteTimeUtc
+  }
+  if (-not $ShouldBuild -and (Test-Path $ApiLock)) {
+    $ShouldBuild = (Get-Item $ApiLock).LastWriteTimeUtc -gt (Get-Item $SidecarPath).LastWriteTimeUtc
   }
 
   if (-not $ShouldBuild) {
@@ -94,10 +130,9 @@ function Build-ApiSidecar {
 
   $Arguments = @(
     "run",
-    "--with", "fastapi==0.136.1",
-    "--with", "uvicorn==0.46.0",
-    "--with", "websockets==16.0",
-    "--with", "pyinstaller",
+    "--directory", $ApiDir,
+    "--extra", "build",
+    "--locked",
     "pyinstaller",
     "--noconfirm",
     "--clean",
@@ -106,6 +141,7 @@ function Build-ApiSidecar {
     "--distpath", $DistDir,
     "--workpath", $WorkDir,
     "--specpath", $SpecDir,
+    "--collect-data", "certifi",
     "--hidden-import", "uvicorn.lifespan.on",
     "--hidden-import", "uvicorn.protocols.http.h11_impl",
     "--hidden-import", "uvicorn.protocols.websockets.websockets_impl",
@@ -167,6 +203,7 @@ Require-Command "cargo" "Install Rust/Cargo for Tauri desktop builds."
 Require-Command "rustc" "Install Rust/Cargo for Tauri desktop builds."
 Require-Command "uv" "Install uv, or add it to PATH: https://docs.astral.sh/uv/"
 
+Import-LocalEnvironment
 Ensure-FrontendDependencies
 Build-ApiSidecar | Out-Null
 

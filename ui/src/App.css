@@ -318,10 +318,14 @@ h2 {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  max-width: min(48vw, 340px);
   padding: 4px 7px;
+  overflow: hidden;
   color: #286d62;
   font-size: 0.74rem;
   font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   background: #d8f3dc;
   border-radius: 999px;
 }

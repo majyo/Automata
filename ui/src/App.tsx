@@ -56,9 +56,9 @@ type SocketPayload = {
 };
 
 const fileChanges = [
-  { path: "api/main.py", state: "+sqlite" },
-  { path: "ui/src/App.tsx", state: "+sessions" },
-  { path: "ui/src-tauri/src/lib.rs", state: "+data-dir" },
+  { path: "api/automata_api/routers", state: "+routes" },
+  { path: "api/automata_api/services", state: "+agent" },
+  { path: "api/automata_api/repositories", state: "+sqlite" },
 ];
 
 function App() {
@@ -112,7 +112,7 @@ function App() {
       const payload = JSON.parse(event.data) as SocketPayload;
 
       if (payload.type === "ready") {
-        setSocketStatus("Ready");
+        setSocketStatus(typeof payload.message === "string" ? payload.message : "Ready");
         return;
       }
 
@@ -494,7 +494,7 @@ function App() {
                       : "Loading session"}
                 </h2>
               </div>
-              <span className="status-pill">
+              <span className="status-pill" title={socketStatus}>
                 <Activity size={14} />
                 {socketStatus}
               </span>
