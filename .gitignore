@@ -40,10 +40,14 @@ env/
 .ruff_cache/
 .coverage
 htmlcov/
+api/.data/
 
 # uv
 .uv-cache/
 uv.lock
+
+# Local build helpers
+.build/
 
 # Node and Vite
 node_modules/
@@ -54,6 +58,7 @@ coverage/
 # Tauri and Rust
 target/
 ui/src-tauri/gen/schemas/
+ui/src-tauri/binaries/automata-api-*.exe
 
 # Build artifacts
 *.tsbuildinfo

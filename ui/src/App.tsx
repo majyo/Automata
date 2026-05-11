@@ -2,68 +2,106 @@ import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import {
   Activity,
+  Check,
   CheckCircle2,
   Code2,
   FileCode2,
   FolderGit2,
   GitBranch,
+  Pencil,
   Play,
+  Plus,
   Send,
-  Settings2,
   Sparkles,
   TerminalSquare,
+  Trash2,
+  X,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 
-const sessions = [
-  { name: "Automata UI shell", status: "Active", branch: "main" },
-  { name: "Python sidecar plan", status: "Draft", branch: "agent/api" },
-  { name: "Diff review pass", status: "Idle", branch: "review/demo" },
-];
+const API_BASE = "http://127.0.0.1:8765";
+const WS_URL = "ws://127.0.0.1:8765/ws/chat";
+
+type SessionSummary = {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+};
 
 type ChatMessage = {
   id: string;
+  session_id?: string;
   role: "user" | "agent";
   text: string;
+  sequence?: number;
+  created_at?: string;
 };
 
-const initialTranscript: ChatMessage[] = [
-  {
-    id: "seed-user",
-    role: "user",
-    text: "Create a small Tauri desktop shell for the local coding agent.",
-  },
-  {
-    id: "seed-agent-1",
-    role: "agent",
-    text: "Scaffolded React, wired the desktop bridge, and prepared the workspace for a Python sidecar.",
-  },
-  {
-    id: "seed-agent-2",
-    role: "agent",
-    text: "Next step: connect FastAPI over localhost WebSocket and stream task events into this view.",
-  },
-];
+type ApiMessage = {
+  id: string;
+  session_id: string;
+  role: "user" | "agent";
+  content: string;
+  sequence: number;
+  created_at: string;
+};
+
+type SocketPayload = {
+  type: "ready" | "started" | "token" | "done" | "error";
+  content?: string;
+  message?: ApiMessage | string;
+};
 
 const fileChanges = [
-  { path: "ui/src/App.tsx", state: "+184" },
-  { path: "ui/src/App.css", state: "+312" },
-  { path: "ui/src-tauri/src/lib.rs", state: "+8" },
+  { path: "api/main.py", state: "+sqlite" },
+  { path: "ui/src/App.tsx", state: "+sessions" },
+  { path: "ui/src-tauri/src/lib.rs", state: "+data-dir" },
 ];
 
 function App() {
   const [bridgeStatus, setBridgeStatus] = useState("Desktop bridge not checked");
-  const [messages, setMessages] = useState(initialTranscript);
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [prompt, setPrompt] = useState("Inspect the API folder and suggest the first FastAPI route.");
   const [socketStatus, setSocketStatus] = useState("Connecting");
   const [isStreaming, setIsStreaming] = useState(false);
+  const [isNewSessionDraft, setIsNewSessionDraft] = useState(false);
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
   const socketRef = useRef<WebSocket | null>(null);
+  const activeSessionIdRef = useRef<string | null>(null);
   const streamingMessageIdRef = useRef<string | null>(null);
+  const streamingSessionIdRef = useRef<string | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
 
+  const activeSession = sessions.find((session) => session.id === activeSessionId) ?? null;
+
   useEffect(() => {
-    const socket = new WebSocket("ws://127.0.0.1:8765/ws/chat");
+    activeSessionIdRef.current = activeSessionId;
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    connectSocket();
+    initializeSessions();
+
+    return () => {
+      socketRef.current?.close();
+    };
+  }, []);
+
+  useEffect(() => {
+    messagesRef.current?.scrollTo({
+      top: messagesRef.current.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [messages]);
+
+  function connectSocket() {
+    const socket = new WebSocket(WS_URL);
     socketRef.current = socket;
 
     socket.addEventListener("open", () => {
@@ -71,11 +109,7 @@ function App() {
     });
 
     socket.addEventListener("message", (event) => {
-      const payload = JSON.parse(event.data) as {
-        type: "ready" | "started" | "token" | "done" | "error";
-        content?: string;
-        message?: string;
-      };
+      const payload = JSON.parse(event.data) as SocketPayload;
 
       if (payload.type === "ready") {
         setSocketStatus("Ready");
@@ -104,13 +138,19 @@ function App() {
         setSocketStatus("Ready");
         setIsStreaming(false);
         streamingMessageIdRef.current = null;
+        const sessionId = streamingSessionIdRef.current;
+        streamingSessionIdRef.current = null;
+        if (sessionId) {
+          refreshSessionData(sessionId);
+        }
         return;
       }
 
       if (payload.type === "error") {
-        setSocketStatus(payload.message ?? "Backend error");
+        setSocketStatus(typeof payload.message === "string" ? payload.message : "Backend error");
         setIsStreaming(false);
         streamingMessageIdRef.current = null;
+        streamingSessionIdRef.current = null;
       }
     });
 
@@ -131,18 +171,109 @@ function App() {
 
       setSocketStatus("Backend offline");
     });
+  }
 
-    return () => {
-      socket.close();
-    };
-  }, []);
+  async function initializeSessions() {
+    setSocketStatus("Loading sessions");
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      try {
+        const loadedSessions = await fetchSessions();
+        if (loadedSessions.length > 0) {
+          setSessions(loadedSessions);
+          await selectSession(loadedSessions[0].id);
+          return;
+        }
 
-  useEffect(() => {
-    messagesRef.current?.scrollTo({
-      top: messagesRef.current.scrollHeight,
-      behavior: "smooth",
-    });
-  }, [messages]);
+        setSessions([]);
+        startNewSessionDraft();
+        return;
+      } catch {
+        await sleep(350);
+      }
+    }
+
+    setSocketStatus("Backend offline");
+  }
+
+  async function refreshSessionData(sessionId: string) {
+    const [loadedSessions, loadedMessages] = await Promise.all([
+      fetchSessions(),
+      fetchMessages(sessionId),
+    ]);
+
+    setSessions(loadedSessions);
+    if (activeSessionIdRef.current === sessionId || streamingSessionIdRef.current === sessionId) {
+      setMessages(loadedMessages);
+    }
+  }
+
+  async function selectSession(sessionId: string) {
+    if (isStreaming) {
+      return;
+    }
+
+    const loadedMessages = await fetchMessages(sessionId);
+    activeSessionIdRef.current = sessionId;
+    setActiveSessionId(sessionId);
+    setIsNewSessionDraft(false);
+    setMessages(loadedMessages);
+    setEditingSessionId(null);
+  }
+
+  function startNewSessionDraft() {
+    activeSessionIdRef.current = null;
+    setActiveSessionId(null);
+    setMessages([]);
+    setEditingSessionId(null);
+    setIsNewSessionDraft(true);
+  }
+
+  function handleCreateSession() {
+    if (isStreaming) {
+      return;
+    }
+
+    startNewSessionDraft();
+  }
+
+  function startRename(session: SessionSummary) {
+    setEditingSessionId(session.id);
+    setEditingTitle(session.title);
+  }
+
+  async function commitRename(sessionId: string) {
+    const title = editingTitle.trim();
+    if (!title) {
+      setEditingSessionId(null);
+      return;
+    }
+
+    await updateSession(sessionId, title);
+    setSessions(await fetchSessions());
+    setEditingSessionId(null);
+  }
+
+  async function handleDeleteSession(sessionId: string) {
+    if (isStreaming) {
+      return;
+    }
+
+    await deleteSession(sessionId);
+    const loadedSessions = await fetchSessions();
+    if (loadedSessions.length === 0) {
+      setSessions([]);
+      startNewSessionDraft();
+      return;
+    }
+
+    setSessions(loadedSessions);
+    const nextSessionId = sessionId === activeSessionId ? loadedSessions[0].id : activeSessionId;
+    if (nextSessionId) {
+      await selectSession(nextSessionId);
+    } else {
+      startNewSessionDraft();
+    }
+  }
 
   async function runBridgeCheck() {
     try {
@@ -152,39 +283,58 @@ function App() {
     }
   }
 
-  function sendPrompt(event: FormEvent<HTMLFormElement>) {
+  async function sendPrompt(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     const trimmedPrompt = prompt.trim();
     const socket = socketRef.current;
-    if (!trimmedPrompt || isStreaming) {
+    if (!trimmedPrompt || isStreaming || (!activeSessionId && !isNewSessionDraft)) {
       return;
+    }
+
+    let sessionId = activeSessionId;
+    if (!sessionId) {
+      try {
+        const session = await createSession("New session");
+        sessionId = session.id;
+        setSessions(await fetchSessions());
+        activeSessionIdRef.current = session.id;
+        setActiveSessionId(session.id);
+        setIsNewSessionDraft(false);
+        setEditingSessionId(null);
+      } catch {
+        setSocketStatus("Could not create session");
+        return;
+      }
     }
 
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
+      session_id: sessionId,
       role: "user",
       text: trimmedPrompt,
     };
     const agentMessage: ChatMessage = {
       id: crypto.randomUUID(),
+      session_id: sessionId,
       role: "agent",
       text: "",
     };
 
     setMessages((current) => [...current, userMessage, agentMessage]);
     streamingMessageIdRef.current = agentMessage.id;
+    streamingSessionIdRef.current = sessionId;
     setPrompt("");
 
     if (socket?.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: "prompt", prompt: trimmedPrompt }));
+      socket.send(JSON.stringify({ type: "prompt", session_id: sessionId, prompt: trimmedPrompt }));
     } else {
       setMessages((current) =>
         current.map((message) =>
           message.id === agentMessage.id
             ? {
                 ...message,
-                text: "Backend is offline. Start the demo API on ws://127.0.0.1:8765/ws/chat and try again.",
+                text: "Backend is offline. Restart the desktop app and try again.",
               }
             : message,
         ),
@@ -192,6 +342,7 @@ function App() {
       setSocketStatus("Backend offline");
       setIsStreaming(false);
       streamingMessageIdRef.current = null;
+      streamingSessionIdRef.current = null;
     }
   }
 
@@ -208,25 +359,109 @@ function App() {
           </div>
         </div>
 
+        <div className="sidebar-toolbar">
+          <span>Sessions</span>
+          <button className="icon-button small" onClick={handleCreateSession} aria-label="New session">
+            <Plus size={16} />
+          </button>
+        </div>
+
         <nav className="session-list" aria-label="Agent sessions">
           {sessions.map((session) => (
-            <button className="session-item" key={session.name}>
+            <button
+              className={`session-item ${session.id === activeSessionId ? "active" : ""}`}
+              disabled={isStreaming}
+              key={session.id}
+              onClick={() => selectSession(session.id)}
+            >
               <FolderGit2 size={17} />
               <span>
-                <strong>{session.name}</strong>
+                {editingSessionId === session.id ? (
+                  <input
+                    autoFocus
+                    className="session-title-input"
+                    value={editingTitle}
+                    onChange={(event) => setEditingTitle(event.currentTarget.value)}
+                    onClick={(event) => event.stopPropagation()}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        commitRename(session.id);
+                      }
+                      if (event.key === "Escape") {
+                        setEditingSessionId(null);
+                      }
+                    }}
+                  />
+                ) : (
+                  <strong>{session.title}</strong>
+                )}
                 <small>
                   <GitBranch size={13} />
-                  {session.branch}
+                  {session.message_count} messages
                 </small>
               </span>
-              <em>{session.status}</em>
+              <em>{session.id === activeSessionId ? "Active" : "Saved"}</em>
+              <span className="session-actions">
+                {editingSessionId === session.id ? (
+                  <>
+                    <span
+                      className="mini-action"
+                      role="button"
+                      tabIndex={0}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        commitRename(session.id);
+                      }}
+                    >
+                      <Check size={13} />
+                    </span>
+                    <span
+                      className="mini-action"
+                      role="button"
+                      tabIndex={0}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setEditingSessionId(null);
+                      }}
+                    >
+                      <X size={13} />
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span
+                      className="mini-action"
+                      role="button"
+                      tabIndex={0}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        startRename(session);
+                      }}
+                    >
+                      <Pencil size={13} />
+                    </span>
+                    <span
+                      className="mini-action danger"
+                      role="button"
+                      tabIndex={0}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handleDeleteSession(session.id);
+                      }}
+                    >
+                      <Trash2 size={13} />
+                    </span>
+                  </>
+                )}
+              </span>
             </button>
           ))}
         </nav>
 
         <div className="sidebar-footer">
-          <button className="icon-button" aria-label="Open settings">
-            <Settings2 size={18} />
+          <button className="icon-button" onClick={handleCreateSession} aria-label="New session">
+            <Plus size={18} />
           </button>
           <button className="icon-button" aria-label="Open terminal">
             <TerminalSquare size={18} />
@@ -238,7 +473,7 @@ function App() {
         <header className="topbar">
           <div>
             <span className="eyebrow">D:/workspace/projects/automata</span>
-            <h1>Agent workspace</h1>
+            <h1>{isNewSessionDraft ? "New session" : activeSession?.title ?? "Agent workspace"}</h1>
           </div>
           <button className="run-button" onClick={runBridgeCheck}>
             <Play size={17} />
@@ -251,7 +486,13 @@ function App() {
             <div className="panel-header">
               <div>
                 <span className="eyebrow">Session</span>
-                <h2>Implementation thread</h2>
+                <h2>
+                  {isNewSessionDraft
+                    ? "No session selected"
+                    : activeSession
+                      ? `${activeSession.message_count} saved messages`
+                      : "Loading session"}
+                </h2>
               </div>
               <span className="status-pill">
                 <Activity size={14} />
@@ -259,29 +500,56 @@ function App() {
               </span>
             </div>
 
-            <div className="messages" ref={messagesRef}>
-              {messages.map((message) => (
-                <article className={`message ${message.role}`} key={message.id}>
-                  {message.role === "user" && (
-                    <div className="avatar">
-                      <Code2 size={18} />
-                    </div>
+            {isNewSessionDraft ? (
+              <div className="new-session-stage">
+                <form className="new-session-dialog" onSubmit={sendPrompt}>
+                  <span className="eyebrow">New session</span>
+                  <h2>输入一条消息来开始新的会话</h2>
+                  <div className="composer draft">
+                    <input
+                      autoFocus
+                      value={prompt}
+                      onChange={(event) => setPrompt(event.currentTarget.value)}
+                      placeholder="Ask the local coding agent..."
+                    />
+                    <button type="submit" aria-label="Send prompt" disabled={isStreaming || !prompt.trim()}>
+                      <Send size={18} />
+                    </button>
+                  </div>
+                </form>
+              </div>
+            ) : (
+              <>
+                <div className="messages" ref={messagesRef}>
+                  {messages.length === 0 && (
+                    <article className="message agent empty">
+                      <p>This session is empty. Send a prompt to start a persisted conversation.</p>
+                    </article>
                   )}
-                  <p>{message.text || "..."}</p>
-                </article>
-              ))}
-            </div>
+                  {messages.map((message) => (
+                    <article className={`message ${message.role}`} key={message.id}>
+                      {message.role === "user" && (
+                        <div className="avatar">
+                          <Code2 size={18} />
+                        </div>
+                      )}
+                      <p>{message.text || "..."}</p>
+                    </article>
+                  ))}
+                </div>
 
-            <form className="composer" onSubmit={sendPrompt}>
-              <input
-                value={prompt}
-                onChange={(event) => setPrompt(event.currentTarget.value)}
-                placeholder="Ask the local coding agent..."
-              />
-              <button type="submit" aria-label="Send prompt" disabled={isStreaming}>
-                <Send size={18} />
-              </button>
-            </form>
+                <form className="composer" onSubmit={sendPrompt}>
+                  <input
+                    value={prompt}
+                    onChange={(event) => setPrompt(event.currentTarget.value)}
+                    placeholder="Ask the local coding agent..."
+                  />
+                  <button type="submit" aria-label="Send prompt" disabled={isStreaming || !activeSessionId}>
+                    <Send size={18} />
+                  </button>
+                </form>
+              </>
+            )}
           </section>
 
           <aside className="inspector" aria-label="Run details">
@@ -296,7 +564,7 @@ function App() {
               </div>
               <div className="task-row complete">
                 <CheckCircle2 size={17} />
-                <span>Scaffold desktop app</span>
+                <span>SQLite session storage</span>
               </div>
               <div className="task-row">
                 <Activity size={17} />
@@ -304,7 +572,7 @@ function App() {
               </div>
               <div className="task-row">
                 <FileCode2 size={17} />
-                <span>Add Monaco editor surface</span>
+                <span>{sessions.length} sessions tracked</span>
               </div>
             </section>
 
@@ -325,6 +593,65 @@ function App() {
       </section>
     </main>
   );
+}
+
+async function fetchSessions(): Promise<SessionSummary[]> {
+  return requestJson<SessionSummary[]>("/sessions");
+}
+
+async function createSession(title: string): Promise<SessionSummary> {
+  return requestJson<SessionSummary>("/sessions", {
+    method: "POST",
+    body: JSON.stringify({ title }),
+  });
+}
+
+async function updateSession(sessionId: string, title: string): Promise<SessionSummary> {
+  return requestJson<SessionSummary>(`/sessions/${sessionId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ title }),
+  });
+}
+
+async function deleteSession(sessionId: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/sessions/${sessionId}`, { method: "DELETE" });
+  if (!response.ok) {
+    throw new Error(`Delete failed: ${response.status}`);
+  }
+}
+
+async function fetchMessages(sessionId: string): Promise<ChatMessage[]> {
+  const messages = await requestJson<ApiMessage[]>(`/sessions/${sessionId}/messages`);
+  return messages.map((message) => ({
+    id: message.id,
+    session_id: message.session_id,
+    role: message.role,
+    text: message.content,
+    sequence: message.sequence,
+    created_at: message.created_at,
+  }));
+}
+
+async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    headers: {
+      "Content-Type": "application/json",
+      ...init?.headers,
+    },
+    ...init,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Request failed: ${response.status}`);
+  }
+
+  return (await response.json()) as T;
+}
+
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, milliseconds);
+  });
 }
 
 export default App;
