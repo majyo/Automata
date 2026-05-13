@@ -1,4 +1,5 @@
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -46,12 +47,7 @@ def workspace_dir() -> Path:
 
 
 def load_local_env() -> None:
-    env_files = (
-        workspace_dir() / ".env",
-        api_dir() / ".env",
-    )
-
-    for env_file in env_files:
+    for env_file in env_file_candidates():
         if not env_file.exists():
             continue
 
@@ -63,8 +59,52 @@ def load_local_env() -> None:
             key, value = stripped.split("=", 1)
             key = key.strip()
             value = value.strip().strip('"').strip("'")
-            if key:
-                os.environ.setdefault(key, value)
+            if key and not os.environ.get(key, "").strip():
+                os.environ[key] = value
+
+
+def env_file_candidates() -> tuple[Path, ...]:
+    configured_env_file = os.environ.get("AUTOMATA_ENV_FILE", "").strip()
+    roots: list[Path] = [workspace_dir(), api_dir()]
+
+    configured_workspace = os.environ.get("AUTOMATA_WORKSPACE_DIR", "").strip()
+    if configured_workspace:
+        roots.append(Path(configured_workspace))
+
+    roots.extend(path_with_parents(Path.cwd()))
+
+    if getattr(sys, "frozen", False):
+        roots.extend(path_with_parents(Path(sys.executable).resolve().parent))
+
+    candidates: list[Path] = []
+    if configured_env_file:
+        candidates.append(Path(configured_env_file).expanduser())
+
+    for root in roots:
+        candidates.append(root / ".env")
+        candidates.append(root / "api" / ".env")
+
+    return unique_paths(candidates)
+
+
+def path_with_parents(path: Path) -> tuple[Path, ...]:
+    resolved = path.resolve()
+    return (resolved, *resolved.parents)
+
+
+def unique_paths(paths: list[Path]) -> tuple[Path, ...]:
+    seen: set[Path] = set()
+    unique: list[Path] = []
+
+    for path in paths:
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+
+        seen.add(resolved)
+        unique.append(resolved)
+
+    return tuple(unique)
 
 
 def get_api_config() -> ApiConfig:
@@ -95,7 +135,8 @@ def get_agent_config() -> AgentConfig:
     ).strip()
     if not api_key:
         raise AgentConfigurationError(
-            "Missing AUTOMATA_LLM_API_KEY. Add it to api/.env or the process environment."
+            "Missing AUTOMATA_LLM_API_KEY. Add it to api/.env, .env, "
+            "AUTOMATA_ENV_FILE, or the process environment."
         )
 
     return AgentConfig(

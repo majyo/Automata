@@ -61,6 +61,18 @@ function Require-Command {
   }
 }
 
+function Invoke-CheckedCommand {
+  param(
+    [string]$Name,
+    [string[]]$Arguments
+  )
+
+  & $Name @Arguments
+  if ($LASTEXITCODE -ne 0) {
+    throw "'$Name $($Arguments -join ' ')' failed with exit code $LASTEXITCODE."
+  }
+}
+
 function Get-RustHostTriple {
   $RustVersion = rustc -vV
   $HostLine = $RustVersion | Where-Object { $_ -like "host: *" } | Select-Object -First 1
@@ -81,7 +93,7 @@ function Ensure-FrontendDependencies {
     Write-Step "Installing frontend dependencies"
     Push-Location $UiDir
     try {
-      npm install
+      Invoke-CheckedCommand "npm" @("install")
     } finally {
       Pop-Location
     }
@@ -98,16 +110,22 @@ function Build-ApiSidecar {
   $ApiEntry = Join-Path $ApiDir "main.py"
   $ApiProject = Join-Path $ApiDir "pyproject.toml"
   $ApiLock = Join-Path $ApiDir "uv.lock"
+  $ApiPackageDir = Join-Path $ApiDir "automata_api"
+  $SourceFiles = @($ApiEntry, $ApiProject)
+  if (Test-Path $ApiLock) {
+    $SourceFiles += $ApiLock
+  }
+  if (Test-Path $ApiPackageDir) {
+    $SourceFiles += Get-ChildItem -Path $ApiPackageDir -Recurse -File -Filter "*.py" |
+      Select-Object -ExpandProperty FullName
+  }
 
   $ShouldBuild = $ForceSidecarBuild -or -not (Test-Path $SidecarPath)
   if (-not $ShouldBuild) {
-    $ShouldBuild = (Get-Item $ApiEntry).LastWriteTimeUtc -gt (Get-Item $SidecarPath).LastWriteTimeUtc
-  }
-  if (-not $ShouldBuild) {
-    $ShouldBuild = (Get-Item $ApiProject).LastWriteTimeUtc -gt (Get-Item $SidecarPath).LastWriteTimeUtc
-  }
-  if (-not $ShouldBuild -and (Test-Path $ApiLock)) {
-    $ShouldBuild = (Get-Item $ApiLock).LastWriteTimeUtc -gt (Get-Item $SidecarPath).LastWriteTimeUtc
+    $SidecarTimestamp = (Get-Item $SidecarPath).LastWriteTimeUtc
+    $ShouldBuild = @(
+      $SourceFiles | Where-Object { (Get-Item $_).LastWriteTimeUtc -gt $SidecarTimestamp }
+    ).Count -gt 0
   }
 
   if (-not $ShouldBuild) {
@@ -149,7 +167,7 @@ function Build-ApiSidecar {
     $ApiEntry
   )
 
-  & uv @Arguments
+  Invoke-CheckedCommand "uv" $Arguments
 
   if (-not (Test-Path $BuiltExe)) {
     throw "PyInstaller did not produce $BuiltExe."
@@ -160,13 +178,36 @@ function Build-ApiSidecar {
   return $SidecarPath
 }
 
+function Sync-DevSidecar {
+  $TargetTriple = Get-RustHostTriple
+  $SourcePath = Join-Path $SrcTauriDir "binaries\$SidecarName-$TargetTriple.exe"
+  $DebugDir = Join-Path $SrcTauriDir "target\debug"
+  $DebugPath = Join-Path $DebugDir "$SidecarName.exe"
+
+  if (-not (Test-Path $SourcePath)) {
+    throw "Missing sidecar binary at $SourcePath."
+  }
+
+  New-Item -ItemType Directory -Force -Path $DebugDir | Out-Null
+
+  $ShouldCopy = -not (Test-Path $DebugPath)
+  if (-not $ShouldCopy) {
+    $ShouldCopy = (Get-Item $SourcePath).LastWriteTimeUtc -gt (Get-Item $DebugPath).LastWriteTimeUtc
+  }
+
+  if ($ShouldCopy) {
+    Write-Step "Syncing development sidecar"
+    Copy-Item -Force -LiteralPath $SourcePath -Destination $DebugPath
+  }
+}
+
 function Invoke-Tauri {
   param([string[]]$Arguments)
 
   Push-Location $UiDir
   try {
     $NpmArguments = @("run", "tauri", "--") + $Arguments
-    & npm @NpmArguments
+    Invoke-CheckedCommand "npm" $NpmArguments
   } finally {
     Pop-Location
   }
@@ -208,6 +249,7 @@ Ensure-FrontendDependencies
 Build-ApiSidecar | Out-Null
 
 if ($Mode -eq "dev") {
+  Sync-DevSidecar
   Write-Step "Running Tauri desktop app in dev mode"
   Invoke-Tauri @("dev")
   exit 0

@@ -23,7 +23,8 @@ tests/                   FastAPI TestClient coverage
 
 ## LLM configuration
 
-Create `api/.env` or set process environment variables before starting the app:
+Create `api/.env`, create a repository-root `.env`, point `AUTOMATA_ENV_FILE`
+at a dotenv file, or set process environment variables before starting the app:
 
 ```text
 AUTOMATA_LLM_API_KEY=...
@@ -34,7 +35,8 @@ AUTOMATA_LLM_TEMPERATURE=0.2
 ```
 
 `AUTOMATA_LLM_API_KEY` is required. The other values default to the DeepSeek
-settings above.
+settings above. When running as a desktop sidecar, the API also searches upward
+from the sidecar executable for `.env` and `api/.env`.
 
 ## Run
 
