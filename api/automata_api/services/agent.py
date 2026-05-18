@@ -18,9 +18,9 @@ from automata_api.repositories.sessions import get_recent_messages, save_message
 from automata_api.schemas import ChatPayload
 from automata_api.services.llm import AgentProviderError, create_llm_response
 from automata_api.services.tools import (
-    PlaceholderToolResult,
+    ToolResult,
     placeholder_tool_specs,
-    run_placeholder_tool,
+    run_tool,
 )
 
 
@@ -126,7 +126,7 @@ async def execute_tool_call(
             "arguments": arguments if isinstance(arguments, str) else "{}",
         }
     )
-    result = run_placeholder_tool(name, arguments, agent_workspace())
+    result = await run_tool(name, arguments, agent_workspace())
     await websocket.send_json(
         {
             "type": "tool_result",
@@ -160,7 +160,15 @@ def agent_system_prompt() -> str:
         "You can use placeholder tools to simulate agent actions. Tool results "
         "are observations with simulated=true; they do not prove that files were "
         "read, commands were run, or edits were applied. Use the tool results to "
-        "plan and explain, and be explicit when an observation is simulated."
+        "plan and explain, and be explicit when an observation is simulated.\n\n"
+        "You can also use run_bash to execute real bash commands inside the "
+        "workspace. run_bash results have simulated=false and may have command "
+        "side effects. Prefer run_bash for checks and tests, but do not claim "
+        "that files were edited unless a real edit tool is added and reports "
+        "that edit.\n\n"
+        "For code or text search, prefer the rg tool first. It automatically "
+        "falls back to grep and then to run_bash when needed. Use grep directly "
+        "only when grep behavior is specifically required."
     )
 
 
@@ -175,11 +183,15 @@ def assistant_message_for_provider(message: dict[str, Any]) -> dict[str, Any]:
     if isinstance(tool_calls, list) and tool_calls:
         provider_message["tool_calls"] = tool_calls
 
+    reasoning_content = message.get("reasoning_content")
+    if isinstance(reasoning_content, str):
+        provider_message["reasoning_content"] = reasoning_content
+
     return provider_message
 
 
 def tool_result_for_provider(
-    tool_call: dict[str, Any], result: PlaceholderToolResult
+    tool_call: dict[str, Any], result: ToolResult
 ) -> dict[str, Any]:
     call_id = tool_call.get("id")
     return {

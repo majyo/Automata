@@ -41,6 +41,23 @@ from the sidecar executable for `.env` and `api/.env`.
 
 ## Run
 
+Headless backend-only mode from the repository root:
+
+```powershell
+.\run.ps1 headless
+```
+
+This starts only the FastAPI backend in the foreground, without installing or
+building the Tauri UI. It is intended for AI CLI workflows and other automated
+checks that need to verify the API independently. The health endpoint is:
+
+```text
+http://127.0.0.1:8765/health
+```
+
+Override the bind address with `AUTOMATA_API_HOST` and `AUTOMATA_API_PORT` when
+running multiple isolated checks.
+
 From `api/`:
 
 ```bash
@@ -90,6 +107,11 @@ The WebSocket prompt payload is:
 
 The response stream starts with `started`, may include `agent_step`,
 `tool_call`, and `tool_result` events while the agent loop is running, then emits
-one or more `token` events followed by `done`. The built-in tools are
-placeholders for simulated workspace inspection, code search, file reads, patch
-previews, and test runs; they do not modify files or execute shell commands.
+one or more `token` events followed by `done`. The built-in tools include
+placeholder tools for simulated workspace inspection, code search, file reads,
+patch previews, and test runs, plus real `rg`, `grep`, and `run_bash` tools.
+For search, the agent should prefer `rg`; the `rg` tool falls back to `grep`,
+then to `run_bash` with a suitable search command when native search commands
+are unavailable. `run_bash` executes inside the workspace, uses `bash -lc`, caps
+timeouts at 120 seconds, and returns stdout, stderr, exit code, timeout, and
+truncation metadata.

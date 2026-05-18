@@ -116,12 +116,18 @@ def parse_completion_message(response: dict[str, Any]) -> dict[str, Any]:
         raise AgentProviderError("LLM provider returned an invalid message.")
 
     content = message.get("content")
+    reasoning_content = message.get("reasoning_content")
     tool_calls = message.get("tool_calls")
-    return {
+    parsed_message: dict[str, Any] = {
         "role": "assistant",
         "content": content if isinstance(content, str) else "",
         "tool_calls": normalize_tool_calls(tool_calls),
     }
+
+    if isinstance(reasoning_content, str):
+        parsed_message["reasoning_content"] = reasoning_content
+
+    return parsed_message
 
 
 def normalize_tool_calls(raw_tool_calls: Any) -> list[dict[str, Any]]:

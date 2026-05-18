@@ -1,5 +1,5 @@
 param(
-  [ValidateSet("run", "dev", "build")]
+  [ValidateSet("run", "dev", "build", "headless")]
   [string]$Mode = "run",
 
   [switch]$SkipInstall,
@@ -39,7 +39,8 @@ function Import-DotEnv {
     $Parts = $Trimmed.Split("=", 2)
     $Name = $Parts[0].Trim()
     $Value = $Parts[1].Trim().Trim('"').Trim("'")
-    if ($Name) {
+    $CurrentValue = [Environment]::GetEnvironmentVariable($Name, "Process")
+    if ($Name -and [string]::IsNullOrWhiteSpace($CurrentValue)) {
       [Environment]::SetEnvironmentVariable($Name, $Value, "Process")
     }
   }
@@ -213,6 +214,30 @@ function Invoke-Tauri {
   }
 }
 
+function Invoke-HeadlessApi {
+  New-Item -ItemType Directory -Force -Path $UvCacheDir | Out-Null
+  $env:UV_CACHE_DIR = $UvCacheDir
+
+  if (-not $env:AUTOMATA_WORKSPACE_DIR) {
+    $env:AUTOMATA_WORKSPACE_DIR = $RootDir
+  }
+
+  $ApiHostValue = if ($env:AUTOMATA_API_HOST) { $env:AUTOMATA_API_HOST } else { "127.0.0.1" }
+  $ApiPortValue = if ($env:AUTOMATA_API_PORT) { $env:AUTOMATA_API_PORT } else { "8765" }
+
+  Write-Step "Running API in headless mode"
+  Write-Host "API: http://${ApiHostValue}:${ApiPortValue}" -ForegroundColor DarkGray
+  Write-Host "Health: http://${ApiHostValue}:${ApiPortValue}/health" -ForegroundColor DarkGray
+
+  Invoke-CheckedCommand "uv" @(
+    "run",
+    "--directory", $ApiDir,
+    "--locked",
+    "python",
+    "main.py"
+  )
+}
+
 function Get-ReleaseExecutable {
   $ReleaseDir = Join-Path $SrcTauriDir "target\release"
   $Candidates = @(
@@ -238,13 +263,20 @@ function Get-ReleaseExecutable {
   throw "Could not find a release executable in $ReleaseDir."
 }
 
+Require-Command "uv" "Install uv, or add it to PATH: https://docs.astral.sh/uv/"
+
+Import-LocalEnvironment
+
+if ($Mode -eq "headless") {
+  Invoke-HeadlessApi
+  exit 0
+}
+
 Require-Command "node" "Install Node.js 22+ and reopen the terminal."
 Require-Command "npm" "Install npm with Node.js and reopen the terminal."
 Require-Command "cargo" "Install Rust/Cargo for Tauri desktop builds."
 Require-Command "rustc" "Install Rust/Cargo for Tauri desktop builds."
-Require-Command "uv" "Install uv, or add it to PATH: https://docs.astral.sh/uv/"
 
-Import-LocalEnvironment
 Ensure-FrontendDependencies
 Build-ApiSidecar | Out-Null
 
