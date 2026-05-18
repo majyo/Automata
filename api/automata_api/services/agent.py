@@ -10,11 +10,19 @@ from automata_api.config import (
     DEFAULT_LLM_MODEL,
     MAX_CONTEXT_MESSAGES,
     AgentConfigurationError,
+    ContextCompressionConfig,
     get_agent_config,
+    get_context_compression_config,
     get_system_prompt,
     workspace_dir,
 )
-from automata_api.repositories.sessions import get_recent_messages, save_message
+from automata_api.repositories.sessions import (
+    fetch_context_summary,
+    get_messages_after_sequence,
+    get_recent_messages,
+    save_message,
+    upsert_context_summary,
+)
 from automata_api.schemas import ChatPayload
 from automata_api.services.llm import AgentProviderError, create_llm_response
 from automata_api.services.tools import (
@@ -26,6 +34,7 @@ from automata_api.services.tools import (
 
 MAX_AGENT_STEPS = 6
 TOKEN_CHUNK_SIZE = 80
+RAW_CONTEXT_TAIL_MESSAGES = 8
 
 
 async def receive_payload(websocket: WebSocket) -> ChatPayload:
@@ -74,7 +83,8 @@ async def stream_agent_reply(
 
 async def run_agent_loop(websocket: WebSocket, session_id: str) -> str:
     config = get_agent_config()
-    messages = fetch_agent_context(session_id)
+    compression_config = get_context_compression_config()
+    messages = await fetch_agent_context(websocket, session_id, compression_config)
     tools = placeholder_tool_specs()
 
     for step in range(1, MAX_AGENT_STEPS + 1):
@@ -92,6 +102,9 @@ async def run_agent_loop(websocket: WebSocket, session_id: str) -> str:
             messages.append(assistant_message_for_provider(assistant_message))
             for tool_call in tool_calls:
                 await execute_tool_call(websocket, messages, tool_call)
+            messages = await compress_loop_context_if_needed(
+                websocket, messages, compression_config
+            )
             continue
 
         content = assistant_message.get("content")
@@ -138,7 +151,58 @@ async def execute_tool_call(
     messages.append(tool_result_for_provider(tool_call, result))
 
 
-def fetch_agent_context(session_id: str) -> list[dict[str, Any]]:
+async def fetch_agent_context(
+    websocket: WebSocket,
+    session_id: str,
+    compression_config: ContextCompressionConfig,
+) -> list[dict[str, Any]]:
+    if not compression_config.enabled:
+        return fetch_recent_agent_context(session_id)
+
+    system_message = {
+        "role": "system",
+        "content": agent_system_prompt(),
+    }
+    summary = fetch_context_summary(session_id)
+    through_sequence = int(summary["through_sequence"]) if summary else 0
+    rows = get_messages_after_sequence(session_id, through_sequence)
+    messages = build_context_messages(system_message, summary, rows)
+
+    if context_char_count(messages) <= compression_config.threshold_chars:
+        return messages
+
+    if len(rows) <= RAW_CONTEXT_TAIL_MESSAGES:
+        return messages
+
+    before_chars = context_char_count(messages)
+    compress_rows = rows[:-RAW_CONTEXT_TAIL_MESSAGES]
+    tail_rows = rows[-RAW_CONTEXT_TAIL_MESSAGES:]
+    summary_content = await create_context_summary(
+        title="Conversation history compression",
+        existing_summary=summary["content"] if summary else "",
+        content=history_rows_text(compress_rows),
+        target_chars=compression_config.target_chars,
+    )
+    through_sequence = int(compress_rows[-1]["sequence"])
+    stored_summary = upsert_context_summary(
+        session_id=session_id,
+        content=summary_content,
+        through_sequence=through_sequence,
+    )
+    compressed_messages = build_context_messages(system_message, stored_summary, tail_rows)
+    await send_context_compressed_event(
+        websocket=websocket,
+        scope="history",
+        before_chars=before_chars,
+        after_chars=context_char_count(compressed_messages),
+        summary_chars=len(summary_content),
+        compressed_messages=len(compress_rows),
+        through_sequence=through_sequence,
+    )
+    return compressed_messages
+
+
+def fetch_recent_agent_context(session_id: str) -> list[dict[str, Any]]:
     messages = [
         {
             "role": "system",
@@ -151,6 +215,163 @@ def fetch_agent_context(session_id: str) -> list[dict[str, Any]]:
         messages.append({"role": role, "content": row["content"]})
 
     return messages
+
+
+def build_context_messages(
+    system_message: dict[str, Any],
+    summary: dict[str, Any] | None,
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    messages = [system_message]
+    if summary and summary.get("content"):
+        messages.append(summary_message(summary["content"], summary["through_sequence"]))
+
+    for row in rows:
+        messages.append(message_from_row(row))
+
+    return messages
+
+
+def message_from_row(row: dict[str, Any]) -> dict[str, str]:
+    role = "assistant" if row["role"] == "agent" else "user"
+    return {"role": role, "content": row["content"]}
+
+
+def summary_message(content: str, through_sequence: int) -> dict[str, str]:
+    return {
+        "role": "system",
+        "content": (
+            "Compressed conversation summary through visible message sequence "
+            f"{through_sequence}:\n{content}"
+        ),
+    }
+
+
+async def compress_loop_context_if_needed(
+    websocket: WebSocket,
+    messages: list[dict[str, Any]],
+    compression_config: ContextCompressionConfig,
+) -> list[dict[str, Any]]:
+    if not compression_config.enabled:
+        return messages
+
+    before_chars = context_char_count(messages)
+    if before_chars <= compression_config.threshold_chars:
+        return messages
+
+    start_index = latest_tool_protocol_start(messages)
+    if start_index is None:
+        return messages
+
+    loop_messages = messages[start_index:]
+    summary_content = await create_context_summary(
+        title="Recent tool activity compression",
+        existing_summary="",
+        content=messages_text(loop_messages),
+        target_chars=compression_config.target_chars,
+    )
+    compressed_messages = [
+        *messages[:start_index],
+        {
+            "role": "system",
+            "content": f"Compressed recent tool activity summary:\n{summary_content}",
+        },
+    ]
+    await send_context_compressed_event(
+        websocket=websocket,
+        scope="loop",
+        before_chars=before_chars,
+        after_chars=context_char_count(compressed_messages),
+        summary_chars=len(summary_content),
+        compressed_messages=len(loop_messages),
+        through_sequence=None,
+    )
+    return compressed_messages
+
+
+def latest_tool_protocol_start(messages: list[dict[str, Any]]) -> int | None:
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if message.get("role") == "assistant" and message.get("tool_calls"):
+            return index
+
+    return None
+
+
+async def create_context_summary(
+    *,
+    title: str,
+    existing_summary: str,
+    content: str,
+    target_chars: int,
+) -> str:
+    summary_request = [
+        {
+            "role": "system",
+            "content": (
+                "You compress agent conversation context. Return only a concise "
+                "structured summary. Preserve user goals, explicit requirements, "
+                "completed and failed actions, file paths, commands, errors, "
+                "decisions, pending work, uncertainty, and anything the agent "
+                "must not claim as completed. Do not invent facts."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"{title}\nTarget maximum length: {target_chars} characters.\n\n"
+                f"Existing summary:\n{existing_summary or '(none)'}\n\n"
+                f"Content to compress:\n{content}"
+            ),
+        },
+    ]
+    response = await create_llm_response(summary_request, tools=None)
+    summary = response.get("content")
+    if not isinstance(summary, str) or not summary.strip():
+        raise AgentProviderError("LLM provider returned an empty context summary.")
+
+    return summary.strip()
+
+
+def history_rows_text(rows: list[dict[str, Any]]) -> str:
+    return "\n\n".join(
+        f"[sequence={row['sequence']} role={row['role']}]\n{row['content']}"
+        for row in rows
+    )
+
+
+def messages_text(messages: list[dict[str, Any]]) -> str:
+    return "\n\n".join(
+        json.dumps(message, ensure_ascii=False, sort_keys=True) for message in messages
+    )
+
+
+def context_char_count(messages: list[dict[str, Any]]) -> int:
+    return sum(len(json.dumps(message, ensure_ascii=False)) for message in messages)
+
+
+async def send_context_compressed_event(
+    *,
+    websocket: WebSocket,
+    scope: str,
+    before_chars: int,
+    after_chars: int,
+    summary_chars: int,
+    compressed_messages: int,
+    through_sequence: int | None,
+) -> None:
+    event: dict[str, Any] = {
+        "type": "context_compressed",
+        "scope": scope,
+        "before_chars": before_chars,
+        "after_chars": after_chars,
+        "summary_chars": summary_chars,
+        "compressed_messages": compressed_messages,
+    }
+    if through_sequence is not None:
+        event["through_sequence"] = through_sequence
+
+    await websocket.send_json(event)
 
 
 def agent_system_prompt() -> str:

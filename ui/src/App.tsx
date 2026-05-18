@@ -50,10 +50,20 @@ type ApiMessage = {
 };
 
 type SocketPayload = {
-  type: "ready" | "started" | "agent_step" | "tool_call" | "tool_result" | "token" | "done" | "error";
+  type:
+    | "ready"
+    | "started"
+    | "agent_step"
+    | "context_compressed"
+    | "tool_call"
+    | "tool_result"
+    | "token"
+    | "done"
+    | "error";
   content?: string;
   message?: ApiMessage | string;
   step?: number;
+  scope?: "history" | "loop";
   tool?: string;
   success?: boolean;
 };
@@ -127,6 +137,11 @@ function App() {
 
       if (payload.type === "agent_step") {
         setSocketStatus(typeof payload.message === "string" ? payload.message : `Agent step ${payload.step ?? ""}`);
+        return;
+      }
+
+      if (payload.type === "context_compressed") {
+        setSocketStatus(payload.scope === "loop" ? "Compressed tool context" : "Compressed session context");
         return;
       }
 

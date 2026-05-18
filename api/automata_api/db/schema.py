@@ -22,6 +22,15 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS idx_messages_session_sequence
 ON messages(session_id, sequence);
+
+CREATE TABLE IF NOT EXISTS session_context_summaries (
+    session_id TEXT PRIMARY KEY,
+    content TEXT NOT NULL,
+    through_sequence INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
 """
 
 

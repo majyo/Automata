@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from automata_api import config
 
 
@@ -59,3 +61,59 @@ def test_env_file_candidates_honors_explicit_env_file_first(tmp_path, monkeypatc
     monkeypatch.setattr(config, "api_dir", lambda: tmp_path / "source" / "api")
 
     assert config.env_file_candidates()[0] == Path(env_file).resolve()
+
+
+def test_context_compression_config_defaults(monkeypatch):
+    monkeypatch.delenv("AUTOMATA_CONTEXT_COMPRESSION_ENABLED", raising=False)
+    monkeypatch.delenv("AUTOMATA_CONTEXT_COMPRESSION_THRESHOLD_CHARS", raising=False)
+    monkeypatch.delenv("AUTOMATA_CONTEXT_COMPRESSION_TARGET_CHARS", raising=False)
+
+    compression = config.get_context_compression_config()
+
+    assert compression.enabled is True
+    assert compression.threshold_chars == 60_000
+    assert compression.target_chars == 20_000
+
+
+def test_context_compression_config_honors_env(monkeypatch):
+    monkeypatch.setenv("AUTOMATA_CONTEXT_COMPRESSION_ENABLED", "false")
+    monkeypatch.setenv("AUTOMATA_CONTEXT_COMPRESSION_THRESHOLD_CHARS", "1234")
+    monkeypatch.setenv("AUTOMATA_CONTEXT_COMPRESSION_TARGET_CHARS", "456")
+
+    compression = config.get_context_compression_config()
+
+    assert compression.enabled is False
+    assert compression.threshold_chars == 1234
+    assert compression.target_chars == 456
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "message"),
+    [
+        (
+            "AUTOMATA_CONTEXT_COMPRESSION_THRESHOLD_CHARS",
+            "0",
+            "AUTOMATA_CONTEXT_COMPRESSION_THRESHOLD_CHARS must be greater than 0.",
+        ),
+        (
+            "AUTOMATA_CONTEXT_COMPRESSION_TARGET_CHARS",
+            "-1",
+            "AUTOMATA_CONTEXT_COMPRESSION_TARGET_CHARS must be greater than 0.",
+        ),
+        (
+            "AUTOMATA_CONTEXT_COMPRESSION_ENABLED",
+            "maybe",
+            "AUTOMATA_CONTEXT_COMPRESSION_ENABLED must be a boolean.",
+        ),
+    ],
+)
+def test_context_compression_config_rejects_invalid_env(
+    monkeypatch, name, value, message
+):
+    monkeypatch.delenv("AUTOMATA_CONTEXT_COMPRESSION_ENABLED", raising=False)
+    monkeypatch.delenv("AUTOMATA_CONTEXT_COMPRESSION_THRESHOLD_CHARS", raising=False)
+    monkeypatch.delenv("AUTOMATA_CONTEXT_COMPRESSION_TARGET_CHARS", raising=False)
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(config.AgentConfigurationError, match=message):
+        config.get_context_compression_config()

@@ -150,6 +150,76 @@ def get_recent_messages(session_id: str, limit: int) -> list[dict[str, str]]:
     return [dict(row) for row in reversed(rows)]
 
 
+def get_messages_after_sequence(
+    session_id: str, sequence: int
+) -> list[dict[str, Any]]:
+    with db_lock, connect_db() as db:
+        rows = db.execute(
+            """
+            SELECT role, content, sequence
+            FROM messages
+            WHERE session_id = ? AND sequence > ?
+            ORDER BY sequence ASC
+            """,
+            (session_id, sequence),
+        ).fetchall()
+
+    return [dict(row) for row in rows]
+
+
+def fetch_context_summary(session_id: str) -> dict[str, Any] | None:
+    with db_lock, connect_db() as db:
+        row = db.execute(
+            """
+            SELECT session_id, content, through_sequence, created_at, updated_at
+            FROM session_context_summaries
+            WHERE session_id = ?
+            """,
+            (session_id,),
+        ).fetchone()
+
+    return dict(row) if row else None
+
+
+def upsert_context_summary(
+    session_id: str, content: str, through_sequence: int
+) -> dict[str, Any]:
+    now = now_iso()
+
+    with db_lock, connect_db() as db:
+        existing = db.execute(
+            """
+            SELECT created_at
+            FROM session_context_summaries
+            WHERE session_id = ?
+            """,
+            (session_id,),
+        ).fetchone()
+        created_at = existing["created_at"] if existing else now
+        db.execute(
+            """
+            INSERT INTO session_context_summaries (
+                session_id, content, through_sequence, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(session_id) DO UPDATE SET
+                content = excluded.content,
+                through_sequence = excluded.through_sequence,
+                updated_at = excluded.updated_at
+            """,
+            (session_id, content, through_sequence, created_at, now),
+        )
+        db.commit()
+
+    return {
+        "session_id": session_id,
+        "content": content,
+        "through_sequence": through_sequence,
+        "created_at": created_at,
+        "updated_at": now,
+    }
+
+
 def fetch_session(
     db: sqlite3.Connection, session_id: str
 ) -> dict[str, Any] | None:

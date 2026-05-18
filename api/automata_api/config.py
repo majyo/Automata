@@ -11,6 +11,8 @@ Respond in the user's language. Be concise, practical, and engineering-focused.
 Use the prior session messages as context. If the user asks for code changes, give concrete file-level guidance and do not claim that files were changed unless an external tool actually changed them."""
 
 MAX_CONTEXT_MESSAGES = 24
+DEFAULT_CONTEXT_COMPRESSION_THRESHOLD_CHARS = 60_000
+DEFAULT_CONTEXT_COMPRESSION_TARGET_CHARS = 20_000
 
 
 @dataclass(frozen=True)
@@ -32,6 +34,13 @@ class AgentConfig:
     model: str
     timeout_seconds: float
     temperature: float
+
+
+@dataclass(frozen=True)
+class ContextCompressionConfig:
+    enabled: bool
+    threshold_chars: int
+    target_chars: int
 
 
 class AgentConfigurationError(RuntimeError):
@@ -150,6 +159,31 @@ def get_agent_config() -> AgentConfig:
     )
 
 
+def get_context_compression_config() -> ContextCompressionConfig:
+    threshold_chars = read_int_env(
+        "AUTOMATA_CONTEXT_COMPRESSION_THRESHOLD_CHARS",
+        DEFAULT_CONTEXT_COMPRESSION_THRESHOLD_CHARS,
+    )
+    target_chars = read_int_env(
+        "AUTOMATA_CONTEXT_COMPRESSION_TARGET_CHARS",
+        DEFAULT_CONTEXT_COMPRESSION_TARGET_CHARS,
+    )
+    if threshold_chars <= 0:
+        raise AgentConfigurationError(
+            "AUTOMATA_CONTEXT_COMPRESSION_THRESHOLD_CHARS must be greater than 0."
+        )
+    if target_chars <= 0:
+        raise AgentConfigurationError(
+            "AUTOMATA_CONTEXT_COMPRESSION_TARGET_CHARS must be greater than 0."
+        )
+
+    return ContextCompressionConfig(
+        enabled=read_bool_env("AUTOMATA_CONTEXT_COMPRESSION_ENABLED", True),
+        threshold_chars=threshold_chars,
+        target_chars=target_chars,
+    )
+
+
 def get_system_prompt() -> str:
     return os.environ.get("AUTOMATA_AGENT_SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT)
 
@@ -174,3 +208,17 @@ def read_int_env(name: str, default: int) -> int:
         return int(raw_value)
     except ValueError as error:
         raise AgentConfigurationError(f"{name} must be an integer.") from error
+
+
+def read_bool_env(name: str, default: bool) -> bool:
+    raw_value = os.environ.get(name)
+    if raw_value is None or not raw_value.strip():
+        return default
+
+    normalized = raw_value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+
+    raise AgentConfigurationError(f"{name} must be a boolean.")
