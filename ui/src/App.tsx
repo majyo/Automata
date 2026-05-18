@@ -50,9 +50,12 @@ type ApiMessage = {
 };
 
 type SocketPayload = {
-  type: "ready" | "started" | "token" | "done" | "error";
+  type: "ready" | "started" | "agent_step" | "tool_call" | "tool_result" | "token" | "done" | "error";
   content?: string;
   message?: ApiMessage | string;
+  step?: number;
+  tool?: string;
+  success?: boolean;
 };
 
 const fileChanges = [
@@ -119,6 +122,21 @@ function App() {
       if (payload.type === "started") {
         setSocketStatus("Streaming");
         setIsStreaming(true);
+        return;
+      }
+
+      if (payload.type === "agent_step") {
+        setSocketStatus(typeof payload.message === "string" ? payload.message : `Agent step ${payload.step ?? ""}`);
+        return;
+      }
+
+      if (payload.type === "tool_call") {
+        setSocketStatus(payload.tool ? `Tool: ${payload.tool}` : "Calling tool");
+        return;
+      }
+
+      if (payload.type === "tool_result") {
+        setSocketStatus(payload.tool ? `Tool complete: ${payload.tool}` : "Tool complete");
         return;
       }
 

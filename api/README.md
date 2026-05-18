@@ -1,7 +1,8 @@
 # Automata Agent API
 
 Small FastAPI backend used by the Tauri UI. It exposes a WebSocket endpoint that
-streams responses from a DeepSeek-compatible LLM provider.
+runs a bounded agent loop against a DeepSeek-compatible LLM provider and streams
+the final response back to the client.
 
 In the packaged desktop app, this API is built with PyInstaller and launched by
 Tauri as a sidecar. The commands below are only for backend-only development.
@@ -15,7 +16,7 @@ environment variable is missing, local development falls back to
 main.py                  Thin compatibility entrypoint for uvicorn and PyInstaller
 automata_api/main.py     FastAPI app factory, CORS, lifespan startup
 automata_api/routers/    HTTP and WebSocket routes
-automata_api/services/   Agent orchestration and LLM provider integration
+automata_api/services/   Agent loop, placeholder tools, and LLM integration
 automata_api/db/         SQLite connection and schema initialization
 automata_api/repositories/ Session and message persistence
 tests/                   FastAPI TestClient coverage
@@ -86,3 +87,9 @@ The WebSocket prompt payload is:
 ```json
 { "type": "prompt", "session_id": "...", "prompt": "..." }
 ```
+
+The response stream starts with `started`, may include `agent_step`,
+`tool_call`, and `tool_result` events while the agent loop is running, then emits
+one or more `token` events followed by `done`. The built-in tools are
+placeholders for simulated workspace inspection, code search, file reads, patch
+previews, and test runs; they do not modify files or execute shell commands.
