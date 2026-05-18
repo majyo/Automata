@@ -12,6 +12,7 @@ DEFAULT_BASH_TIMEOUT_SECONDS = 30.0
 MAX_BASH_TIMEOUT_SECONDS = 120.0
 OUTPUT_LIMIT = 20_000
 SEARCH_TIMEOUT_SECONDS = 30.0
+FILE_READ_LIMIT = 120_000
 
 
 @dataclass(frozen=True)
@@ -195,8 +196,8 @@ def placeholder_tool_specs() -> list[dict[str, Any]]:
             "function": {
                 "name": "read_file",
                 "description": (
-                    "Read a project file. Placeholder only: returns simulated "
-                    "file contents and metadata."
+                    "Read a real UTF-8 text file from the workspace. The path "
+                    "must stay inside the workspace."
                 ),
                 "parameters": {
                     "type": "object",
@@ -204,9 +205,54 @@ def placeholder_tool_specs() -> list[dict[str, Any]]:
                         "path": {
                             "type": "string",
                             "description": "Project-relative path to read.",
+                        },
+                        "start_line": {
+                            "type": "integer",
+                            "description": "Optional 1-based first line to return.",
+                        },
+                        "end_line": {
+                            "type": "integer",
+                            "description": "Optional 1-based last line to return.",
                         }
                     },
                     "required": ["path"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "write_file",
+                "description": (
+                    "Write UTF-8 text to a real file in the workspace. The path "
+                    "must stay inside the workspace. Use only when the user has "
+                    "asked for file changes."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Project-relative path to write.",
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "Complete text content to write or append.",
+                        },
+                        "mode": {
+                            "type": "string",
+                            "enum": ["overwrite", "create", "append"],
+                            "description": (
+                                "Write mode. overwrite replaces or creates, create "
+                                "fails if the file exists, append appends to the file."
+                            ),
+                        },
+                        "create_dirs": {
+                            "type": "boolean",
+                            "description": "Create parent directories when missing. Defaults to true.",
+                        },
+                    },
+                    "required": ["path", "content"],
                 },
             },
         },
@@ -278,6 +324,10 @@ async def run_tool(
 
     if name == "run_bash":
         return await run_bash(arguments, workspace)
+    if name == "read_file":
+        return run_read_file(arguments, workspace)
+    if name == "write_file":
+        return run_write_file(arguments, workspace)
     if name == "rg":
         return await run_rg(arguments, workspace)
     if name == "grep":
@@ -286,7 +336,6 @@ async def run_tool(
     handlers = {
         "inspect_workspace": inspect_workspace,
         "search_code": search_code,
-        "read_file": read_file,
         "apply_patch_preview": apply_patch_preview,
         "run_tests": run_tests,
     }
@@ -315,7 +364,7 @@ async def run_tool(
 
 
 def is_real_tool(name: str) -> bool:
-    return name in {"run_bash", "rg", "grep"}
+    return name in {"run_bash", "rg", "grep", "read_file", "write_file"}
 
 
 def run_placeholder_tool(
@@ -340,7 +389,6 @@ def run_placeholder_tool(
     handlers = {
         "inspect_workspace": inspect_workspace,
         "search_code": search_code,
-        "read_file": read_file,
         "apply_patch_preview": apply_patch_preview,
         "run_tests": run_tests,
     }
@@ -801,6 +849,236 @@ def search_result_was_no_match(result: ToolResult) -> bool:
     return payload.get("ok") is True and payload.get("matched") is False
 
 
+def run_read_file(arguments: dict[str, Any], workspace: str) -> ToolResult:
+    workspace_path = Path(workspace).expanduser().resolve()
+    path_result = resolve_file_path(workspace_path, arguments.get("path"))
+    if isinstance(path_result, str):
+        return file_error_result("read_file", arguments, error=path_result)
+
+    if not path_result.exists():
+        return file_error_result(
+            "read_file", arguments, path=path_result, error=f"File does not exist: {path_result}"
+        )
+
+    if not path_result.is_file():
+        return file_error_result(
+            "read_file", arguments, path=path_result, error=f"Path is not a file: {path_result}"
+        )
+
+    try:
+        raw_content = path_result.read_text(encoding="utf-8", errors="replace")
+    except OSError as error:
+        return file_error_result(
+            "read_file", arguments, path=path_result, error=f"Failed to read file: {error}"
+        )
+
+    content, start_line, end_line, total_lines = select_line_range(
+        raw_content,
+        arguments.get("start_line"),
+        arguments.get("end_line"),
+    )
+    content, truncated = truncate_content(content, FILE_READ_LIMIT)
+    payload = {
+        "simulated": False,
+        "ok": True,
+        "path": path_argument_for_cwd(path_result, workspace_path),
+        "absolute_path": str(path_result),
+        "encoding": "utf-8",
+        "size_bytes": len(raw_content.encode("utf-8")),
+        "content": content,
+        "truncated": truncated,
+        "start_line": start_line,
+        "end_line": end_line,
+        "total_lines": total_lines,
+    }
+    return ToolResult(
+        name="read_file",
+        arguments=arguments,
+        content=json_response(payload),
+        success=True,
+    )
+
+
+def run_write_file(arguments: dict[str, Any], workspace: str) -> ToolResult:
+    workspace_path = Path(workspace).expanduser().resolve()
+    path_result = resolve_file_path(workspace_path, arguments.get("path"))
+    if isinstance(path_result, str):
+        return file_error_result("write_file", arguments, error=path_result)
+
+    content = arguments.get("content")
+    if not isinstance(content, str):
+        return file_error_result(
+            "write_file",
+            arguments,
+            path=path_result,
+            error="Missing required string content.",
+        )
+
+    mode = string_argument(arguments, "mode", "overwrite")
+    if mode not in {"overwrite", "create", "append"}:
+        return file_error_result(
+            "write_file",
+            arguments,
+            path=path_result,
+            error="mode must be one of overwrite, create, or append.",
+        )
+
+    if path_result.exists() and path_result.is_dir():
+        return file_error_result(
+            "write_file",
+            arguments,
+            path=path_result,
+            error=f"Path is a directory: {path_result}",
+        )
+
+    existed_before = path_result.exists()
+    if mode == "create" and existed_before:
+        return file_error_result(
+            "write_file",
+            arguments,
+            path=path_result,
+            error=f"File already exists: {path_result}",
+        )
+
+    create_dirs = bool_argument(arguments, "create_dirs", True)
+    if not path_result.parent.exists():
+        if not create_dirs:
+            return file_error_result(
+                "write_file",
+                arguments,
+                path=path_result,
+                error=f"Parent directory does not exist: {path_result.parent}",
+            )
+        try:
+            path_result.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            return file_error_result(
+                "write_file",
+                arguments,
+                path=path_result,
+                error=f"Failed to create parent directory: {error}",
+            )
+
+    try:
+        if mode == "append":
+            with path_result.open("a", encoding="utf-8", newline="") as file:
+                file.write(content)
+        elif mode == "create":
+            with path_result.open("x", encoding="utf-8", newline="") as file:
+                file.write(content)
+        else:
+            path_result.write_text(content, encoding="utf-8", newline="")
+    except OSError as error:
+        return file_error_result(
+            "write_file", arguments, path=path_result, error=f"Failed to write file: {error}"
+        )
+
+    payload = {
+        "simulated": False,
+        "ok": True,
+        "path": path_argument_for_cwd(path_result, workspace_path),
+        "absolute_path": str(path_result),
+        "encoding": "utf-8",
+        "mode": mode,
+        "existed_before": existed_before,
+        "bytes_written": len(content.encode("utf-8")),
+        "size_bytes": path_result.stat().st_size,
+    }
+    return ToolResult(
+        name="write_file",
+        arguments=arguments,
+        content=json_response(payload),
+        success=True,
+    )
+
+
+def resolve_file_path(workspace_path: Path, raw_path: Any) -> Path | str:
+    requested_path = raw_path if isinstance(raw_path, str) and raw_path.strip() else ""
+    if not requested_path:
+        return "Missing required path."
+
+    path = Path(requested_path).expanduser()
+    if path.is_absolute():
+        resolved = path.resolve()
+    else:
+        resolved = (workspace_path / path).resolve()
+
+    try:
+        resolved.relative_to(workspace_path)
+    except ValueError:
+        return f"path must stay inside workspace: {workspace_path}"
+
+    return resolved
+
+
+def select_line_range(
+    content: str, raw_start_line: Any, raw_end_line: Any
+) -> tuple[str, int | None, int | None, int]:
+    lines = content.splitlines(keepends=True)
+    total_lines = len(lines)
+    start_line = positive_int_argument(raw_start_line)
+    end_line = positive_int_argument(raw_end_line)
+    if start_line is None and end_line is None:
+        return content, None, None, total_lines
+
+    start = start_line if start_line is not None else 1
+    end = end_line if end_line is not None else total_lines
+    if end < start:
+        return "", start, end, total_lines
+
+    return "".join(lines[start - 1 : end]), start, end, total_lines
+
+
+def positive_int_argument(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, str):
+        try:
+            parsed = int(value)
+        except ValueError:
+            return None
+        return parsed if parsed > 0 else None
+    return None
+
+
+def bool_argument(arguments: dict[str, Any], name: str, default: bool) -> bool:
+    value = arguments.get(name)
+    return value if isinstance(value, bool) else default
+
+
+def truncate_content(content: str, limit: int) -> tuple[str, bool]:
+    if len(content) <= limit:
+        return content, False
+
+    return content[:limit], True
+
+
+def file_error_result(
+    tool_name: str,
+    arguments: dict[str, Any],
+    *,
+    error: str,
+    path: Path | None = None,
+) -> ToolResult:
+    return ToolResult(
+        name=tool_name,
+        arguments=arguments,
+        content=json_response(
+            {
+                "simulated": False,
+                "ok": False,
+                "path": str(path) if path else "",
+                "absolute_path": str(path) if path else "",
+                "encoding": "utf-8",
+                "error": error,
+            }
+        ),
+        success=False,
+    )
+
+
 async def run_bash(arguments: dict[str, Any], workspace: str) -> ToolResult:
     command = string_argument(arguments, "command", "")
     timeout_seconds = timeout_argument(arguments)
@@ -1033,20 +1311,6 @@ def search_code(arguments: dict[str, Any], workspace: str) -> dict[str, Any]:
                 "preview": f"Simulated match for {query or 'empty query'}",
             }
         ],
-    }
-
-
-def read_file(arguments: dict[str, Any], workspace: str) -> dict[str, Any]:
-    path = string_argument(arguments, "path", "unknown")
-    return {
-        "simulated": True,
-        "ok": True,
-        "workspace": workspace,
-        "path": path,
-        "content": (
-            "This is simulated file content from a placeholder tool. "
-            "Use a real file tool before claiming exact code details."
-        ),
     }
 
 

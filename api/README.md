@@ -108,10 +108,11 @@ The WebSocket prompt payload is:
 The response stream starts with `started`, may include `agent_step`,
 `tool_call`, and `tool_result` events while the agent loop is running, then emits
 one or more `token` events followed by `done`. The built-in tools include
-placeholder tools for simulated workspace inspection, code search, file reads,
-patch previews, and test runs, plus real `rg`, `grep`, and `run_bash` tools.
-For search, the agent should prefer `rg`; the `rg` tool falls back to `grep`,
-then to `run_bash` with a suitable search command when native search commands
-are unavailable. `run_bash` executes inside the workspace, uses `bash -lc`, caps
-timeouts at 120 seconds, and returns stdout, stderr, exit code, timeout, and
-truncation metadata.
+placeholder tools for simulated workspace inspection, code search, patch
+previews, and test runs, plus real `read_file`, `write_file`, `rg`, `grep`, and
+`run_bash` tools. File tools read and write UTF-8 text within the workspace
+only. For search, the agent should prefer `rg`; the `rg` tool falls back to
+`grep`, then to `run_bash` with a suitable search command when native search
+commands are unavailable. `run_bash` executes inside the workspace, uses
+`bash -lc`, caps timeouts at 120 seconds, and returns stdout, stderr, exit code,
+timeout, and truncation metadata.

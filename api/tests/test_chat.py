@@ -279,3 +279,98 @@ def test_chat_websocket_runs_agent_loop_with_rg_tool(client, monkeypatch):
     assert '"simulated": false' in events[3]["content"]
     assert events[5]["content"] == "Search finished."
     assert len(calls) == 2
+
+
+def test_chat_websocket_runs_agent_loop_with_file_tools(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
+    monkeypatch.setenv("AUTOMATA_WORKSPACE_DIR", str(tmp_path))
+    session = client.post("/sessions", json={"title": "File Agent"}).json()
+    calls = []
+
+    async def fake_create_llm_response(messages, tools=None):
+        calls.append({"messages": list(messages), "tools": tools})
+        if len(calls) == 1:
+            assert tools is not None
+            tool_names = {tool["function"]["name"] for tool in tools}
+            assert "read_file" in tool_names
+            assert "write_file" in tool_names
+            return {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_write_1",
+                        "type": "function",
+                        "function": {
+                            "name": "write_file",
+                            "arguments": (
+                                '{"path": ".build/test-file-tool.txt", '
+                                '"content": "file-tool-ok\\n", "mode": "overwrite"}'
+                            ),
+                        },
+                    },
+                    {
+                        "id": "call_read_1",
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "arguments": '{"path": ".build/test-file-tool.txt"}',
+                        },
+                    },
+                ],
+            }
+
+        assert messages[-2]["role"] == "tool"
+        write_result = json.loads(messages[-2]["content"])
+        assert write_result["simulated"] is False
+        assert write_result["ok"] is True
+        assert messages[-1]["role"] == "tool"
+        read_result = json.loads(messages[-1]["content"])
+        assert read_result["simulated"] is False
+        assert read_result["ok"] is True
+        assert read_result["content"] == "file-tool-ok\n"
+        return {
+            "role": "assistant",
+            "content": "File tools finished.",
+            "tool_calls": [],
+        }
+
+    monkeypatch.setattr(
+        "automata_api.services.agent.create_llm_response",
+        fake_create_llm_response,
+    )
+
+    with client.websocket_connect("/ws/chat") as websocket:
+        websocket.receive_json()
+        websocket.send_json(
+            {
+                "type": "prompt",
+                "session_id": session["id"],
+                "prompt": "write then read a file",
+            }
+        )
+
+        events = []
+        while True:
+            event = websocket.receive_json()
+            events.append(event)
+            if event["type"] in {"done", "error"}:
+                break
+
+    assert [event["type"] for event in events] == [
+        "started",
+        "agent_step",
+        "tool_call",
+        "tool_result",
+        "tool_call",
+        "tool_result",
+        "agent_step",
+        "token",
+        "done",
+    ]
+    assert events[2]["tool"] == "write_file"
+    assert events[3]["success"] is True
+    assert events[4]["tool"] == "read_file"
+    assert events[5]["success"] is True
+    assert events[7]["content"] == "File tools finished."
+    assert len(calls) == 2

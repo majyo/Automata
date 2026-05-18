@@ -168,7 +168,10 @@ def agent_system_prompt() -> str:
         "that edit.\n\n"
         "For code or text search, prefer the rg tool first. It automatically "
         "falls back to grep and then to run_bash when needed. Use grep directly "
-        "only when grep behavior is specifically required."
+        "only when grep behavior is specifically required.\n\n"
+        "Use read_file to inspect exact file contents and write_file only when "
+        "the user explicitly asks you to create or change files. Both operate "
+        "on real workspace files and return simulated=false."
     )
 
 
