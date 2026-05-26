@@ -10,6 +10,29 @@ from automata_api.services import agent
 from automata_api.services.tools import ToolResult
 
 
+def compact_event_types(events):
+    compacted = []
+    previous_was_token = False
+    for event in events:
+        event_type = event["type"]
+        if event_type == "token":
+            if not previous_was_token:
+                compacted.append(event_type)
+            previous_was_token = True
+            continue
+
+        compacted.append(event_type)
+        previous_was_token = False
+
+    return compacted
+
+
+def token_content(events):
+    return "".join(
+        event.get("content", "") for event in events if event["type"] == "token"
+    )
+
+
 class CapturingWebSocket:
     def __init__(self):
         self.events = []
@@ -203,7 +226,7 @@ def test_chat_websocket_emits_history_compression_event(client, monkeypatch):
             if event["type"] in {"done", "error"}:
                 break
 
-    assert [event["type"] for event in events] == [
+    assert compact_event_types(events) == [
         "started",
         "context_compressed",
         "agent_step",
@@ -213,7 +236,7 @@ def test_chat_websocket_emits_history_compression_event(client, monkeypatch):
     assert events[1]["scope"] == "history"
     assert events[1]["compressed_messages"] == 3
     assert events[1]["through_sequence"] == 3
-    assert events[3]["content"] == "History compression finished."
+    assert token_content(events) == "History compression finished."
     assert len(agent_calls) == 1
 
 
@@ -287,7 +310,7 @@ def test_chat_websocket_emits_loop_compression_event(client, monkeypatch):
             if event["type"] in {"done", "error"}:
                 break
 
-    assert [event["type"] for event in events] == [
+    assert compact_event_types(events) == [
         "started",
         "agent_step",
         "tool_call",
@@ -299,5 +322,5 @@ def test_chat_websocket_emits_loop_compression_event(client, monkeypatch):
     ]
     assert events[4]["scope"] == "loop"
     assert events[4]["compressed_messages"] == 2
-    assert events[6]["content"] == "Loop compression finished."
+    assert token_content(events) == "Loop compression finished."
     assert len(agent_calls) == 2

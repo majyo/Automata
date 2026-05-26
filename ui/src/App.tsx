@@ -20,8 +20,16 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 
-const API_BASE = "http://127.0.0.1:8765";
-const WS_URL = "ws://127.0.0.1:8765/ws/chat";
+const DEFAULT_API_CONFIG: ApiRuntimeConfig = {
+  httpBaseUrl: "http://127.0.0.1:8765",
+  wsChatUrl: "ws://127.0.0.1:8765/ws/chat",
+};
+const RECONNECT_DELAYS_MS = [500, 1_000, 2_000, 5_000];
+
+type ApiRuntimeConfig = {
+  httpBaseUrl: string;
+  wsChatUrl: string;
+};
 
 type SessionSummary = {
   id: string;
@@ -34,7 +42,7 @@ type SessionSummary = {
 type ChatMessage = {
   id: string;
   session_id?: string;
-  role: "user" | "agent";
+  role: "user" | "agent" | "tool";
   text: string;
   sequence?: number;
   created_at?: string;
@@ -49,24 +57,24 @@ type ApiMessage = {
   created_at: string;
 };
 
-type SocketPayload = {
-  type:
-    | "ready"
-    | "started"
-    | "agent_step"
-    | "context_compressed"
-    | "tool_call"
-    | "tool_result"
-    | "token"
-    | "done"
-    | "error";
-  content?: string;
-  message?: ApiMessage | string;
-  step?: number;
-  scope?: "history" | "loop";
-  tool?: string;
-  success?: boolean;
-};
+type SocketPayload =
+  | { type: "ready"; message?: string }
+  | { type: "started"; session_id: string; prompt: string }
+  | { type: "agent_step"; message?: string; step?: number }
+  | {
+      type: "context_compressed";
+      scope?: "history" | "loop";
+      before_chars?: number;
+      after_chars?: number;
+      summary_chars?: number;
+      compressed_messages?: number;
+      through_sequence?: number;
+    }
+  | { type: "tool_call"; tool?: string; arguments?: string }
+  | { type: "tool_result"; tool?: string; success?: boolean; content?: string }
+  | { type: "token"; content?: string }
+  | { type: "done"; message?: ApiMessage }
+  | { type: "error"; message?: string };
 
 const fileChanges = [
   { path: "api/automata_api/routers", state: "+routes" },
@@ -86,9 +94,13 @@ function App() {
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const socketRef = useRef<WebSocket | null>(null);
+  const apiConfigRef = useRef<ApiRuntimeConfig>(DEFAULT_API_CONFIG);
   const activeSessionIdRef = useRef<string | null>(null);
   const streamingMessageIdRef = useRef<string | null>(null);
   const streamingSessionIdRef = useRef<string | null>(null);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const reconnectAttemptRef = useRef(0);
+  const shouldReconnectRef = useRef(true);
   const messagesRef = useRef<HTMLDivElement | null>(null);
 
   const activeSession = sessions.find((session) => session.id === activeSessionId) ?? null;
@@ -98,11 +110,28 @@ function App() {
   }, [activeSessionId]);
 
   useEffect(() => {
-    connectSocket();
-    initializeSessions();
+    let cancelled = false;
+    shouldReconnectRef.current = true;
+
+    async function boot() {
+      const config = await loadApiConfig();
+      if (cancelled) {
+        return;
+      }
+
+      apiConfigRef.current = config;
+      connectSocket(config);
+      await initializeSessions(config);
+    }
+
+    void boot();
 
     return () => {
+      cancelled = true;
+      shouldReconnectRef.current = false;
+      clearReconnectTimer();
       socketRef.current?.close();
+      socketRef.current = null;
     };
   }, []);
 
@@ -113,16 +142,26 @@ function App() {
     });
   }, [messages]);
 
-  function connectSocket() {
-    const socket = new WebSocket(WS_URL);
+  function connectSocket(config = apiConfigRef.current) {
+    clearReconnectTimer();
+    setSocketStatus("Connecting");
+
+    const socket = new WebSocket(config.wsChatUrl);
     socketRef.current = socket;
 
     socket.addEventListener("open", () => {
+      reconnectAttemptRef.current = 0;
       setSocketStatus("Connected");
     });
 
     socket.addEventListener("message", (event) => {
-      const payload = JSON.parse(event.data) as SocketPayload;
+      let payload: SocketPayload;
+      try {
+        payload = JSON.parse(event.data) as SocketPayload;
+      } catch {
+        setSocketStatus("Invalid backend event");
+        return;
+      }
 
       if (payload.type === "ready") {
         setSocketStatus(typeof payload.message === "string" ? payload.message : "Ready");
@@ -142,27 +181,36 @@ function App() {
 
       if (payload.type === "context_compressed") {
         setSocketStatus(payload.scope === "loop" ? "Compressed tool context" : "Compressed session context");
+        appendRunEventMessage(formatContextCompressed(payload));
         return;
       }
 
       if (payload.type === "tool_call") {
         setSocketStatus(payload.tool ? `Tool: ${payload.tool}` : "Calling tool");
+        appendRunEventMessage(formatToolCall(payload));
         return;
       }
 
       if (payload.type === "tool_result") {
         setSocketStatus(payload.tool ? `Tool complete: ${payload.tool}` : "Tool complete");
+        appendRunEventMessage(formatToolResult(payload));
         return;
       }
 
       if (payload.type === "token" && streamingMessageIdRef.current) {
         const messageId = streamingMessageIdRef.current;
+        const sessionId = streamingSessionIdRef.current ?? undefined;
+        const content = payload.content ?? "";
+        if (!content) {
+          return;
+        }
+
         setMessages((current) =>
-          current.map((message) =>
-            message.id === messageId
-              ? { ...message, text: `${message.text}${payload.content ?? ""}` }
-              : message,
-          ),
+          current.some((message) => message.id === messageId)
+            ? current.map((message) =>
+                message.id === messageId ? { ...message, text: `${message.text}${content}` } : message,
+              )
+            : [...current, { id: messageId, session_id: sessionId, role: "agent", text: content }],
         );
         return;
       }
@@ -174,16 +222,15 @@ function App() {
         const sessionId = streamingSessionIdRef.current;
         streamingSessionIdRef.current = null;
         if (sessionId) {
-          refreshSessionData(sessionId);
+          refreshSessionList();
         }
         return;
       }
 
       if (payload.type === "error") {
-        setSocketStatus(typeof payload.message === "string" ? payload.message : "Backend error");
-        setIsStreaming(false);
-        streamingMessageIdRef.current = null;
-        streamingSessionIdRef.current = null;
+        const message = typeof payload.message === "string" ? payload.message : "Backend error";
+        setSocketStatus(message);
+        finishStreamingWithError(message);
       }
     });
 
@@ -193,8 +240,13 @@ function App() {
       }
 
       setSocketStatus("Offline");
-      setIsStreaming(false);
       socketRef.current = null;
+      if (streamingMessageIdRef.current) {
+        finishStreamingWithError("Backend connection closed before a response was received.");
+      } else {
+        setIsStreaming(false);
+      }
+      scheduleReconnect();
     });
 
     socket.addEventListener("error", () => {
@@ -206,11 +258,34 @@ function App() {
     });
   }
 
-  async function initializeSessions() {
+  function scheduleReconnect() {
+    if (!shouldReconnectRef.current || reconnectTimerRef.current !== null) {
+      return;
+    }
+
+    const delay = RECONNECT_DELAYS_MS[Math.min(reconnectAttemptRef.current, RECONNECT_DELAYS_MS.length - 1)];
+    reconnectAttemptRef.current += 1;
+    setSocketStatus("Reconnecting");
+    reconnectTimerRef.current = window.setTimeout(() => {
+      reconnectTimerRef.current = null;
+      connectSocket(apiConfigRef.current);
+    }, delay);
+  }
+
+  function clearReconnectTimer() {
+    if (reconnectTimerRef.current === null) {
+      return;
+    }
+
+    window.clearTimeout(reconnectTimerRef.current);
+    reconnectTimerRef.current = null;
+  }
+
+  async function initializeSessions(config = apiConfigRef.current) {
     setSocketStatus("Loading sessions");
     for (let attempt = 0; attempt < 20; attempt += 1) {
       try {
-        const loadedSessions = await fetchSessions();
+        const loadedSessions = await fetchSessions(config);
         if (loadedSessions.length > 0) {
           setSessions(loadedSessions);
           await selectSession(loadedSessions[0].id);
@@ -228,16 +303,9 @@ function App() {
     setSocketStatus("Backend offline");
   }
 
-  async function refreshSessionData(sessionId: string) {
-    const [loadedSessions, loadedMessages] = await Promise.all([
-      fetchSessions(),
-      fetchMessages(sessionId),
-    ]);
-
+  async function refreshSessionList() {
+    const loadedSessions = await fetchSessions(apiConfigRef.current);
     setSessions(loadedSessions);
-    if (activeSessionIdRef.current === sessionId || streamingSessionIdRef.current === sessionId) {
-      setMessages(loadedMessages);
-    }
   }
 
   async function selectSession(sessionId: string) {
@@ -245,7 +313,7 @@ function App() {
       return;
     }
 
-    const loadedMessages = await fetchMessages(sessionId);
+    const loadedMessages = await fetchMessages(apiConfigRef.current, sessionId);
     activeSessionIdRef.current = sessionId;
     setActiveSessionId(sessionId);
     setIsNewSessionDraft(false);
@@ -281,8 +349,8 @@ function App() {
       return;
     }
 
-    await updateSession(sessionId, title);
-    setSessions(await fetchSessions());
+    await updateSession(apiConfigRef.current, sessionId, title);
+    setSessions(await fetchSessions(apiConfigRef.current));
     setEditingSessionId(null);
   }
 
@@ -291,8 +359,8 @@ function App() {
       return;
     }
 
-    await deleteSession(sessionId);
-    const loadedSessions = await fetchSessions();
+    await deleteSession(apiConfigRef.current, sessionId);
+    const loadedSessions = await fetchSessions(apiConfigRef.current);
     if (loadedSessions.length === 0) {
       setSessions([]);
       startNewSessionDraft();
@@ -328,9 +396,9 @@ function App() {
     let sessionId = activeSessionId;
     if (!sessionId) {
       try {
-        const session = await createSession("New session");
+        const session = await createSession(apiConfigRef.current, "New session");
         sessionId = session.id;
-        setSessions(await fetchSessions());
+        setSessions(await fetchSessions(apiConfigRef.current));
         activeSessionIdRef.current = session.id;
         setActiveSessionId(session.id);
         setIsNewSessionDraft(false);
@@ -354,7 +422,7 @@ function App() {
       text: "",
     };
 
-    setMessages((current) => [...current, userMessage, agentMessage]);
+    setMessages((current) => [...current, userMessage]);
     streamingMessageIdRef.current = agentMessage.id;
     streamingSessionIdRef.current = sessionId;
     setPrompt("");
@@ -362,21 +430,63 @@ function App() {
     if (socket?.readyState === WebSocket.OPEN) {
       socket.send(JSON.stringify({ type: "prompt", session_id: sessionId, prompt: trimmedPrompt }));
     } else {
-      setMessages((current) =>
-        current.map((message) =>
-          message.id === agentMessage.id
-            ? {
-                ...message,
-                text: "Backend is offline. Restart the desktop app and try again.",
-              }
-            : message,
-        ),
-      );
+      setMessages((current) => [
+        ...current,
+        {
+          ...agentMessage,
+          text: "Backend is offline. Restart the desktop app and try again.",
+        },
+      ]);
       setSocketStatus("Backend offline");
+      scheduleReconnect();
       setIsStreaming(false);
       streamingMessageIdRef.current = null;
       streamingSessionIdRef.current = null;
     }
+  }
+
+  function finishStreamingWithError(errorText: string) {
+    const messageId = streamingMessageIdRef.current;
+    const sessionId = streamingSessionIdRef.current;
+
+    if (messageId) {
+      setMessages((current) =>
+        current.some((message) => message.id === messageId)
+          ? current.map((message) =>
+              message.id === messageId && !message.text.trim() ? { ...message, text: errorText } : message,
+            )
+          : [
+              ...current,
+              {
+                id: messageId,
+                session_id: sessionId ?? undefined,
+                role: "agent",
+                text: errorText,
+              },
+            ],
+      );
+    }
+
+    setIsStreaming(false);
+    streamingMessageIdRef.current = null;
+    streamingSessionIdRef.current = null;
+
+    if (sessionId) {
+      void refreshSessionList().catch(() => undefined);
+    }
+  }
+
+  function appendRunEventMessage(text: string) {
+    const sessionId = streamingSessionIdRef.current ?? activeSessionIdRef.current ?? undefined;
+    setMessages((current) => [
+      ...current,
+      {
+        id: crypto.randomUUID(),
+        session_id: sessionId,
+        role: "tool",
+        text,
+      },
+    ]);
   }
 
   return (
@@ -628,33 +738,46 @@ function App() {
   );
 }
 
-async function fetchSessions(): Promise<SessionSummary[]> {
-  return requestJson<SessionSummary[]>("/sessions");
+async function loadApiConfig(): Promise<ApiRuntimeConfig> {
+  try {
+    const config = await invoke<ApiRuntimeConfig>("api_config");
+    if (config.httpBaseUrl.trim() && config.wsChatUrl.trim()) {
+      return config;
+    }
+  } catch {
+    return DEFAULT_API_CONFIG;
+  }
+
+  return DEFAULT_API_CONFIG;
 }
 
-async function createSession(title: string): Promise<SessionSummary> {
-  return requestJson<SessionSummary>("/sessions", {
+async function fetchSessions(config: ApiRuntimeConfig): Promise<SessionSummary[]> {
+  return requestJson<SessionSummary[]>(config, "/sessions");
+}
+
+async function createSession(config: ApiRuntimeConfig, title: string): Promise<SessionSummary> {
+  return requestJson<SessionSummary>(config, "/sessions", {
     method: "POST",
     body: JSON.stringify({ title }),
   });
 }
 
-async function updateSession(sessionId: string, title: string): Promise<SessionSummary> {
-  return requestJson<SessionSummary>(`/sessions/${sessionId}`, {
+async function updateSession(config: ApiRuntimeConfig, sessionId: string, title: string): Promise<SessionSummary> {
+  return requestJson<SessionSummary>(config, `/sessions/${sessionId}`, {
     method: "PATCH",
     body: JSON.stringify({ title }),
   });
 }
 
-async function deleteSession(sessionId: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/sessions/${sessionId}`, { method: "DELETE" });
+async function deleteSession(config: ApiRuntimeConfig, sessionId: string): Promise<void> {
+  const response = await fetch(`${config.httpBaseUrl}/sessions/${sessionId}`, { method: "DELETE" });
   if (!response.ok) {
     throw new Error(`Delete failed: ${response.status}`);
   }
 }
 
-async function fetchMessages(sessionId: string): Promise<ChatMessage[]> {
-  const messages = await requestJson<ApiMessage[]>(`/sessions/${sessionId}/messages`);
+async function fetchMessages(config: ApiRuntimeConfig, sessionId: string): Promise<ChatMessage[]> {
+  const messages = await requestJson<ApiMessage[]>(config, `/sessions/${sessionId}/messages`);
   return messages.map((message) => ({
     id: message.id,
     session_id: message.session_id,
@@ -665,13 +788,13 @@ async function fetchMessages(sessionId: string): Promise<ChatMessage[]> {
   }));
 }
 
-async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
+async function requestJson<T>(config: ApiRuntimeConfig, path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${config.httpBaseUrl}${path}`, {
+    ...init,
     headers: {
       "Content-Type": "application/json",
       ...init?.headers,
     },
-    ...init,
   });
 
   if (!response.ok) {
@@ -679,6 +802,34 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return (await response.json()) as T;
+}
+
+function formatContextCompressed(payload: Extract<SocketPayload, { type: "context_compressed" }>): string {
+  const scope = payload.scope === "loop" ? "tool context" : "session context";
+  const compressed = typeof payload.compressed_messages === "number" ? `${payload.compressed_messages} messages` : "context";
+  return `Context compressed: ${scope}\nCompressed ${compressed}.`;
+}
+
+function formatToolCall(payload: Extract<SocketPayload, { type: "tool_call" }>): string {
+  const tool = payload.tool ?? "unknown_tool";
+  const argumentsText = compactToolText(payload.arguments ?? "{}");
+  return `Tool call: ${tool}\n${argumentsText}`;
+}
+
+function formatToolResult(payload: Extract<SocketPayload, { type: "tool_result" }>): string {
+  const tool = payload.tool ?? "unknown_tool";
+  const status = payload.success === false ? "failed" : "completed";
+  const content = compactToolText(payload.content ?? "");
+  return content ? `Tool result: ${tool} ${status}\n${content}` : `Tool result: ${tool} ${status}`;
+}
+
+function compactToolText(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  return trimmed.length > 700 ? `${trimmed.slice(0, 700)}...` : trimmed;
 }
 
 function sleep(milliseconds: number): Promise<void> {

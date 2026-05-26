@@ -377,6 +377,12 @@ h2 {
   display: block;
 }
 
+.message.tool {
+  display: block;
+  max-width: 780px;
+  padding: 6px 0;
+}
+
 .message.user {
   max-width: 720px;
   margin-left: auto;
@@ -392,6 +398,14 @@ h2 {
 .message.agent p {
   background: transparent;
   border-color: transparent;
+}
+
+.message.tool p {
+  color: #4b5c72;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.75rem;
+  background: #f6f8fb;
+  border-color: rgba(47, 127, 114, 0.18);
 }
 
 .avatar {

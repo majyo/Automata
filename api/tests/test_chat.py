@@ -5,6 +5,29 @@ import pytest
 from automata_api.services import tools
 
 
+def compact_event_types(events):
+    compacted = []
+    previous_was_token = False
+    for event in events:
+        event_type = event["type"]
+        if event_type == "token":
+            if not previous_was_token:
+                compacted.append(event_type)
+            previous_was_token = True
+            continue
+
+        compacted.append(event_type)
+        previous_was_token = False
+
+    return compacted
+
+
+def token_content(events):
+    return "".join(
+        event.get("content", "") for event in events if event["type"] == "token"
+    )
+
+
 def test_chat_websocket_reports_missing_llm_config(client):
     session = client.post("/sessions", json={"title": "Chat"}).json()
 
@@ -99,7 +122,7 @@ def test_chat_websocket_runs_agent_loop_with_placeholder_tool(client, monkeypatc
 
     assert ready["type"] == "ready"
     assert "DeepSeek agent ready" in ready["message"]
-    assert [event["type"] for event in events] == [
+    assert compact_event_types(events) == [
         "started",
         "agent_step",
         "tool_call",
@@ -111,7 +134,7 @@ def test_chat_websocket_runs_agent_loop_with_placeholder_tool(client, monkeypatc
     assert events[2]["tool"] == "inspect_workspace"
     assert events[3]["success"] is True
     assert '"simulated": true' in events[3]["content"]
-    assert events[5]["content"] == "I used a simulated workspace inspection and finished."
+    assert token_content(events) == "I used a simulated workspace inspection and finished."
 
     messages = client.get(f"/sessions/{session['id']}/messages").json()
     assert [message["role"] for message in messages] == ["user", "agent"]
@@ -184,7 +207,7 @@ def test_chat_websocket_runs_agent_loop_with_real_bash_tool(client, monkeypatch)
             if event["type"] in {"done", "error"}:
                 break
 
-    assert [event["type"] for event in events] == [
+    assert compact_event_types(events) == [
         "started",
         "agent_step",
         "tool_call",
@@ -196,7 +219,7 @@ def test_chat_websocket_runs_agent_loop_with_real_bash_tool(client, monkeypatch)
     assert events[2]["tool"] == "run_bash"
     assert events[3]["success"] is True
     assert '"simulated": false' in events[3]["content"]
-    assert events[5]["content"] == "Bash finished."
+    assert token_content(events) == "Bash finished."
     assert len(calls) == 2
 
 
@@ -265,7 +288,7 @@ def test_chat_websocket_runs_agent_loop_with_rg_tool(client, monkeypatch):
             if event["type"] in {"done", "error"}:
                 break
 
-    assert [event["type"] for event in events] == [
+    assert compact_event_types(events) == [
         "started",
         "agent_step",
         "tool_call",
@@ -277,7 +300,7 @@ def test_chat_websocket_runs_agent_loop_with_rg_tool(client, monkeypatch):
     assert events[2]["tool"] == "rg"
     assert events[3]["success"] is True
     assert '"simulated": false' in events[3]["content"]
-    assert events[5]["content"] == "Search finished."
+    assert token_content(events) == "Search finished."
     assert len(calls) == 2
 
 
@@ -357,7 +380,7 @@ def test_chat_websocket_runs_agent_loop_with_file_tools(client, monkeypatch, tmp
             if event["type"] in {"done", "error"}:
                 break
 
-    assert [event["type"] for event in events] == [
+    assert compact_event_types(events) == [
         "started",
         "agent_step",
         "tool_call",
@@ -372,5 +395,5 @@ def test_chat_websocket_runs_agent_loop_with_file_tools(client, monkeypatch, tmp
     assert events[3]["success"] is True
     assert events[4]["tool"] == "read_file"
     assert events[5]["success"] is True
-    assert events[7]["content"] == "File tools finished."
+    assert token_content(events) == "File tools finished."
     assert len(calls) == 2

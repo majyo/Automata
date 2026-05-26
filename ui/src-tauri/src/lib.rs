@@ -1,14 +1,17 @@
+use std::env;
 use std::fs;
 use std::net::TcpListener;
 use std::sync::Mutex;
 
+use serde::Serialize;
 use tauri::{Manager, WindowEvent};
 use tauri_plugin_shell::{
     process::{CommandChild, CommandEvent},
     ShellExt,
 };
 
-const API_ADDRESS: &str = "127.0.0.1:8765";
+const DEFAULT_API_HOST: &str = "127.0.0.1";
+const DEFAULT_API_PORT: u16 = 8765;
 const API_SIDECAR: &str = "automata-api";
 
 #[derive(Default)]
@@ -17,10 +20,28 @@ struct BackendState {
     status: Mutex<String>,
 }
 
+#[derive(Clone)]
+struct ResolvedApiConfig {
+    host: String,
+    port: u16,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ApiConfigResponse {
+    http_base_url: String,
+    ws_chat_url: String,
+}
+
 #[tauri::command]
 fn agent_status(workspace: &str, state: tauri::State<'_, BackendState>) -> String {
     let backend_status = state.status.lock().expect("backend status lock").clone();
     format!("Tauri bridge online for {workspace}. Backend: {backend_status}")
+}
+
+#[tauri::command]
+fn api_config() -> ApiConfigResponse {
+    resolve_api_config().to_response()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -41,7 +62,7 @@ pub fn run() {
                 stop_api_sidecar(window.app_handle());
             }
         })
-        .invoke_handler(tauri::generate_handler![agent_status])
+        .invoke_handler(tauri::generate_handler![agent_status, api_config])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
@@ -53,11 +74,13 @@ pub fn run() {
 
 fn start_api_sidecar(app: &mut tauri::App) {
     let app_handle = app.handle().clone();
+    let api_config = resolve_api_config();
+    let api_address = api_config.address();
 
-    if TcpListener::bind(API_ADDRESS).is_err() {
+    if TcpListener::bind(&api_address).is_err() {
         set_backend_status(
             &app_handle,
-            format!("Port {API_ADDRESS} is already in use. Close the existing process and restart."),
+            format!("Port {api_address} is already in use. Close the existing process and restart."),
         );
         return;
     }
@@ -83,14 +106,19 @@ fn start_api_sidecar(app: &mut tauri::App) {
         }
     };
 
-    match sidecar.env("AUTOMATA_DATA_DIR", data_dir).spawn() {
+    match sidecar
+        .env("AUTOMATA_DATA_DIR", data_dir)
+        .env("AUTOMATA_API_HOST", api_config.host)
+        .env("AUTOMATA_API_PORT", api_config.port.to_string())
+        .spawn()
+    {
         Ok((mut receiver, child)) => {
             {
                 let state = app.state::<BackendState>();
                 *state.child.lock().expect("backend child lock") = Some(child);
             }
 
-            set_backend_status(&app_handle, "Starting sidecar");
+            set_backend_status(&app_handle, format!("Starting sidecar at {api_address}"));
             tauri::async_runtime::spawn(async move {
                 while let Some(event) = receiver.recv().await {
                     match event {
@@ -134,4 +162,32 @@ fn stop_api_sidecar(app_handle: &tauri::AppHandle) {
 fn set_backend_status(app_handle: &tauri::AppHandle, status: impl Into<String>) {
     let state = app_handle.state::<BackendState>();
     *state.status.lock().expect("backend status lock") = status.into();
+}
+
+fn resolve_api_config() -> ResolvedApiConfig {
+    let host = env::var("AUTOMATA_API_HOST")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_API_HOST.to_string());
+    let port = env::var("AUTOMATA_API_PORT")
+        .ok()
+        .and_then(|value| value.trim().parse::<u16>().ok())
+        .filter(|port| *port > 0)
+        .unwrap_or(DEFAULT_API_PORT);
+
+    ResolvedApiConfig { host, port }
+}
+
+impl ResolvedApiConfig {
+    fn address(&self) -> String {
+        format!("{}:{}", self.host, self.port)
+    }
+
+    fn to_response(&self) -> ApiConfigResponse {
+        ApiConfigResponse {
+            http_base_url: format!("http://{}", self.address()),
+            ws_chat_url: format!("ws://{}/ws/chat", self.address()),
+        }
+    }
 }

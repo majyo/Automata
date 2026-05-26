@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 from typing import Any
@@ -33,7 +34,8 @@ from automata_api.services.tools import (
 
 
 MAX_AGENT_STEPS = 6
-TOKEN_CHUNK_SIZE = 80
+TOKEN_CHUNK_SIZE = 32
+TOKEN_STREAM_DELAY_SECONDS = 0.025
 RAW_CONTEXT_TAIL_MESSAGES = 8
 
 
@@ -62,6 +64,7 @@ async def stream_agent_reply(
         response = await run_agent_loop(websocket, session_id)
         for chunk in chunk_text(response):
             await websocket.send_json({"type": "token", "content": chunk})
+            await asyncio.sleep(TOKEN_STREAM_DELAY_SECONDS)
     except AgentConfigurationError as error:
         await websocket.send_json({"type": "error", "message": str(error)})
         return
