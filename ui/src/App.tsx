@@ -4,6 +4,8 @@ import {
   Activity,
   Check,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Code2,
   FileCode2,
   FolderGit2,
@@ -91,6 +93,7 @@ function App() {
   const [socketStatus, setSocketStatus] = useState("Connecting");
   const [isStreaming, setIsStreaming] = useState(false);
   const [isNewSessionDraft, setIsNewSessionDraft] = useState(false);
+  const [isInspectorExpanded, setIsInspectorExpanded] = useState(true);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const socketRef = useRef<WebSocket | null>(null);
@@ -624,7 +627,66 @@ function App() {
           </button>
         </header>
 
-        <section className="content-grid">
+        <aside className={`floating-inspector ${isInspectorExpanded ? "expanded" : "collapsed"}`} aria-label="Run details">
+          <button
+            className="floating-inspector-toggle"
+            type="button"
+            aria-expanded={isInspectorExpanded}
+            onClick={() => setIsInspectorExpanded((expanded) => !expanded)}
+          >
+            <span className="floating-status">
+              <Activity size={15} />
+              <span>{isInspectorExpanded ? "Run details" : socketStatus}</span>
+            </span>
+            {isInspectorExpanded ? <ChevronUp size={17} /> : <ChevronDown size={17} />}
+          </button>
+
+          {isInspectorExpanded && (
+            <div className="floating-inspector-body">
+              <section className="summary-band">
+                <span className="eyebrow">Tauri command</span>
+                <strong>{bridgeStatus}</strong>
+              </section>
+
+              <section className="task-list">
+                <div className="panel-header compact">
+                  <h2>Task queue</h2>
+                  <span className="status-pill" title={socketStatus}>
+                    <Activity size={14} />
+                    {socketStatus}
+                  </span>
+                </div>
+                <div className="task-row complete">
+                  <CheckCircle2 size={17} />
+                  <span>SQLite session storage</span>
+                </div>
+                <div className="task-row">
+                  <Activity size={17} />
+                  <span>WebSocket backend: {socketStatus}</span>
+                </div>
+                <div className="task-row">
+                  <FileCode2 size={17} />
+                  <span>{sessions.length} sessions tracked</span>
+                </div>
+              </section>
+
+              <section className="changes">
+                <div className="panel-header compact">
+                  <h2>Changed files</h2>
+                </div>
+                {fileChanges.map((change) => (
+                  <div className="change-row" key={change.path}>
+                    <FileCode2 size={16} />
+                    <span>{change.path}</span>
+                    <em>{change.state}</em>
+                  </div>
+                ))}
+              </section>
+            </div>
+          )}
+        </aside>
+
+        <section className="workspace-main">
           <section className="conversation-panel" aria-label="Agent conversation">
             <div className="panel-header">
               <div>
@@ -694,44 +756,6 @@ function App() {
               </>
             )}
           </section>
-
-          <aside className="inspector" aria-label="Run details">
-            <section className="summary-band">
-              <span className="eyebrow">Tauri command</span>
-              <strong>{bridgeStatus}</strong>
-            </section>
-
-            <section className="task-list">
-              <div className="panel-header compact">
-                <h2>Task queue</h2>
-              </div>
-              <div className="task-row complete">
-                <CheckCircle2 size={17} />
-                <span>SQLite session storage</span>
-              </div>
-              <div className="task-row">
-                <Activity size={17} />
-                <span>WebSocket backend: {socketStatus}</span>
-              </div>
-              <div className="task-row">
-                <FileCode2 size={17} />
-                <span>{sessions.length} sessions tracked</span>
-              </div>
-            </section>
-
-            <section className="changes">
-              <div className="panel-header compact">
-                <h2>Changed files</h2>
-              </div>
-              {fileChanges.map((change) => (
-                <div className="change-row" key={change.path}>
-                  <FileCode2 size={16} />
-                  <span>{change.path}</span>
-                  <em>{change.state}</em>
-                </div>
-              ))}
-            </section>
-          </aside>
         </section>
       </section>
     </main>
