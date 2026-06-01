@@ -1,10 +1,11 @@
 import asyncio
 import json
 import os
+import re
 import shutil
 import shlex
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 
@@ -21,6 +22,28 @@ class ToolResult:
     arguments: dict[str, Any]
     content: str
     success: bool
+
+
+@dataclass(frozen=True)
+class PatchHunkLine:
+    kind: str
+    content: str
+
+
+@dataclass(frozen=True)
+class PatchHunk:
+    old_start: int
+    old_count: int
+    new_start: int
+    new_count: int
+    lines: list[PatchHunkLine]
+
+
+@dataclass(frozen=True)
+class PatchFile:
+    old_path: str | None
+    new_path: str | None
+    hunks: list[PatchHunk]
 
 
 PlaceholderToolResult = ToolResult
@@ -259,24 +282,48 @@ def placeholder_tool_specs() -> list[dict[str, Any]]:
         {
             "type": "function",
             "function": {
-                "name": "apply_patch_preview",
+                "name": "apply_patch",
                 "description": (
-                    "Preview a code edit. Placeholder only: returns a simulated "
-                    "patch result and does not modify files."
+                    "Apply or dry-run a real unified diff patch inside the "
+                    "workspace. Use dry_run=true before applying when practical."
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "path": {
+                        "patch": {
                             "type": "string",
-                            "description": "Project-relative path that would be changed.",
+                            "description": "Unified diff patch text.",
                         },
-                        "summary": {
-                            "type": "string",
-                            "description": "Brief description of the intended change.",
+                        "dry_run": {
+                            "type": "boolean",
+                            "description": "Validate and summarize without writing. Defaults to true.",
+                        },
+                        "create_dirs": {
+                            "type": "boolean",
+                            "description": "Create parent directories for added files. Defaults to true.",
                         },
                     },
-                    "required": ["path", "summary"],
+                    "required": ["patch"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "apply_patch_preview",
+                "description": (
+                    "Dry-run a real unified diff patch inside the workspace. "
+                    "This validates and summarizes the patch without writing files."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "patch": {
+                            "type": "string",
+                            "description": "Unified diff patch text.",
+                        },
+                    },
+                    "required": ["patch"],
                 },
             },
         },
@@ -328,6 +375,13 @@ async def run_tool(
         return run_read_file(arguments, workspace)
     if name == "write_file":
         return run_write_file(arguments, workspace)
+    if name == "apply_patch":
+        return run_apply_patch(arguments, workspace, tool_name="apply_patch")
+    if name == "apply_patch_preview":
+        preview_arguments = {**arguments, "dry_run": True}
+        return run_apply_patch(
+            preview_arguments, workspace, tool_name="apply_patch_preview"
+        )
     if name == "rg":
         return await run_rg(arguments, workspace)
     if name == "grep":
@@ -336,7 +390,6 @@ async def run_tool(
     handlers = {
         "inspect_workspace": inspect_workspace,
         "search_code": search_code,
-        "apply_patch_preview": apply_patch_preview,
         "run_tests": run_tests,
     }
     handler = handlers.get(name)
@@ -364,7 +417,15 @@ async def run_tool(
 
 
 def is_real_tool(name: str) -> bool:
-    return name in {"run_bash", "rg", "grep", "read_file", "write_file"}
+    return name in {
+        "run_bash",
+        "rg",
+        "grep",
+        "read_file",
+        "write_file",
+        "apply_patch",
+        "apply_patch_preview",
+    }
 
 
 def run_placeholder_tool(
@@ -389,7 +450,6 @@ def run_placeholder_tool(
     handlers = {
         "inspect_workspace": inspect_workspace,
         "search_code": search_code,
-        "apply_patch_preview": apply_patch_preview,
         "run_tests": run_tests,
     }
     handler = handlers.get(name)
@@ -992,6 +1052,405 @@ def run_write_file(arguments: dict[str, Any], workspace: str) -> ToolResult:
     )
 
 
+def run_apply_patch(
+    arguments: dict[str, Any], workspace: str, *, tool_name: str = "apply_patch"
+) -> ToolResult:
+    workspace_path = Path(workspace).expanduser().resolve()
+    patch = arguments.get("patch")
+    dry_run = bool_argument(arguments, "dry_run", True)
+    create_dirs = bool_argument(arguments, "create_dirs", True)
+
+    if not isinstance(patch, str) or not patch.strip():
+        return patch_error_result(
+            tool_name=tool_name,
+            arguments=arguments,
+            dry_run=dry_run,
+            error="Missing required string patch.",
+        )
+
+    parsed_files, parse_error = parse_unified_patch(patch)
+    if parse_error:
+        return patch_error_result(
+            tool_name=tool_name,
+            arguments=arguments,
+            dry_run=dry_run,
+            error=parse_error,
+        )
+
+    planned_changes: list[dict[str, Any]] = []
+    file_results: list[dict[str, Any]] = []
+    for file_patch in parsed_files:
+        plan, error = plan_patch_file(file_patch, workspace_path)
+        if error:
+            return patch_error_result(
+                tool_name=tool_name,
+                arguments=arguments,
+                dry_run=dry_run,
+                error=error["error"],
+                path=error.get("path", ""),
+            )
+
+        assert plan is not None
+        planned_changes.append(plan)
+        file_results.append(
+            {
+                "path": plan["path"],
+                "status": plan["status"],
+                "hunks": len(file_patch.hunks),
+                "old_lines": plan["old_lines"],
+                "new_lines": plan["new_lines"],
+            }
+        )
+
+    if not dry_run and not create_dirs:
+        for plan in planned_changes:
+            path = plan["absolute_path"]
+            if plan["status"] != "deleted" and not path.parent.exists():
+                return patch_error_result(
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    dry_run=dry_run,
+                    error=f"Parent directory does not exist: {path.parent}",
+                    path=plan["path"],
+                )
+
+    if not dry_run:
+        for plan in planned_changes:
+            path = plan["absolute_path"]
+            try:
+                if plan["status"] == "deleted":
+                    path.unlink()
+                    continue
+
+                if not path.parent.exists():
+                    path.parent.mkdir(parents=True, exist_ok=True)
+
+                path.write_text(plan["content"], encoding="utf-8", newline="")
+            except OSError as error:
+                return patch_error_result(
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    dry_run=dry_run,
+                    error=f"Failed to apply patch: {error}",
+                    path=plan["path"],
+                )
+
+    payload = {
+        "simulated": False,
+        "ok": True,
+        "tool": tool_name,
+        "dry_run": dry_run,
+        "files": file_results,
+        "summary": patch_summary(file_results),
+    }
+    return ToolResult(
+        name=tool_name,
+        arguments=arguments,
+        content=json_response(payload),
+        success=True,
+    )
+
+
+def parse_unified_patch(patch: str) -> tuple[list[PatchFile], str | None]:
+    if "GIT binary patch" in patch or re.search(r"^Binary files .+ differ$", patch, re.MULTILINE):
+        return [], "Binary patches are not supported."
+
+    normalized_patch = patch.replace("\r\n", "\n").replace("\r", "\n")
+    lines = normalized_patch.splitlines(keepends=True)
+    files: list[PatchFile] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if line.startswith("--- "):
+            file_patch, index_or_error = parse_patch_file(lines, index)
+            if isinstance(index_or_error, str):
+                return [], index_or_error
+            files.append(file_patch)
+            index = index_or_error
+            continue
+
+        index += 1
+
+    if not files:
+        return [], "Patch must contain at least one unified diff file header."
+
+    return files, None
+
+
+def parse_patch_file(
+    lines: list[str], start_index: int
+) -> tuple[PatchFile, int | str]:
+    old_path, old_error = diff_header_path(lines[start_index], "--- ")
+    if old_error:
+        return PatchFile(None, None, []), old_error
+
+    next_index = start_index + 1
+    if next_index >= len(lines) or not lines[next_index].startswith("+++ "):
+        return PatchFile(None, None, []), "Malformed patch: missing +++ file header."
+
+    new_path, new_error = diff_header_path(lines[next_index], "+++ ")
+    if new_error:
+        return PatchFile(None, None, []), new_error
+
+    hunks: list[PatchHunk] = []
+    index = next_index + 1
+    while index < len(lines):
+        line = lines[index]
+        if line.startswith("--- "):
+            break
+        if line.startswith("diff --git ") and hunks:
+            break
+        if line.startswith("@@ "):
+            hunk, index_or_error = parse_patch_hunk(lines, index)
+            if isinstance(index_or_error, str):
+                return PatchFile(old_path, new_path, hunks), index_or_error
+            hunks.append(hunk)
+            index = index_or_error
+            continue
+        if line.strip() == "":
+            index += 1
+            continue
+        if line.startswith(("diff --git ", "index ", "new file mode ", "deleted file mode ")):
+            if hunks:
+                break
+            index += 1
+            continue
+
+        return PatchFile(old_path, new_path, hunks), (
+            f"Malformed patch: expected hunk header after file header for "
+            f"{new_path or old_path or 'unknown file'}."
+        )
+
+    if not hunks:
+        return PatchFile(old_path, new_path, hunks), (
+            f"Patch for {new_path or old_path or 'unknown file'} has no content hunks."
+        )
+
+    return PatchFile(old_path, new_path, hunks), index
+
+
+def parse_patch_hunk(lines: list[str], start_index: int) -> tuple[PatchHunk, int | str]:
+    header = lines[start_index].rstrip("\r\n")
+    match = re.match(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", header)
+    if not match:
+        return PatchHunk(0, 0, 0, 0, []), f"Malformed hunk header: {header}"
+
+    old_start = int(match.group(1))
+    old_count = int(match.group(2) or "1")
+    new_start = int(match.group(3))
+    new_count = int(match.group(4) or "1")
+    hunk_lines: list[PatchHunkLine] = []
+    index = start_index + 1
+    while index < len(lines):
+        line = lines[index]
+        if line.startswith("@@ ") or line.startswith("--- ") or line.startswith("diff --git "):
+            break
+        if line.startswith("\\ No newline at end of file"):
+            index += 1
+            continue
+        if not line:
+            return PatchHunk(0, 0, 0, 0, []), "Malformed patch: empty hunk line."
+        kind = line[0]
+        if kind not in {" ", "+", "-"}:
+            return PatchHunk(0, 0, 0, 0, []), (
+                f"Malformed patch: invalid hunk line prefix {kind!r}."
+            )
+        hunk_lines.append(PatchHunkLine(kind=kind, content=line[1:]))
+        index += 1
+
+    observed_old_count = sum(1 for line in hunk_lines if line.kind in {" ", "-"})
+    observed_new_count = sum(1 for line in hunk_lines if line.kind in {" ", "+"})
+    if observed_old_count != old_count or observed_new_count != new_count:
+        return PatchHunk(0, 0, 0, 0, []), (
+            "Malformed patch: hunk line counts do not match header "
+            f"({observed_old_count}/{old_count} old, "
+            f"{observed_new_count}/{new_count} new)."
+        )
+
+    return (
+        PatchHunk(
+            old_start=old_start,
+            old_count=old_count,
+            new_start=new_start,
+            new_count=new_count,
+            lines=hunk_lines,
+        ),
+        index,
+    )
+
+
+def diff_header_path(line: str, prefix: str) -> tuple[str | None, str | None]:
+    raw_path = line[len(prefix) :].strip()
+    path = raw_path.split("\t", 1)[0].split(" ", 1)[0]
+    if path == "/dev/null":
+        return None, None
+
+    if len(path) > 2 and path[1] == "/" and path[0] in {"a", "b"}:
+        path = path[2:]
+
+    normalized = path.replace("\\", "/")
+    parts = PurePosixPath(normalized).parts
+    if not normalized or normalized in {".", "/"}:
+        return None, "Patch file path is empty."
+    if normalized.startswith("/") or re.match(r"^[A-Za-z]:", normalized):
+        return None, f"Patch file path must be relative: {path}"
+    if any(part in {"", ".", ".."} for part in parts):
+        return None, f"Patch file path must not escape the workspace: {path}"
+
+    return PurePosixPath(normalized).as_posix(), None
+
+
+def plan_patch_file(
+    file_patch: PatchFile, workspace_path: Path
+) -> tuple[dict[str, Any] | None, dict[str, str] | None]:
+    status = patch_file_status(file_patch)
+    if status is None:
+        return None, {
+            "path": file_patch.new_path or file_patch.old_path or "",
+            "error": "Patch must use /dev/null for either add or delete, not both.",
+        }
+
+    relative_path = file_patch.new_path if status != "deleted" else file_patch.old_path
+    if not relative_path:
+        return None, {
+            "path": "",
+            "error": "Patch file path is missing.",
+        }
+
+    path_result = resolve_file_path(workspace_path, relative_path)
+    if isinstance(path_result, str):
+        return None, {"path": relative_path, "error": path_result}
+
+    if status == "added":
+        if path_result.exists():
+            return None, {
+                "path": relative_path,
+                "error": f"File already exists: {path_result}",
+            }
+        original_content = ""
+    else:
+        if not path_result.exists():
+            return None, {
+                "path": relative_path,
+                "error": f"File does not exist: {path_result}",
+            }
+        if not path_result.is_file():
+            return None, {
+                "path": relative_path,
+                "error": f"Path is not a file: {path_result}",
+            }
+        try:
+            original_content = path_result.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            return None, {
+                "path": relative_path,
+                "error": f"File is not valid UTF-8 text: {path_result}",
+            }
+        except OSError as error:
+            return None, {
+                "path": relative_path,
+                "error": f"Failed to read file: {error}",
+            }
+
+    new_content, apply_error = apply_hunks_to_content(
+        original_content, file_patch.hunks, relative_path
+    )
+    if apply_error:
+        return None, {"path": relative_path, "error": apply_error}
+
+    return (
+        {
+            "path": relative_path,
+            "absolute_path": path_result,
+            "status": status,
+            "content": new_content,
+            "old_lines": len(original_content.splitlines()),
+            "new_lines": 0 if status == "deleted" else len(new_content.splitlines()),
+        },
+        None,
+    )
+
+
+def patch_file_status(file_patch: PatchFile) -> str | None:
+    if file_patch.old_path is None and file_patch.new_path is None:
+        return None
+    if file_patch.old_path is None:
+        return "added"
+    if file_patch.new_path is None:
+        return "deleted"
+    return "modified"
+
+
+def apply_hunks_to_content(
+    original_content: str, hunks: list[PatchHunk], relative_path: str
+) -> tuple[str, str | None]:
+    original_lines = original_content.splitlines(keepends=True)
+    new_lines: list[str] = []
+    cursor = 0
+
+    for hunk in hunks:
+        start_index = max(hunk.old_start - 1, 0)
+        if start_index < cursor or start_index > len(original_lines):
+            return "", f"Hunk position is invalid for {relative_path}."
+
+        new_lines.extend(original_lines[cursor:start_index])
+        cursor = start_index
+
+        for hunk_line in hunk.lines:
+            if hunk_line.kind == "+":
+                new_lines.append(hunk_line.content)
+                continue
+
+            if cursor >= len(original_lines):
+                return "", f"Hunk context extends past end of file for {relative_path}."
+
+            if original_lines[cursor] != hunk_line.content:
+                return "", (
+                    f"Hunk context mismatch for {relative_path} at line {cursor + 1}."
+                )
+
+            if hunk_line.kind == " ":
+                new_lines.append(original_lines[cursor])
+            cursor += 1
+
+    new_lines.extend(original_lines[cursor:])
+    return "".join(new_lines), None
+
+
+def patch_summary(files: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "added": sum(1 for file in files if file["status"] == "added"),
+        "modified": sum(1 for file in files if file["status"] == "modified"),
+        "deleted": sum(1 for file in files if file["status"] == "deleted"),
+        "hunks": sum(int(file["hunks"]) for file in files),
+    }
+
+
+def patch_error_result(
+    *,
+    tool_name: str,
+    arguments: dict[str, Any],
+    dry_run: bool,
+    error: str,
+    path: str = "",
+) -> ToolResult:
+    return ToolResult(
+        name=tool_name,
+        arguments=arguments,
+        content=json_response(
+            {
+                "simulated": False,
+                "ok": False,
+                "tool": tool_name,
+                "dry_run": dry_run,
+                "path": path,
+                "error": error,
+            }
+        ),
+        success=False,
+    )
+
+
 def resolve_file_path(workspace_path: Path, raw_path: Any) -> Path | str:
     requested_path = raw_path if isinstance(raw_path, str) and raw_path.strip() else ""
     if not requested_path:
@@ -1311,19 +1770,6 @@ def search_code(arguments: dict[str, Any], workspace: str) -> dict[str, Any]:
                 "preview": f"Simulated match for {query or 'empty query'}",
             }
         ],
-    }
-
-
-def apply_patch_preview(arguments: dict[str, Any], workspace: str) -> dict[str, Any]:
-    path = string_argument(arguments, "path", "unknown")
-    summary = string_argument(arguments, "summary", "No summary provided.")
-    return {
-        "simulated": True,
-        "ok": True,
-        "workspace": workspace,
-        "path": path,
-        "summary": summary,
-        "result": "Patch preview accepted. No files were modified.",
     }
 
 

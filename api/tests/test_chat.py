@@ -5,6 +5,10 @@ import pytest
 from automata_api.services import tools
 
 
+def patch_text(*lines):
+    return "\n".join(lines) + "\n"
+
+
 def compact_event_types(events):
     compacted = []
     previous_was_token = False
@@ -396,4 +400,96 @@ def test_chat_websocket_runs_agent_loop_with_file_tools(client, monkeypatch, tmp
     assert events[4]["tool"] == "read_file"
     assert events[5]["success"] is True
     assert token_content(events) == "File tools finished."
+    assert len(calls) == 2
+
+
+def test_chat_websocket_runs_agent_loop_with_apply_patch_tool(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
+    monkeypatch.setenv("AUTOMATA_WORKSPACE_DIR", str(tmp_path))
+    source = tmp_path / "sample.txt"
+    source.write_text("one\ntwo\nthree\n", encoding="utf-8")
+    session = client.post("/sessions", json={"title": "Patch Agent"}).json()
+    patch = patch_text(
+        "--- a/sample.txt",
+        "+++ b/sample.txt",
+        "@@ -1,3 +1,3 @@",
+        " one",
+        "-two",
+        "+TWO",
+        " three",
+    )
+    calls = []
+
+    async def fake_create_llm_response(messages, tools=None):
+        calls.append({"messages": list(messages), "tools": tools})
+        if len(calls) == 1:
+            assert tools is not None
+            tool_names = {tool["function"]["name"] for tool in tools}
+            assert "apply_patch" in tool_names
+            return {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_patch_1",
+                        "type": "function",
+                        "function": {
+                            "name": "apply_patch",
+                            "arguments": json.dumps(
+                                {"patch": patch, "dry_run": False}
+                            ),
+                        },
+                    }
+                ],
+            }
+
+        assert messages[-1]["role"] == "tool"
+        assert messages[-1]["tool_call_id"] == "call_patch_1"
+        result = json.loads(messages[-1]["content"])
+        assert result["simulated"] is False
+        assert result["ok"] is True
+        assert result["tool"] == "apply_patch"
+        assert result["dry_run"] is False
+        assert source.read_text(encoding="utf-8") == "one\nTWO\nthree\n"
+        return {
+            "role": "assistant",
+            "content": "Patch finished.",
+            "tool_calls": [],
+        }
+
+    monkeypatch.setattr(
+        "automata_api.services.agent.create_llm_response",
+        fake_create_llm_response,
+    )
+
+    with client.websocket_connect("/ws/chat") as websocket:
+        websocket.receive_json()
+        websocket.send_json(
+            {
+                "type": "prompt",
+                "session_id": session["id"],
+                "prompt": "patch a file",
+            }
+        )
+
+        events = []
+        while True:
+            event = websocket.receive_json()
+            events.append(event)
+            if event["type"] in {"done", "error"}:
+                break
+
+    assert compact_event_types(events) == [
+        "started",
+        "agent_step",
+        "tool_call",
+        "tool_result",
+        "agent_step",
+        "token",
+        "done",
+    ]
+    assert events[2]["tool"] == "apply_patch"
+    assert events[3]["success"] is True
+    assert '"simulated": false' in events[3]["content"]
+    assert token_content(events) == "Patch finished."
     assert len(calls) == 2

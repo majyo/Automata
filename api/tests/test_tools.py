@@ -6,6 +6,10 @@ import pytest
 from automata_api.services import tools
 
 
+def patch_text(*lines):
+    return "\n".join(lines) + "\n"
+
+
 def test_run_bash_executes_command_in_workspace(tmp_path):
     if tools.resolve_bash_executable() is None:
         pytest.skip("bash is not available")
@@ -318,3 +322,208 @@ def test_write_file_rejects_path_outside_workspace(tmp_path):
     assert payload["simulated"] is False
     assert payload["ok"] is False
     assert "path must stay inside workspace" in payload["error"]
+
+
+def test_apply_patch_dry_run_modify_leaves_file_unchanged(tmp_path):
+    source = tmp_path / "sample.txt"
+    source.write_text("one\ntwo\nthree\n", encoding="utf-8")
+    patch = patch_text(
+        "--- a/sample.txt",
+        "+++ b/sample.txt",
+        "@@ -1,3 +1,3 @@",
+        " one",
+        "-two",
+        "+TWO",
+        " three",
+    )
+
+    result = asyncio.run(
+        tools.run_tool("apply_patch", {"patch": patch, "dry_run": True}, str(tmp_path))
+    )
+    payload = json.loads(result.content)
+
+    assert result.success is True
+    assert payload["simulated"] is False
+    assert payload["ok"] is True
+    assert payload["dry_run"] is True
+    assert payload["summary"] == {"added": 0, "modified": 1, "deleted": 0, "hunks": 1}
+    assert payload["files"][0]["path"] == "sample.txt"
+    assert source.read_text(encoding="utf-8") == "one\ntwo\nthree\n"
+
+
+def test_apply_patch_apply_modify_changes_expected_content(tmp_path):
+    source = tmp_path / "sample.txt"
+    source.write_text("one\ntwo\nthree\n", encoding="utf-8")
+    patch = patch_text(
+        "--- a/sample.txt",
+        "+++ b/sample.txt",
+        "@@ -1,3 +1,3 @@",
+        " one",
+        "-two",
+        "+TWO",
+        " three",
+    )
+
+    result = asyncio.run(
+        tools.run_tool("apply_patch", {"patch": patch, "dry_run": False}, str(tmp_path))
+    )
+    payload = json.loads(result.content)
+
+    assert result.success is True
+    assert payload["dry_run"] is False
+    assert payload["files"][0]["status"] == "modified"
+    assert source.read_text(encoding="utf-8") == "one\nTWO\nthree\n"
+
+
+def test_apply_patch_add_file_creates_text_file(tmp_path):
+    patch = patch_text(
+        "--- /dev/null",
+        "+++ b/nested/new.txt",
+        "@@ -0,0 +1,2 @@",
+        "+hello",
+        "+world",
+    )
+
+    result = asyncio.run(
+        tools.run_tool("apply_patch", {"patch": patch, "dry_run": False}, str(tmp_path))
+    )
+    payload = json.loads(result.content)
+
+    assert result.success is True
+    assert payload["files"][0]["status"] == "added"
+    assert (tmp_path / "nested" / "new.txt").read_text(encoding="utf-8") == "hello\nworld\n"
+
+
+def test_apply_patch_delete_file_removes_target(tmp_path):
+    source = tmp_path / "delete.txt"
+    source.write_text("alpha\nbeta\n", encoding="utf-8")
+    patch = patch_text(
+        "--- a/delete.txt",
+        "+++ /dev/null",
+        "@@ -1,2 +0,0 @@",
+        "-alpha",
+        "-beta",
+    )
+
+    result = asyncio.run(
+        tools.run_tool("apply_patch", {"patch": patch, "dry_run": False}, str(tmp_path))
+    )
+    payload = json.loads(result.content)
+
+    assert result.success is True
+    assert payload["files"][0]["status"] == "deleted"
+    assert not source.exists()
+
+
+def test_apply_patch_multiple_files_apply_atomically(tmp_path):
+    source = tmp_path / "a.txt"
+    source.write_text("before\n", encoding="utf-8")
+    patch = patch_text(
+        "--- a/a.txt",
+        "+++ b/a.txt",
+        "@@ -1 +1 @@",
+        "-before",
+        "+after",
+        "--- /dev/null",
+        "+++ b/b.txt",
+        "@@ -0,0 +1 @@",
+        "+created",
+    )
+
+    result = asyncio.run(
+        tools.run_tool("apply_patch", {"patch": patch, "dry_run": False}, str(tmp_path))
+    )
+    payload = json.loads(result.content)
+
+    assert result.success is True
+    assert payload["summary"] == {"added": 1, "modified": 1, "deleted": 0, "hunks": 2}
+    assert source.read_text(encoding="utf-8") == "after\n"
+    assert (tmp_path / "b.txt").read_text(encoding="utf-8") == "created\n"
+
+
+def test_apply_patch_context_mismatch_fails_without_writing(tmp_path):
+    first = tmp_path / "first.txt"
+    second = tmp_path / "second.txt"
+    first.write_text("one\n", encoding="utf-8")
+    second.write_text("actual\n", encoding="utf-8")
+    patch = patch_text(
+        "--- a/first.txt",
+        "+++ b/first.txt",
+        "@@ -1 +1 @@",
+        "-one",
+        "+changed",
+        "--- a/second.txt",
+        "+++ b/second.txt",
+        "@@ -1 +1 @@",
+        "-expected",
+        "+changed",
+    )
+
+    result = asyncio.run(
+        tools.run_tool("apply_patch", {"patch": patch, "dry_run": False}, str(tmp_path))
+    )
+    payload = json.loads(result.content)
+
+    assert result.success is False
+    assert payload["simulated"] is False
+    assert "Hunk context mismatch" in payload["error"]
+    assert first.read_text(encoding="utf-8") == "one\n"
+    assert second.read_text(encoding="utf-8") == "actual\n"
+
+
+def test_apply_patch_rejects_path_escape(tmp_path):
+    patch = patch_text(
+        "--- /dev/null",
+        "+++ b/../outside.txt",
+        "@@ -0,0 +1 @@",
+        "+nope",
+    )
+
+    result = asyncio.run(
+        tools.run_tool("apply_patch", {"patch": patch, "dry_run": False}, str(tmp_path))
+    )
+    payload = json.loads(result.content)
+
+    assert result.success is False
+    assert payload["simulated"] is False
+    assert "must not escape the workspace" in payload["error"]
+    assert not (tmp_path.parent / "outside.txt").exists()
+
+
+def test_apply_patch_rejects_malformed_patch(tmp_path):
+    result = asyncio.run(
+        tools.run_tool(
+            "apply_patch",
+            {"patch": patch_text("--- a/file.txt", "+++ b/file.txt"), "dry_run": False},
+            str(tmp_path),
+        )
+    )
+    payload = json.loads(result.content)
+
+    assert result.success is False
+    assert payload["simulated"] is False
+    assert "has no content hunks" in payload["error"]
+
+
+def test_apply_patch_preview_is_real_dry_run_alias(tmp_path):
+    source = tmp_path / "sample.txt"
+    source.write_text("one\ntwo\n", encoding="utf-8")
+    patch = patch_text(
+        "--- a/sample.txt",
+        "+++ b/sample.txt",
+        "@@ -1,2 +1,2 @@",
+        " one",
+        "-two",
+        "+TWO",
+    )
+
+    result = asyncio.run(
+        tools.run_tool("apply_patch_preview", {"patch": patch, "dry_run": False}, str(tmp_path))
+    )
+    payload = json.loads(result.content)
+
+    assert result.success is True
+    assert payload["simulated"] is False
+    assert payload["tool"] == "apply_patch_preview"
+    assert payload["dry_run"] is True
+    assert source.read_text(encoding="utf-8") == "one\ntwo\n"

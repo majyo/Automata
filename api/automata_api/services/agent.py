@@ -387,15 +387,17 @@ def agent_system_prompt() -> str:
         "plan and explain, and be explicit when an observation is simulated.\n\n"
         "You can also use run_bash to execute real bash commands inside the "
         "workspace. run_bash results have simulated=false and may have command "
-        "side effects. Prefer run_bash for checks and tests, but do not claim "
-        "that files were edited unless a real edit tool is added and reports "
-        "that edit.\n\n"
+        "side effects. Prefer run_bash for checks and tests.\n\n"
         "For code or text search, prefer the rg tool first. It automatically "
         "falls back to grep and then to run_bash when needed. Use grep directly "
         "only when grep behavior is specifically required.\n\n"
         "Use read_file to inspect exact file contents and write_file only when "
         "the user explicitly asks you to create or change files. Both operate "
-        "on real workspace files and return simulated=false."
+        "on real workspace files and return simulated=false.\n\n"
+        "Use apply_patch for targeted code edits with unified diffs. When "
+        "practical, call apply_patch with dry_run=true before applying changes "
+        "with dry_run=false. Only claim files were changed after apply_patch or "
+        "write_file returns simulated=false and ok=true."
     )
 
 
