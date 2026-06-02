@@ -1,6 +1,12 @@
 from automata_api.repositories.sessions import (
+    PlanNotFoundError,
+    SessionNotFoundError,
+    approve_plan,
+    create_plan,
     fetch_context_summary,
+    fetch_plan,
     list_messages,
+    mark_plan_executed,
     save_message,
     upsert_context_summary,
 )
@@ -63,3 +69,72 @@ def test_context_summary_is_hidden_from_visible_messages(client):
     assert client.get(f"/sessions/{session['id']}/messages").json()[0]["content"] == (
         "visible message"
     )
+
+
+def test_session_plans_supersede_pending_plans(client):
+    session = client.post("/sessions", json={"title": "Plans"}).json()
+    first_prompt = save_message(
+        session_id=session["id"],
+        role="user",
+        content="first prompt",
+    )
+    first_plan_message = save_message(
+        session_id=session["id"],
+        role="agent",
+        content="first plan",
+    )
+    first_plan = create_plan(
+        session_id=session["id"],
+        prompt_message_id=first_prompt["id"],
+        plan_message_id=first_plan_message["id"],
+        content="first plan",
+    )
+
+    second_prompt = save_message(
+        session_id=session["id"],
+        role="user",
+        content="second prompt",
+    )
+    second_plan_message = save_message(
+        session_id=session["id"],
+        role="agent",
+        content="second plan",
+    )
+    second_plan = create_plan(
+        session_id=session["id"],
+        prompt_message_id=second_prompt["id"],
+        plan_message_id=second_plan_message["id"],
+        content="second plan",
+    )
+
+    assert fetch_plan(session["id"], first_plan["id"])["status"] == "superseded"
+    assert fetch_plan(session["id"], second_plan["id"])["status"] == "pending"
+
+    approved = approve_plan(session["id"], second_plan["id"])
+    assert approved["status"] == "approved"
+    executed = mark_plan_executed(session["id"], second_plan["id"])
+    assert executed["status"] == "executed"
+
+
+def test_session_delete_cascades_plans(client):
+    session = client.post("/sessions", json={"title": "Plan cascade"}).json()
+    prompt = save_message(session_id=session["id"], role="user", content="prompt")
+    plan_message = save_message(session_id=session["id"], role="agent", content="plan")
+    plan = create_plan(
+        session_id=session["id"],
+        prompt_message_id=prompt["id"],
+        plan_message_id=plan_message["id"],
+        content="plan",
+    )
+
+    assert fetch_plan(session["id"], plan["id"])["status"] == "pending"
+    assert client.delete(f"/sessions/{session['id']}").status_code == 204
+
+    try:
+        fetch_plan(session["id"], plan["id"])
+    except SessionNotFoundError:
+        pass
+    except PlanNotFoundError:
+        pass
+    else:
+        raise AssertionError("Plan should be removed with its session")

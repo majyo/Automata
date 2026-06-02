@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from automata_api.repositories.sessions import fetch_plan
 from automata_api.services import tools
 
 
@@ -493,3 +494,254 @@ def test_chat_websocket_runs_agent_loop_with_apply_patch_tool(client, monkeypatc
     assert '"simulated": false' in events[3]["content"]
     assert token_content(events) == "Patch finished."
     assert len(calls) == 2
+
+
+def test_chat_websocket_plan_mode_persists_pending_plan(client, monkeypatch):
+    monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
+    session = client.post("/sessions", json={"title": "Plan Agent"}).json()
+    calls = []
+
+    async def fake_create_llm_response(messages, tools=None):
+        calls.append({"messages": list(messages), "tools": tools})
+        assert tools is not None
+        tool_names = {tool["function"]["name"] for tool in tools}
+        assert "read_file" in tool_names
+        assert "apply_patch_preview" in tool_names
+        assert "run_bash" not in tool_names
+        assert "write_file" not in tool_names
+        assert "apply_patch" not in tool_names
+        assert "backend Plan mode" in messages[0]["content"]
+        return {
+            "role": "assistant",
+            "content": "# Plan\n\n1. Inspect.\n2. Implement.",
+            "tool_calls": [],
+        }
+
+    monkeypatch.setattr(
+        "automata_api.services.agent.create_llm_response",
+        fake_create_llm_response,
+    )
+
+    with client.websocket_connect("/ws/chat") as websocket:
+        websocket.receive_json()
+        websocket.send_json(
+            {
+                "type": "prompt",
+                "session_id": session["id"],
+                "prompt": "make a plan",
+                "mode": "plan",
+            }
+        )
+
+        events = []
+        while True:
+            event = websocket.receive_json()
+            events.append(event)
+            if event["type"] == "done":
+                break
+
+    assert compact_event_types(events) == [
+        "started",
+        "agent_step",
+        "plan_ready",
+        "done",
+    ]
+    plan_ready = events[2]
+    assert plan_ready["status"] == "pending"
+    assert plan_ready["content"] == "# Plan\n\n1. Inspect.\n2. Implement."
+
+    plan = fetch_plan(session["id"], plan_ready["plan_id"])
+    assert plan["status"] == "pending"
+    assert plan["content"] == plan_ready["content"]
+
+    messages = client.get(f"/sessions/{session['id']}/messages").json()
+    assert [message["role"] for message in messages] == ["user", "agent"]
+    assert messages[1]["content"] == plan_ready["content"]
+    assert len(calls) == 1
+
+
+def test_chat_websocket_plan_mode_blocks_mutating_tools(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
+    monkeypatch.setenv("AUTOMATA_WORKSPACE_DIR", str(tmp_path))
+    session = client.post("/sessions", json={"title": "Blocked Plan"}).json()
+    target = tmp_path / "blocked.txt"
+    calls = []
+
+    async def fake_create_llm_response(messages, tools=None):
+        calls.append({"messages": list(messages), "tools": tools})
+        if len(calls) == 1:
+            return {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_write_blocked",
+                        "type": "function",
+                        "function": {
+                            "name": "write_file",
+                            "arguments": (
+                                '{"path": "blocked.txt", "content": "should not write"}'
+                            ),
+                        },
+                    }
+                ],
+            }
+
+        assert messages[-1]["role"] == "tool"
+        result = json.loads(messages[-1]["content"])
+        assert result["ok"] is False
+        assert result["error"] == "blocked_by_plan_mode"
+        return {
+            "role": "assistant",
+            "content": "Plan after blocked tool.",
+            "tool_calls": [],
+        }
+
+    monkeypatch.setattr(
+        "automata_api.services.agent.create_llm_response",
+        fake_create_llm_response,
+    )
+
+    with client.websocket_connect("/ws/chat") as websocket:
+        websocket.receive_json()
+        websocket.send_json(
+            {
+                "type": "prompt",
+                "session_id": session["id"],
+                "prompt": "plan with a bad tool",
+                "mode": "plan",
+            }
+        )
+
+        events = []
+        while True:
+            event = websocket.receive_json()
+            events.append(event)
+            if event["type"] == "done":
+                break
+
+    assert compact_event_types(events) == [
+        "started",
+        "agent_step",
+        "tool_call",
+        "tool_result",
+        "agent_step",
+        "plan_ready",
+        "done",
+    ]
+    assert events[2]["tool"] == "write_file"
+    assert events[3]["success"] is False
+    assert "blocked_by_plan_mode" in events[3]["content"]
+    assert not target.exists()
+
+
+def test_chat_websocket_approve_plan_executes_and_marks_executed(client, monkeypatch):
+    monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
+    session = client.post("/sessions", json={"title": "Approve Plan"}).json()
+    calls = []
+
+    async def fake_create_llm_response(messages, tools=None):
+        calls.append({"messages": list(messages), "tools": tools})
+        if len(calls) == 1:
+            return {
+                "role": "assistant",
+                "content": "Approved implementation plan.",
+                "tool_calls": [],
+            }
+
+        assert tools is not None
+        assert any(tool["function"]["name"] == "write_file" for tool in tools)
+        assert any(
+            "Approved implementation plan." in message["content"]
+            for message in messages
+            if message["role"] == "system"
+        )
+        return {
+            "role": "assistant",
+            "content": "Executed approved plan.",
+            "tool_calls": [],
+        }
+
+    monkeypatch.setattr(
+        "automata_api.services.agent.create_llm_response",
+        fake_create_llm_response,
+    )
+
+    with client.websocket_connect("/ws/chat") as websocket:
+        websocket.receive_json()
+        websocket.send_json(
+            {
+                "type": "prompt",
+                "session_id": session["id"],
+                "prompt": "make a plan",
+                "mode": "plan",
+            }
+        )
+
+        plan_events = []
+        while True:
+            event = websocket.receive_json()
+            plan_events.append(event)
+            if event["type"] == "done":
+                break
+
+        plan_id = plan_events[2]["plan_id"]
+        websocket.send_json(
+            {
+                "type": "approve_plan",
+                "session_id": session["id"],
+                "plan_id": plan_id,
+            }
+        )
+
+        approve_events = []
+        while True:
+            event = websocket.receive_json()
+            approve_events.append(event)
+            if event["type"] == "done":
+                break
+
+        websocket.send_json(
+            {
+                "type": "approve_plan",
+                "session_id": session["id"],
+                "plan_id": plan_id,
+            }
+        )
+        repeated_approval = websocket.receive_json()
+
+    assert compact_event_types(approve_events) == [
+        "plan_approved",
+        "started",
+        "agent_step",
+        "token",
+        "done",
+    ]
+    assert approve_events[0]["plan_id"] == plan_id
+    assert token_content(approve_events) == "Executed approved plan."
+    assert fetch_plan(session["id"], plan_id)["status"] == "executed"
+
+    messages = client.get(f"/sessions/{session['id']}/messages").json()
+    assert [message["role"] for message in messages] == ["user", "agent", "agent"]
+    assert messages[1]["content"] == "Approved implementation plan."
+    assert messages[2]["content"] == "Executed approved plan."
+    assert len(calls) == 2
+    assert repeated_approval["type"] == "plan_error"
+    assert "Plan is not pending: executed" in repeated_approval["message"]
+
+
+def test_chat_websocket_approve_plan_rejects_invalid_plan(client):
+    session = client.post("/sessions", json={"title": "Bad Approval"}).json()
+
+    with client.websocket_connect("/ws/chat") as websocket:
+        websocket.receive_json()
+        websocket.send_json(
+            {
+                "type": "approve_plan",
+                "session_id": session["id"],
+                "plan_id": "missing-plan",
+            }
+        )
+        event = websocket.receive_json()
+
+    assert event == {"type": "plan_error", "message": "Plan not found"}

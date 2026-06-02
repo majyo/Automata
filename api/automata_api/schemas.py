@@ -31,6 +31,8 @@ class MessageRecord(BaseModel):
 class ChatPayload(TypedDict):
     type: str
     session_id: NotRequired[str]
+    plan_id: NotRequired[str]
     prompt: NotRequired[str]
+    mode: NotRequired[str]
     content: NotRequired[str]
     message: NotRequired[dict[str, Any] | str]

@@ -9,6 +9,14 @@ class SessionNotFoundError(ValueError):
     pass
 
 
+class PlanNotFoundError(ValueError):
+    pass
+
+
+class PlanStateError(ValueError):
+    pass
+
+
 def list_sessions() -> list[dict[str, Any]]:
     with db_lock, connect_db() as db:
         rows = db.execute(
@@ -218,6 +226,184 @@ def upsert_context_summary(
         "created_at": created_at,
         "updated_at": now,
     }
+
+
+def create_plan(
+    *,
+    session_id: str,
+    prompt_message_id: str,
+    plan_message_id: str,
+    content: str,
+) -> dict[str, Any]:
+    plan_id = new_id()
+    now = now_iso()
+
+    with db_lock, connect_db() as db:
+        ensure_session(db, session_id)
+        db.execute(
+            """
+            UPDATE session_plans
+            SET status = 'superseded', updated_at = ?
+            WHERE session_id = ? AND status = 'pending'
+            """,
+            (now, session_id),
+        )
+        db.execute(
+            """
+            INSERT INTO session_plans (
+                id,
+                session_id,
+                prompt_message_id,
+                plan_message_id,
+                content,
+                status,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
+            """,
+            (
+                plan_id,
+                session_id,
+                prompt_message_id,
+                plan_message_id,
+                content,
+                now,
+                now,
+            ),
+        )
+        db.commit()
+
+    return {
+        "id": plan_id,
+        "session_id": session_id,
+        "prompt_message_id": prompt_message_id,
+        "plan_message_id": plan_message_id,
+        "content": content,
+        "status": "pending",
+        "created_at": now,
+        "updated_at": now,
+        "approved_at": None,
+        "executed_at": None,
+    }
+
+
+def fetch_plan(session_id: str, plan_id: str) -> dict[str, Any]:
+    with db_lock, connect_db() as db:
+        ensure_session(db, session_id)
+        row = db.execute(
+            """
+            SELECT
+                id,
+                session_id,
+                prompt_message_id,
+                plan_message_id,
+                content,
+                status,
+                created_at,
+                updated_at,
+                approved_at,
+                executed_at
+            FROM session_plans
+            WHERE session_id = ? AND id = ?
+            """,
+            (session_id, plan_id),
+        ).fetchone()
+
+    if row is None:
+        raise PlanNotFoundError("Plan not found")
+
+    return dict(row)
+
+
+def approve_plan(session_id: str, plan_id: str) -> dict[str, Any]:
+    now = now_iso()
+
+    with db_lock, connect_db() as db:
+        ensure_session(db, session_id)
+        row = db.execute(
+            """
+            SELECT
+                id,
+                session_id,
+                prompt_message_id,
+                plan_message_id,
+                content,
+                status,
+                created_at,
+                updated_at,
+                approved_at,
+                executed_at
+            FROM session_plans
+            WHERE session_id = ? AND id = ?
+            """,
+            (session_id, plan_id),
+        ).fetchone()
+        if row is None:
+            raise PlanNotFoundError("Plan not found")
+        if row["status"] != "pending":
+            raise PlanStateError(f"Plan is not pending: {row['status']}")
+
+        db.execute(
+            """
+            UPDATE session_plans
+            SET status = 'approved', updated_at = ?, approved_at = ?
+            WHERE session_id = ? AND id = ?
+            """,
+            (now, now, session_id, plan_id),
+        )
+        db.commit()
+
+    plan = dict(row)
+    plan["status"] = "approved"
+    plan["updated_at"] = now
+    plan["approved_at"] = now
+    return plan
+
+
+def mark_plan_executed(session_id: str, plan_id: str) -> dict[str, Any]:
+    now = now_iso()
+
+    with db_lock, connect_db() as db:
+        ensure_session(db, session_id)
+        row = db.execute(
+            """
+            SELECT
+                id,
+                session_id,
+                prompt_message_id,
+                plan_message_id,
+                content,
+                status,
+                created_at,
+                updated_at,
+                approved_at,
+                executed_at
+            FROM session_plans
+            WHERE session_id = ? AND id = ?
+            """,
+            (session_id, plan_id),
+        ).fetchone()
+        if row is None:
+            raise PlanNotFoundError("Plan not found")
+        if row["status"] != "approved":
+            raise PlanStateError(f"Plan is not approved: {row['status']}")
+
+        db.execute(
+            """
+            UPDATE session_plans
+            SET status = 'executed', updated_at = ?, executed_at = ?
+            WHERE session_id = ? AND id = ?
+            """,
+            (now, now, session_id, plan_id),
+        )
+        db.commit()
+
+    plan = dict(row)
+    plan["status"] = "executed"
+    plan["updated_at"] = now
+    plan["executed_at"] = now
+    return plan
 
 
 def fetch_session(

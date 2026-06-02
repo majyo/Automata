@@ -18,9 +18,11 @@ from automata_api.config import (
     workspace_dir,
 )
 from automata_api.repositories.sessions import (
+    create_plan,
     fetch_context_summary,
     get_messages_after_sequence,
     get_recent_messages,
+    mark_plan_executed,
     save_message,
     upsert_context_summary,
 )
@@ -37,6 +39,15 @@ MAX_AGENT_STEPS = 6
 TOKEN_CHUNK_SIZE = 32
 TOKEN_STREAM_DELAY_SECONDS = 0.025
 RAW_CONTEXT_TAIL_MESSAGES = 8
+PLAN_TOOL_NAMES = {
+    "inspect_workspace",
+    "search_code",
+    "run_tests",
+    "read_file",
+    "rg",
+    "grep",
+    "apply_patch_preview",
+}
 
 
 async def receive_payload(websocket: WebSocket) -> ChatPayload:
@@ -53,7 +64,11 @@ async def receive_payload(websocket: WebSocket) -> ChatPayload:
 
 
 async def stream_agent_reply(
-    websocket: WebSocket, session_id: str, prompt: str
+    websocket: WebSocket,
+    session_id: str,
+    prompt: str,
+    approved_plan_content: str | None = None,
+    approved_plan_id: str | None = None,
 ) -> None:
     await websocket.send_json(
         {"type": "started", "session_id": session_id, "prompt": prompt}
@@ -61,7 +76,11 @@ async def stream_agent_reply(
     response = ""
 
     try:
-        response = await run_agent_loop(websocket, session_id)
+        response = await run_agent_loop(
+            websocket,
+            session_id,
+            approved_plan_content=approved_plan_content,
+        )
         for chunk in chunk_text(response):
             await websocket.send_json({"type": "token", "content": chunk})
             await asyncio.sleep(TOKEN_STREAM_DELAY_SECONDS)
@@ -81,21 +100,133 @@ async def stream_agent_reply(
         return
 
     message = save_message(session_id=session_id, role="agent", content=response)
+    if approved_plan_id:
+        mark_plan_executed(session_id, approved_plan_id)
     await websocket.send_json({"type": "done", "message": message})
 
 
-async def run_agent_loop(websocket: WebSocket, session_id: str) -> str:
+async def stream_plan_reply(
+    websocket: WebSocket, session_id: str, prompt: str, prompt_message_id: str
+) -> None:
+    await websocket.send_json(
+        {"type": "started", "session_id": session_id, "prompt": prompt, "mode": "plan"}
+    )
+    response = ""
+
+    try:
+        response = await run_plan_loop(websocket, session_id)
+    except AgentConfigurationError as error:
+        await websocket.send_json({"type": "error", "message": str(error)})
+        return
+    except AgentProviderError as error:
+        await websocket.send_json({"type": "error", "message": str(error)})
+        return
+    except httpx.RequestError as error:
+        await websocket.send_json(
+            {
+                "type": "error",
+                "message": f"LLM request failed: {error.__class__.__name__}",
+            }
+        )
+        return
+
+    message = save_message(session_id=session_id, role="agent", content=response)
+    plan = create_plan(
+        session_id=session_id,
+        prompt_message_id=prompt_message_id,
+        plan_message_id=message["id"],
+        content=response,
+    )
+    await websocket.send_json(
+        {
+            "type": "plan_ready",
+            "session_id": session_id,
+            "plan_id": plan["id"],
+            "status": plan["status"],
+            "content": response,
+        }
+    )
+    await websocket.send_json({"type": "done", "message": message})
+
+
+async def stream_approved_plan_reply(
+    websocket: WebSocket, session_id: str, plan: dict[str, Any]
+) -> None:
+    plan_id = str(plan["id"])
+    await websocket.send_json(
+        {"type": "plan_approved", "session_id": session_id, "plan_id": plan_id}
+    )
+    await stream_agent_reply(
+        websocket=websocket,
+        session_id=session_id,
+        prompt=f"Approved plan {plan_id}",
+        approved_plan_content=str(plan["content"]),
+        approved_plan_id=plan_id,
+    )
+
+
+async def run_agent_loop(
+    websocket: WebSocket,
+    session_id: str,
+    approved_plan_content: str | None = None,
+) -> str:
     config = get_agent_config()
     compression_config = get_context_compression_config()
     messages = await fetch_agent_context(websocket, session_id, compression_config)
+    if approved_plan_content:
+        messages.insert(1, approved_plan_message(approved_plan_content))
     tools = placeholder_tool_specs()
 
+    return await run_model_loop(
+        websocket=websocket,
+        messages=messages,
+        tools=tools,
+        compression_config=compression_config,
+        model=config.model,
+        mode="act",
+        allowed_tool_names=None,
+    )
+
+
+async def run_plan_loop(websocket: WebSocket, session_id: str) -> str:
+    config = get_agent_config()
+    compression_config = get_context_compression_config()
+    messages = await fetch_agent_context(
+        websocket,
+        session_id,
+        compression_config,
+        system_prompt=plan_system_prompt(),
+    )
+    tools = tool_specs_for_names(placeholder_tool_specs(), PLAN_TOOL_NAMES)
+
+    return await run_model_loop(
+        websocket=websocket,
+        messages=messages,
+        tools=tools,
+        compression_config=compression_config,
+        model=config.model,
+        mode="plan",
+        allowed_tool_names=PLAN_TOOL_NAMES,
+    )
+
+
+async def run_model_loop(
+    *,
+    websocket: WebSocket,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    compression_config: ContextCompressionConfig,
+    model: str,
+    mode: str,
+    allowed_tool_names: set[str] | None,
+) -> str:
     for step in range(1, MAX_AGENT_STEPS + 1):
         await websocket.send_json(
             {
                 "type": "agent_step",
                 "step": step,
-                "message": f"Calling model {config.model}",
+                "mode": mode,
+                "message": f"Calling model {model}",
             }
         )
         assistant_message = await create_llm_response(messages, tools=tools)
@@ -104,7 +235,13 @@ async def run_agent_loop(websocket: WebSocket, session_id: str) -> str:
         if isinstance(tool_calls, list) and tool_calls:
             messages.append(assistant_message_for_provider(assistant_message))
             for tool_call in tool_calls:
-                await execute_tool_call(websocket, messages, tool_call)
+                await execute_tool_call(
+                    websocket,
+                    messages,
+                    tool_call,
+                    mode=mode,
+                    allowed_tool_names=allowed_tool_names,
+                )
             messages = await compress_loop_context_if_needed(
                 websocket, messages, compression_config
             )
@@ -125,6 +262,9 @@ async def execute_tool_call(
     websocket: WebSocket,
     messages: list[dict[str, Any]],
     tool_call: dict[str, Any],
+    *,
+    mode: str = "act",
+    allowed_tool_names: set[str] | None = None,
 ) -> None:
     function = tool_call.get("function")
     if not isinstance(function, dict):
@@ -142,7 +282,10 @@ async def execute_tool_call(
             "arguments": arguments if isinstance(arguments, str) else "{}",
         }
     )
-    result = await run_tool(name, arguments, agent_workspace())
+    if allowed_tool_names is not None and name not in allowed_tool_names:
+        result = blocked_tool_result(name, arguments, mode, allowed_tool_names)
+    else:
+        result = await run_tool(name, arguments, agent_workspace())
     await websocket.send_json(
         {
             "type": "tool_result",
@@ -158,13 +301,14 @@ async def fetch_agent_context(
     websocket: WebSocket,
     session_id: str,
     compression_config: ContextCompressionConfig,
+    system_prompt: str | None = None,
 ) -> list[dict[str, Any]]:
     if not compression_config.enabled:
-        return fetch_recent_agent_context(session_id)
+        return fetch_recent_agent_context(session_id, system_prompt=system_prompt)
 
     system_message = {
         "role": "system",
-        "content": agent_system_prompt(),
+        "content": system_prompt or agent_system_prompt(),
     }
     summary = fetch_context_summary(session_id)
     through_sequence = int(summary["through_sequence"]) if summary else 0
@@ -205,11 +349,13 @@ async def fetch_agent_context(
     return compressed_messages
 
 
-def fetch_recent_agent_context(session_id: str) -> list[dict[str, Any]]:
+def fetch_recent_agent_context(
+    session_id: str, system_prompt: str | None = None
+) -> list[dict[str, Any]]:
     messages = [
         {
             "role": "system",
-            "content": agent_system_prompt(),
+            "content": system_prompt or agent_system_prompt(),
         }
     ]
 
@@ -375,6 +521,82 @@ async def send_context_compressed_event(
         event["through_sequence"] = through_sequence
 
     await websocket.send_json(event)
+
+
+def tool_specs_for_names(
+    tools: list[dict[str, Any]], allowed_names: set[str]
+) -> list[dict[str, Any]]:
+    return [
+        tool
+        for tool in tools
+        if tool_name(tool) is not None and tool_name(tool) in allowed_names
+    ]
+
+
+def tool_name(tool: dict[str, Any]) -> str | None:
+    function = tool.get("function")
+    if not isinstance(function, dict):
+        return None
+
+    name = function.get("name")
+    return name if isinstance(name, str) and name else None
+
+
+def blocked_tool_result(
+    name: str,
+    raw_arguments: str | dict[str, Any] | None,
+    mode: str,
+    allowed_tool_names: set[str],
+) -> ToolResult:
+    arguments = raw_arguments if isinstance(raw_arguments, dict) else {}
+    return ToolResult(
+        name=name,
+        arguments=arguments,
+        content=json.dumps(
+            {
+                "simulated": False,
+                "ok": False,
+                "tool": name,
+                "mode": mode,
+                "error": "blocked_by_plan_mode",
+                "allowed_tools": sorted(allowed_tool_names),
+            },
+            ensure_ascii=True,
+        ),
+        success=False,
+    )
+
+
+def approved_plan_message(content: str) -> dict[str, str]:
+    return {
+        "role": "system",
+        "content": (
+            "The user has approved the following implementation plan. Execute "
+            "the user's requested work according to this plan. If repository "
+            "facts conflict with the plan, prefer the repository facts and "
+            "explain the adjustment in the final response.\n\n"
+            f"{content}"
+        ),
+    }
+
+
+def plan_system_prompt() -> str:
+    return (
+        f"{get_system_prompt()}\n\n"
+        f"Current workspace: {agent_workspace()}\n\n"
+        "You are in backend Plan mode. Your job is to create a concrete, "
+        "implementation-ready Markdown plan for the user's request. Inspect "
+        "the workspace with read-only tools as needed, but do not execute the "
+        "implementation.\n\n"
+        "Allowed real tools in Plan mode are read_file, rg, grep, and "
+        "apply_patch_preview. The placeholder inspect_workspace, search_code, "
+        "and run_tests tools may also be used, but their results are simulated "
+        "and must not be treated as proof. Do not call run_bash, write_file, "
+        "or apply_patch in Plan mode.\n\n"
+        "Return only the plan content. Include enough detail that a later "
+        "approved execution can follow it without asking the user to choose "
+        "between implementation options."
+    )
 
 
 def agent_system_prompt() -> str:

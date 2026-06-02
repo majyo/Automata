@@ -31,6 +31,27 @@ CREATE TABLE IF NOT EXISTS session_context_summaries (
     updated_at TEXT NOT NULL,
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS session_plans (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    prompt_message_id TEXT NOT NULL,
+    plan_message_id TEXT NOT NULL,
+    content TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (
+        status IN ('pending', 'approved', 'executed', 'superseded')
+    ),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    approved_at TEXT,
+    executed_at TEXT,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY (prompt_message_id) REFERENCES messages(id) ON DELETE CASCADE,
+    FOREIGN KEY (plan_message_id) REFERENCES messages(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_plans_session_status
+ON session_plans(session_id, status);
 """
 
 

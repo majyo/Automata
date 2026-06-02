@@ -115,6 +115,39 @@ The WebSocket prompt payload is:
 { "type": "prompt", "session_id": "...", "prompt": "..." }
 ```
 
+Existing prompt payloads run in execution mode for compatibility. To ask the
+agent to prepare a persisted plan without executing mutating work, send:
+
+```json
+{ "type": "prompt", "session_id": "...", "prompt": "...", "mode": "plan" }
+```
+
+Plan mode emits the usual `started`, `agent_step`, `tool_call`, and
+`tool_result` events as needed, then emits:
+
+```json
+{
+  "type": "plan_ready",
+  "session_id": "...",
+  "plan_id": "...",
+  "status": "pending",
+  "content": "..."
+}
+```
+
+The plan content is saved as a visible `agent` message and as a hidden
+`session_plans` row. Creating a new pending plan for a session marks any older
+pending plan in that session as `superseded`. To execute a pending plan, send:
+
+```json
+{ "type": "approve_plan", "session_id": "...", "plan_id": "..." }
+```
+
+Approval emits `plan_approved`, then runs the normal execution loop with the
+approved plan injected into the provider context. When execution finishes, the
+plan status is updated to `executed`. Invalid sessions, missing plans, and
+non-pending plans emit `plan_error`.
+
 The response stream starts with `started`, may include `agent_step`,
 `context_compressed`, `tool_call`, and `tool_result` events while the agent loop
 is running, then emits one or more `token` events followed by `done`.
@@ -128,3 +161,9 @@ only. For search, the agent should prefer `rg`; the `rg` tool falls back to
 commands are unavailable. `run_bash` executes inside the workspace, uses
 `bash -lc`, caps timeouts at 120 seconds, and returns stdout, stderr, exit code,
 timeout, and truncation metadata.
+
+Plan mode is enforced by the backend, not only by prompting. It exposes only
+`inspect_workspace`, `search_code`, `run_tests`, `read_file`, `rg`, `grep`, and
+`apply_patch_preview`. Requests for `run_bash`, `write_file`, or `apply_patch`
+return a failed tool result with `blocked_by_plan_mode` and do not execute the
+tool.
