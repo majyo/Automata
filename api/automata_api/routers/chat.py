@@ -8,8 +8,8 @@ from automata_api.repositories.sessions import (
     save_message,
     session_exists,
 )
-from automata_api.services.agent import (
-    agent_ready_message,
+from automata_api.agent.status import agent_ready_message
+from automata_api.services.chat import (
     receive_payload,
     stream_approved_plan_reply,
     stream_agent_reply,

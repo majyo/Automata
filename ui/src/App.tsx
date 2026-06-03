@@ -46,9 +46,15 @@ type ChatMessage = {
   session_id?: string;
   role: "user" | "agent" | "tool";
   text: string;
+  kind?: "normal" | "plan";
+  plan_id?: string;
+  plan_status?: PlanStatus;
   sequence?: number;
   created_at?: string;
 };
+
+type PlanStatus = "pending" | "approving" | "executing" | "executed" | "error";
+type SendMode = "execute" | "plan";
 
 type ApiMessage = {
   id: string;
@@ -61,7 +67,7 @@ type ApiMessage = {
 
 type SocketPayload =
   | { type: "ready"; message?: string }
-  | { type: "started"; session_id: string; prompt: string }
+  | { type: "started"; session_id: string; prompt: string; mode?: SendMode }
   | { type: "agent_step"; message?: string; step?: number }
   | {
       type: "context_compressed";
@@ -74,13 +80,16 @@ type SocketPayload =
     }
   | { type: "tool_call"; tool?: string; arguments?: string }
   | { type: "tool_result"; tool?: string; success?: boolean; content?: string }
+  | { type: "plan_ready"; session_id: string; plan_id: string; status: "pending"; content: string }
+  | { type: "plan_approved"; session_id: string; plan_id: string }
+  | { type: "plan_error"; message?: string }
   | { type: "token"; content?: string }
   | { type: "done"; message?: ApiMessage }
   | { type: "error"; message?: string };
 
 const fileChanges = [
   { path: "api/automata_api/routers", state: "+routes" },
-  { path: "api/automata_api/services", state: "+agent" },
+  { path: "api/automata_api/agent", state: "+agent" },
   { path: "api/automata_api/repositories", state: "+sqlite" },
 ];
 
@@ -90,6 +99,7 @@ function App() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [prompt, setPrompt] = useState("Inspect the API folder and suggest the first FastAPI route.");
+  const [sendMode, setSendMode] = useState<SendMode>("execute");
   const [socketStatus, setSocketStatus] = useState("Connecting");
   const [isStreaming, setIsStreaming] = useState(false);
   const [isNewSessionDraft, setIsNewSessionDraft] = useState(false);
@@ -101,6 +111,7 @@ function App() {
   const activeSessionIdRef = useRef<string | null>(null);
   const streamingMessageIdRef = useRef<string | null>(null);
   const streamingSessionIdRef = useRef<string | null>(null);
+  const executingPlanIdRef = useRef<string | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
   const reconnectAttemptRef = useRef(0);
   const shouldReconnectRef = useRef(true);
@@ -200,6 +211,57 @@ function App() {
         return;
       }
 
+      if (payload.type === "plan_ready") {
+        setSocketStatus("Plan ready");
+        const messageId = streamingMessageIdRef.current ?? crypto.randomUUID();
+        streamingMessageIdRef.current = messageId;
+        streamingSessionIdRef.current = payload.session_id;
+        setMessages((current) =>
+          current.some((message) => message.id === messageId)
+            ? current.map((message) =>
+                message.id === messageId
+                  ? {
+                      ...message,
+                      session_id: payload.session_id,
+                      role: "agent",
+                      text: payload.content,
+                      kind: "plan",
+                      plan_id: payload.plan_id,
+                      plan_status: "pending",
+                    }
+                  : message,
+              )
+            : [
+                ...current,
+                {
+                  id: messageId,
+                  session_id: payload.session_id,
+                  role: "agent",
+                  text: payload.content,
+                  kind: "plan",
+                  plan_id: payload.plan_id,
+                  plan_status: "pending",
+                },
+              ],
+        );
+        return;
+      }
+
+      if (payload.type === "plan_approved") {
+        setSocketStatus("Plan approved");
+        executingPlanIdRef.current = payload.plan_id;
+        updatePlanMessageStatus(payload.plan_id, "executing");
+        return;
+      }
+
+      if (payload.type === "plan_error") {
+        const message = typeof payload.message === "string" ? payload.message : "Plan error";
+        setSocketStatus(message);
+        markCurrentPlanError();
+        finishStreamingWithError(message);
+        return;
+      }
+
       if (payload.type === "token" && streamingMessageIdRef.current) {
         const messageId = streamingMessageIdRef.current;
         const sessionId = streamingSessionIdRef.current ?? undefined;
@@ -221,6 +283,10 @@ function App() {
       if (payload.type === "done") {
         setSocketStatus("Ready");
         setIsStreaming(false);
+        if (executingPlanIdRef.current) {
+          updatePlanMessageStatus(executingPlanIdRef.current, "executed");
+          executingPlanIdRef.current = null;
+        }
         streamingMessageIdRef.current = null;
         const sessionId = streamingSessionIdRef.current;
         streamingSessionIdRef.current = null;
@@ -431,7 +497,11 @@ function App() {
     setPrompt("");
 
     if (socket?.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: "prompt", session_id: sessionId, prompt: trimmedPrompt }));
+      const payload =
+        sendMode === "plan"
+          ? { type: "prompt", session_id: sessionId, prompt: trimmedPrompt, mode: "plan" }
+          : { type: "prompt", session_id: sessionId, prompt: trimmedPrompt };
+      socket.send(JSON.stringify(payload));
     } else {
       setMessages((current) => [
         ...current,
@@ -448,9 +518,56 @@ function App() {
     }
   }
 
+  function approvePlan(message: ChatMessage) {
+    const socket = socketRef.current;
+    const sessionId = message.session_id ?? activeSessionIdRef.current;
+    const planId = message.plan_id;
+    if (!sessionId || !planId || isStreaming || message.plan_status !== "pending") {
+      return;
+    }
+
+    const agentMessage: ChatMessage = {
+      id: crypto.randomUUID(),
+      session_id: sessionId,
+      role: "agent",
+      text: "",
+    };
+
+    updatePlanMessageStatus(planId, "approving");
+    streamingMessageIdRef.current = agentMessage.id;
+    streamingSessionIdRef.current = sessionId;
+    executingPlanIdRef.current = planId;
+    setIsStreaming(true);
+    setMessages((current) => [...current, agentMessage]);
+
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: "approve_plan", session_id: sessionId, plan_id: planId }));
+      return;
+    }
+
+    setMessages((current) =>
+      current.map((message) =>
+        message.id === agentMessage.id
+          ? {
+              ...message,
+              text: "Backend is offline. Restart the desktop app and try again.",
+            }
+          : message,
+      ),
+    );
+    updatePlanMessageStatus(planId, "error");
+    setSocketStatus("Backend offline");
+    scheduleReconnect();
+    setIsStreaming(false);
+    streamingMessageIdRef.current = null;
+    streamingSessionIdRef.current = null;
+    executingPlanIdRef.current = null;
+  }
+
   function finishStreamingWithError(errorText: string) {
     const messageId = streamingMessageIdRef.current;
     const sessionId = streamingSessionIdRef.current;
+    const planId = executingPlanIdRef.current;
 
     if (messageId) {
       setMessages((current) =>
@@ -473,10 +590,44 @@ function App() {
     setIsStreaming(false);
     streamingMessageIdRef.current = null;
     streamingSessionIdRef.current = null;
+    executingPlanIdRef.current = null;
+
+    if (planId) {
+      updatePlanMessageStatus(planId, "error");
+    }
 
     if (sessionId) {
       void refreshSessionList().catch(() => undefined);
     }
+  }
+
+  function updatePlanMessageStatus(planId: string, status: PlanStatus) {
+    setMessages((current) =>
+      current.map((message) =>
+        message.plan_id === planId
+          ? {
+              ...message,
+              plan_status: status,
+            }
+          : message,
+      ),
+    );
+  }
+
+  function markCurrentPlanError() {
+    const planId = executingPlanIdRef.current;
+    if (planId) {
+      updatePlanMessageStatus(planId, "error");
+      return;
+    }
+
+    setMessages((current) =>
+      current.map((message) =>
+        message.kind === "plan" && (message.plan_status === "pending" || message.plan_status === "approving")
+          ? { ...message, plan_status: "error" }
+          : message,
+      ),
+    );
   }
 
   function appendRunEventMessage(text: string) {
@@ -490,6 +641,46 @@ function App() {
         text,
       },
     ]);
+  }
+
+  function renderComposer(options: { autoFocus?: boolean; draft?: boolean } = {}) {
+    const canSend = Boolean(prompt.trim()) && !isStreaming && Boolean(activeSessionId || isNewSessionDraft);
+
+    return (
+      <div className={`composer ${options.draft ? "draft" : ""}`}>
+        <div className="mode-toggle" aria-label="Prompt mode">
+          <button
+            type="button"
+            className={sendMode === "execute" ? "active" : ""}
+            onClick={() => setSendMode("execute")}
+            disabled={isStreaming}
+            title="Execute prompt"
+          >
+            <Play size={14} />
+            Execute
+          </button>
+          <button
+            type="button"
+            className={sendMode === "plan" ? "active" : ""}
+            onClick={() => setSendMode("plan")}
+            disabled={isStreaming}
+            title="Generate a plan"
+          >
+            <CheckCircle2 size={14} />
+            Plan
+          </button>
+        </div>
+        <input
+          autoFocus={options.autoFocus}
+          value={prompt}
+          onChange={(event) => setPrompt(event.currentTarget.value)}
+          placeholder="Ask the local coding agent..."
+        />
+        <button className="composer-submit" type="submit" aria-label="Send prompt" disabled={!canSend}>
+          <Send size={18} />
+        </button>
+      </div>
+    );
   }
 
   return (
@@ -710,17 +901,7 @@ function App() {
                 <form className="new-session-dialog" onSubmit={sendPrompt}>
                   <span className="eyebrow">New session</span>
                   <h2>输入一条消息来开始新的会话</h2>
-                  <div className="composer draft">
-                    <input
-                      autoFocus
-                      value={prompt}
-                      onChange={(event) => setPrompt(event.currentTarget.value)}
-                      placeholder="Ask the local coding agent..."
-                    />
-                    <button type="submit" aria-label="Send prompt" disabled={isStreaming || !prompt.trim()}>
-                      <Send size={18} />
-                    </button>
-                  </div>
+                  {renderComposer({ autoFocus: true, draft: true })}
                 </form>
               </div>
             ) : (
@@ -732,26 +913,44 @@ function App() {
                     </article>
                   )}
                   {messages.map((message) => (
-                    <article className={`message ${message.role}`} key={message.id}>
+                    <article className={`message ${message.role} ${message.kind === "plan" ? "plan" : ""}`} key={message.id}>
                       {message.role === "user" && (
                         <div className="avatar">
                           <Code2 size={18} />
                         </div>
                       )}
-                      <p>{message.text || "..."}</p>
+                      {message.kind === "plan" ? (
+                        <div className="plan-bubble">
+                          <div className="plan-header">
+                            <span>
+                              <CheckCircle2 size={15} />
+                              Plan
+                            </span>
+                            <em className={`plan-status ${message.plan_status ?? "pending"}`}>
+                              {formatPlanStatus(message.plan_status)}
+                            </em>
+                          </div>
+                          <p>{message.text || "..."}</p>
+                          <div className="plan-actions">
+                            <button
+                              type="button"
+                              onClick={() => approvePlan(message)}
+                              disabled={isStreaming || message.plan_status !== "pending"}
+                            >
+                              <Play size={15} />
+                              Approve plan
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <p>{message.text || "..."}</p>
+                      )}
                     </article>
                   ))}
                 </div>
 
-                <form className="composer" onSubmit={sendPrompt}>
-                  <input
-                    value={prompt}
-                    onChange={(event) => setPrompt(event.currentTarget.value)}
-                    placeholder="Ask the local coding agent..."
-                  />
-                  <button type="submit" aria-label="Send prompt" disabled={isStreaming || !activeSessionId}>
-                    <Send size={18} />
-                  </button>
+                <form className="composer-form" onSubmit={sendPrompt}>
+                  {renderComposer()}
                 </form>
               </>
             )}
@@ -773,6 +972,22 @@ async function loadApiConfig(): Promise<ApiRuntimeConfig> {
   }
 
   return DEFAULT_API_CONFIG;
+}
+
+function formatPlanStatus(status?: PlanStatus): string {
+  if (status === "approving") {
+    return "Approving";
+  }
+  if (status === "executing") {
+    return "Executing";
+  }
+  if (status === "executed") {
+    return "Executed";
+  }
+  if (status === "error") {
+    return "Error";
+  }
+  return "Pending";
 }
 
 async function fetchSessions(config: ApiRuntimeConfig): Promise<SessionSummary[]> {

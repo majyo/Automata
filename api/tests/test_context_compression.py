@@ -2,12 +2,14 @@ import asyncio
 import json
 
 from automata_api.config import ContextCompressionConfig
+from automata_api.agent import context as agent_context
+from automata_api.agent import llm, runtime
+from automata_api.agent.tools import ToolResult
+from automata_api.repositories.agent_store import SessionAgentContextStore
 from automata_api.repositories.sessions import (
     fetch_context_summary,
     save_message,
 )
-from automata_api.services import agent
-from automata_api.services.tools import ToolResult
 
 
 def compact_event_types(events):
@@ -57,14 +59,15 @@ def test_fetch_agent_context_compresses_long_history(client, monkeypatch):
         assert tools is None
         return {"role": "assistant", "content": "summary keeps the important bits"}
 
-    monkeypatch.setattr(agent, "create_llm_response", fake_create_llm_response)
+    monkeypatch.setattr(llm, "create_llm_response", fake_create_llm_response)
 
     websocket = CapturingWebSocket()
     messages = asyncio.run(
-        agent.fetch_agent_context(
-            websocket,
-            session["id"],
-            ContextCompressionConfig(
+        agent_context.fetch_agent_context(
+            emit_event=websocket.send_json,
+            session_id=session["id"],
+            store=SessionAgentContextStore(),
+            compression_config=ContextCompressionConfig(
                 enabled=True,
                 threshold_chars=1_200,
                 target_chars=250,
@@ -99,14 +102,15 @@ def test_fetch_agent_context_skips_summary_when_under_threshold(client, monkeypa
     async def fake_create_llm_response(messages, tools=None):
         raise AssertionError("summary LLM should not be called")
 
-    monkeypatch.setattr(agent, "create_llm_response", fake_create_llm_response)
+    monkeypatch.setattr(llm, "create_llm_response", fake_create_llm_response)
 
     websocket = CapturingWebSocket()
     messages = asyncio.run(
-        agent.fetch_agent_context(
-            websocket,
-            session["id"],
-            ContextCompressionConfig(
+        agent_context.fetch_agent_context(
+            emit_event=websocket.send_json,
+            session_id=session["id"],
+            store=SessionAgentContextStore(),
+            compression_config=ContextCompressionConfig(
                 enabled=True,
                 threshold_chars=100_000,
                 target_chars=1_000,
@@ -131,7 +135,7 @@ def test_loop_context_compression_replaces_tool_protocol_messages(monkeypatch):
         assert tools is None
         return {"role": "assistant", "content": "recent tool summary"}
 
-    monkeypatch.setattr(agent, "create_llm_response", fake_create_llm_response)
+    monkeypatch.setattr(llm, "create_llm_response", fake_create_llm_response)
 
     messages = [
         {"role": "system", "content": "system"},
@@ -157,10 +161,10 @@ def test_loop_context_compression_replaces_tool_protocol_messages(monkeypatch):
 
     websocket = CapturingWebSocket()
     compressed = asyncio.run(
-        agent.compress_loop_context_if_needed(
-            websocket,
-            messages,
-            ContextCompressionConfig(
+        agent_context.compress_loop_context_if_needed(
+            emit_event=websocket.send_json,
+            messages=messages,
+            compression_config=ContextCompressionConfig(
                 enabled=True,
                 threshold_chars=500,
                 target_chars=100,
@@ -207,7 +211,7 @@ def test_chat_websocket_emits_history_compression_event(client, monkeypatch):
             "tool_calls": [],
         }
 
-    monkeypatch.setattr(agent, "create_llm_response", fake_create_llm_response)
+    monkeypatch.setattr(llm, "create_llm_response", fake_create_llm_response)
 
     with client.websocket_connect("/ws/chat") as websocket:
         websocket.receive_json()
@@ -290,8 +294,8 @@ def test_chat_websocket_emits_loop_compression_event(client, monkeypatch):
         )
         return ToolResult(name=name, arguments={}, content=content, success=True)
 
-    monkeypatch.setattr(agent, "create_llm_response", fake_create_llm_response)
-    monkeypatch.setattr(agent, "run_tool", fake_run_tool)
+    monkeypatch.setattr(llm, "create_llm_response", fake_create_llm_response)
+    monkeypatch.setattr(runtime, "run_tool", fake_run_tool)
 
     with client.websocket_connect("/ws/chat") as websocket:
         websocket.receive_json()

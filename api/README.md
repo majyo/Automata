@@ -16,7 +16,8 @@ environment variable is missing, local development falls back to
 main.py                  Thin compatibility entrypoint for uvicorn and PyInstaller
 automata_api/main.py     FastAPI app factory, CORS, lifespan startup
 automata_api/routers/    HTTP and WebSocket routes
-automata_api/services/   Agent loop, placeholder tools, and LLM integration
+automata_api/services/   API transport and application orchestration
+automata_api/agent/      Agent runtime, context, prompts, tools, and LLM integration
 automata_api/db/         SQLite connection and schema initialization
 automata_api/repositories/ Session and message persistence
 tests/                   FastAPI TestClient coverage
@@ -152,18 +153,16 @@ The response stream starts with `started`, may include `agent_step`,
 `context_compressed`, `tool_call`, and `tool_result` events while the agent loop
 is running, then emits one or more `token` events followed by `done`.
 `context_compressed` includes `scope` (`history` or `loop`), before/after
-character counts, summary size, and compressed message counts. The built-in tools include
-placeholder tools for simulated workspace inspection, code search, patch
-previews, and test runs, plus real `read_file`, `write_file`, `rg`, `grep`, and
-`run_bash` tools. File tools read and write UTF-8 text within the workspace
-only. For search, the agent should prefer `rg`; the `rg` tool falls back to
-`grep`, then to `run_bash` with a suitable search command when native search
-commands are unavailable. `run_bash` executes inside the workspace, uses
-`bash -lc`, caps timeouts at 120 seconds, and returns stdout, stderr, exit code,
-timeout, and truncation metadata.
+character counts, summary size, and compressed message counts. The built-in
+tools are real `read_file`, `write_file`, `rg`, `grep`, `run_bash`,
+`apply_patch`, and `apply_patch_preview` tools. File tools read and write UTF-8
+text within the workspace only. For search, the agent should prefer `rg`; the
+`rg` tool falls back to `grep`, then to `run_bash` with a suitable search
+command when native search commands are unavailable. `run_bash` executes inside
+the workspace, uses `bash -lc`, caps timeouts at 120 seconds, and returns
+stdout, stderr, exit code, timeout, and truncation metadata.
 
 Plan mode is enforced by the backend, not only by prompting. It exposes only
-`inspect_workspace`, `search_code`, `run_tests`, `read_file`, `rg`, `grep`, and
-`apply_patch_preview`. Requests for `run_bash`, `write_file`, or `apply_patch`
-return a failed tool result with `blocked_by_plan_mode` and do not execute the
-tool.
+`read_file`, `rg`, `grep`, and `apply_patch_preview`. Requests for `run_bash`,
+`write_file`, or `apply_patch` return a failed tool result with
+`blocked_by_plan_mode` and do not execute the tool.

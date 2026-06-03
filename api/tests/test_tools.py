@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from automata_api.services import tools
+from automata_api.agent import tools
 
 
 def patch_text(*lines):
@@ -74,7 +74,9 @@ def test_run_bash_times_out(tmp_path):
 
 
 def test_run_bash_reports_missing_bash(tmp_path, monkeypatch):
-    monkeypatch.setattr(tools, "resolve_bash_executable", lambda: None)
+    monkeypatch.setattr(
+        "automata_api.agent.tools._core.resolve_bash_executable", lambda: None
+    )
 
     result = asyncio.run(
         tools.run_tool("run_bash", {"command": "printf hello"}, str(tmp_path))
@@ -176,7 +178,7 @@ def test_rg_search_falls_back_to_bash_when_native_tools_missing(tmp_path, monkey
 
     source = tmp_path / "sample.txt"
     source.write_text("fallback-value\n", encoding="utf-8")
-    monkeypatch.setattr(tools, "resolve_executable", lambda _: None)
+    monkeypatch.setattr("automata_api.agent.tools._core.resolve_executable", lambda _: None)
 
     result = asyncio.run(
         tools.run_tool(
@@ -527,3 +529,14 @@ def test_apply_patch_preview_is_real_dry_run_alias(tmp_path):
     assert payload["tool"] == "apply_patch_preview"
     assert payload["dry_run"] is True
     assert source.read_text(encoding="utf-8") == "one\ntwo\n"
+
+
+def test_run_tool_reports_unknown_tool(tmp_path):
+    result = asyncio.run(tools.run_tool("missing_tool", {}, str(tmp_path)))
+    payload = json.loads(result.content)
+
+    assert result.success is False
+    assert payload["simulated"] is False
+    assert payload["ok"] is False
+    assert payload["tool"] == "missing_tool"
+    assert payload["error"] == "Unknown tool: missing_tool"

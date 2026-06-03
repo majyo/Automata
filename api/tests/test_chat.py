@@ -3,7 +3,7 @@ import json
 import pytest
 
 from automata_api.repositories.sessions import fetch_plan
-from automata_api.services import tools
+from automata_api.agent import tools
 
 
 def patch_text(*lines):
@@ -64,8 +64,10 @@ def test_chat_websocket_reports_missing_llm_config(client):
     assert messages[0]["content"] == "hello"
 
 
-def test_chat_websocket_runs_agent_loop_with_placeholder_tool(client, monkeypatch):
+def test_chat_websocket_runs_agent_loop_with_read_file_tool(client, monkeypatch, tmp_path):
     monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
+    monkeypatch.setenv("AUTOMATA_WORKSPACE_DIR", str(tmp_path))
+    (tmp_path / "README.md").write_text("workspace details\n", encoding="utf-8")
     session = client.post("/sessions", json={"title": "Agent"}).json()
     calls = []
 
@@ -74,37 +76,38 @@ def test_chat_websocket_runs_agent_loop_with_placeholder_tool(client, monkeypatc
         if len(calls) == 1:
             assert tools is not None
             assert any(
-                tool["function"]["name"] == "inspect_workspace" for tool in tools
+                tool["function"]["name"] == "read_file" for tool in tools
             )
             return {
                 "role": "assistant",
                 "content": "",
-                "reasoning_content": "Need to inspect the simulated workspace.",
+                "reasoning_content": "Need to read the workspace file.",
                 "tool_calls": [
                     {
                         "id": "call_1",
                         "type": "function",
                         "function": {
-                            "name": "inspect_workspace",
-                            "arguments": '{"focus": "api"}',
+                            "name": "read_file",
+                            "arguments": '{"path": "README.md"}',
                         },
                     }
                 ],
             }
 
         assert messages[-2]["role"] == "assistant"
-        assert messages[-2]["reasoning_content"] == "Need to inspect the simulated workspace."
+        assert messages[-2]["reasoning_content"] == "Need to read the workspace file."
         assert messages[-1]["role"] == "tool"
         assert messages[-1]["tool_call_id"] == "call_1"
-        assert '"simulated": true' in messages[-1]["content"]
+        assert '"simulated": false' in messages[-1]["content"]
+        assert "workspace details" in messages[-1]["content"]
         return {
             "role": "assistant",
-            "content": "I used a simulated workspace inspection and finished.",
+            "content": "I read the workspace file and finished.",
             "tool_calls": [],
         }
 
     monkeypatch.setattr(
-        "automata_api.services.agent.create_llm_response",
+        "automata_api.agent.llm.create_llm_response",
         fake_create_llm_response,
     )
 
@@ -114,7 +117,7 @@ def test_chat_websocket_runs_agent_loop_with_placeholder_tool(client, monkeypatc
             {
                 "type": "prompt",
                 "session_id": session["id"],
-                "prompt": "inspect the workspace",
+                "prompt": "read the workspace README",
             }
         )
 
@@ -136,14 +139,15 @@ def test_chat_websocket_runs_agent_loop_with_placeholder_tool(client, monkeypatc
         "token",
         "done",
     ]
-    assert events[2]["tool"] == "inspect_workspace"
+    assert events[2]["tool"] == "read_file"
     assert events[3]["success"] is True
-    assert '"simulated": true' in events[3]["content"]
-    assert token_content(events) == "I used a simulated workspace inspection and finished."
+    assert '"simulated": false' in events[3]["content"]
+    assert "workspace details" in events[3]["content"]
+    assert token_content(events) == "I read the workspace file and finished."
 
     messages = client.get(f"/sessions/{session['id']}/messages").json()
     assert [message["role"] for message in messages] == ["user", "agent"]
-    assert messages[1]["content"] == "I used a simulated workspace inspection and finished."
+    assert messages[1]["content"] == "I read the workspace file and finished."
     assert len(calls) == 2
 
 
@@ -191,7 +195,7 @@ def test_chat_websocket_runs_agent_loop_with_real_bash_tool(client, monkeypatch)
         }
 
     monkeypatch.setattr(
-        "automata_api.services.agent.create_llm_response",
+        "automata_api.agent.llm.create_llm_response",
         fake_create_llm_response,
     )
 
@@ -251,7 +255,7 @@ def test_chat_websocket_runs_agent_loop_with_rg_tool(client, monkeypatch):
                             "name": "rg",
                             "arguments": (
                                 '{"pattern": "async def run_tool", '
-                                '"path": "api/automata_api/services/tools.py"}'
+                                '"path": "api/automata_api/agent/tools/__init__.py"}'
                             ),
                         },
                     }
@@ -272,7 +276,7 @@ def test_chat_websocket_runs_agent_loop_with_rg_tool(client, monkeypatch):
         }
 
     monkeypatch.setattr(
-        "automata_api.services.agent.create_llm_response",
+        "automata_api.agent.llm.create_llm_response",
         fake_create_llm_response,
     )
 
@@ -364,7 +368,7 @@ def test_chat_websocket_runs_agent_loop_with_file_tools(client, monkeypatch, tmp
         }
 
     monkeypatch.setattr(
-        "automata_api.services.agent.create_llm_response",
+        "automata_api.agent.llm.create_llm_response",
         fake_create_llm_response,
     )
 
@@ -459,7 +463,7 @@ def test_chat_websocket_runs_agent_loop_with_apply_patch_tool(client, monkeypatc
         }
 
     monkeypatch.setattr(
-        "automata_api.services.agent.create_llm_response",
+        "automata_api.agent.llm.create_llm_response",
         fake_create_llm_response,
     )
 
@@ -518,7 +522,7 @@ def test_chat_websocket_plan_mode_persists_pending_plan(client, monkeypatch):
         }
 
     monkeypatch.setattr(
-        "automata_api.services.agent.create_llm_response",
+        "automata_api.agent.llm.create_llm_response",
         fake_create_llm_response,
     )
 
@@ -598,7 +602,7 @@ def test_chat_websocket_plan_mode_blocks_mutating_tools(client, monkeypatch, tmp
         }
 
     monkeypatch.setattr(
-        "automata_api.services.agent.create_llm_response",
+        "automata_api.agent.llm.create_llm_response",
         fake_create_llm_response,
     )
 
@@ -663,7 +667,7 @@ def test_chat_websocket_approve_plan_executes_and_marks_executed(client, monkeyp
         }
 
     monkeypatch.setattr(
-        "automata_api.services.agent.create_llm_response",
+        "automata_api.agent.llm.create_llm_response",
         fake_create_llm_response,
     )
 
