@@ -1,12 +1,12 @@
-import asyncio
 import json
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
 from fastapi import WebSocket
 
 from automata_api.agent.llm import AgentProviderError
-from automata_api.agent.runtime import run_agent_loop, run_plan_loop
+from automata_api.agent.runtime import stream_agent_loop, stream_plan_loop
 from automata_api.config import AgentConfigurationError
 from automata_api.repositories.agent_store import SessionAgentContextStore
 from automata_api.repositories.sessions import (
@@ -15,10 +15,6 @@ from automata_api.repositories.sessions import (
     save_message,
 )
 from automata_api.schemas import ChatPayload
-
-
-TOKEN_CHUNK_SIZE = 32
-TOKEN_STREAM_DELAY_SECONDS = 0.025
 
 
 async def receive_payload(websocket: WebSocket) -> ChatPayload:
@@ -47,15 +43,14 @@ async def stream_agent_reply(
     response = ""
 
     try:
-        response = await run_agent_loop(
-            session_id=session_id,
-            store=SessionAgentContextStore(),
-            emit_event=websocket.send_json,
-            approved_plan_content=approved_plan_content,
+        response = await forward_agent_events(
+            websocket,
+            stream_agent_loop(
+                session_id=session_id,
+                store=SessionAgentContextStore(),
+                approved_plan_content=approved_plan_content,
+            ),
         )
-        for chunk in chunk_text(response):
-            await websocket.send_json({"type": "token", "content": chunk})
-            await asyncio.sleep(TOKEN_STREAM_DELAY_SECONDS)
     except AgentConfigurationError as error:
         await websocket.send_json({"type": "error", "message": str(error)})
         return
@@ -86,10 +81,12 @@ async def stream_plan_reply(
     response = ""
 
     try:
-        response = await run_plan_loop(
-            session_id=session_id,
-            store=SessionAgentContextStore(),
-            emit_event=websocket.send_json,
+        response = await forward_agent_events(
+            websocket,
+            stream_plan_loop(
+                session_id=session_id,
+                store=SessionAgentContextStore(),
+            ),
         )
     except AgentConfigurationError as error:
         await websocket.send_json({"type": "error", "message": str(error)})
@@ -141,8 +138,27 @@ async def stream_approved_plan_reply(
     )
 
 
-def chunk_text(text: str) -> list[str]:
-    return [
-        text[index : index + TOKEN_CHUNK_SIZE]
-        for index in range(0, len(text), TOKEN_CHUNK_SIZE)
-    ]
+async def forward_agent_events(
+    websocket: WebSocket, events: AsyncIterator[dict[str, Any]]
+) -> str:
+    response_parts: list[str] = []
+    final_content = ""
+
+    async for event in events:
+        event_type = event["type"]
+        if event_type == "token":
+            content = event.get("content")
+            if isinstance(content, str):
+                response_parts.append(content)
+            await websocket.send_json(event)
+            continue
+
+        if event_type == "final":
+            content = event.get("content")
+            if isinstance(content, str):
+                final_content = content
+            continue
+
+        await websocket.send_json(event)
+
+    return final_content or "".join(response_parts)

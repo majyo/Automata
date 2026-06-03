@@ -219,6 +219,137 @@ def test_stream_llm_response_yields_sse_chunks(monkeypatch):
     assert request["json"]["model"] == "unit-model"
 
 
+def test_stream_chat_completion_builds_payload_with_tools(monkeypatch):
+    configure_llm(monkeypatch)
+    FakeStreamingAsyncClient.stream_response = FakeStreamResponse(
+        lines=['data: {"choices": [{"delta": {"content": "ok"}}]}']
+    )
+    FakeStreamingAsyncClient.stream_requests = []
+    monkeypatch.setattr(llm.httpx, "AsyncClient", FakeStreamingAsyncClient)
+
+    async def collect():
+        return [
+            delta
+            async for delta in llm.stream_chat_completion(
+                [{"role": "user"}],
+                tools=[{"type": "function", "function": {"name": "read_file"}}],
+            )
+        ]
+
+    assert asyncio.run(collect()) == [{"content": "ok"}]
+    request = FakeStreamingAsyncClient.stream_requests[0]
+    assert request["json"]["tools"] == [
+        {"type": "function", "function": {"name": "read_file"}}
+    ]
+    assert request["json"]["tool_choice"] == "auto"
+
+
+def test_parse_stream_delta_extracts_reasoning_finish_and_tool_calls():
+    parsed = llm.parse_stream_delta(
+        json.dumps(
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "content": "hello",
+                            "reasoning_content": "thinking",
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "call_read",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "read_file",
+                                        "arguments": '{"path": ',
+                                    },
+                                },
+                                {
+                                    "index": 1,
+                                    "function": {
+                                        "name": "rg",
+                                        "arguments": '{"pattern": "x"}',
+                                    },
+                                },
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ]
+            }
+        )
+    )
+
+    assert parsed == {
+        "content": "hello",
+        "reasoning_content": "thinking",
+        "tool_calls": [
+            {
+                "index": 0,
+                "id": "call_read",
+                "type": "function",
+                "function": {"name": "read_file", "arguments": '{"path": '},
+            },
+            {
+                "index": 1,
+                "function": {"name": "rg", "arguments": '{"pattern": "x"}'},
+            },
+        ],
+        "finish_reason": "tool_calls",
+    }
+
+
+def test_assistant_stream_accumulator_merges_content_reasoning_and_tool_calls():
+    accumulator = llm.AssistantStreamAccumulator()
+    accumulator.add({"content": "hel", "reasoning_content": "think "})
+    accumulator.add(
+        {
+            "tool_calls": [
+                {
+                    "index": 0,
+                    "id": "call_read",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": '{"path": '},
+                },
+                {
+                    "index": 1,
+                    "function": {"name": "rg", "arguments": '{"pattern": "async"'},
+                },
+            ]
+        }
+    )
+    accumulator.add(
+        {
+            "content": "lo",
+            "reasoning_content": "more",
+            "tool_calls": [
+                {"index": 0, "function": {"arguments": '"README.md"}'}},
+                {"index": 1, "function": {"arguments": "}"}},
+            ],
+        }
+    )
+
+    assert accumulator.message() == {
+        "role": "assistant",
+        "content": "hello",
+        "reasoning_content": "think more",
+        "tool_calls": [
+            {
+                "id": "call_read",
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": '{"path": "README.md"}',
+                },
+            },
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "rg", "arguments": '{"pattern": "async"}'},
+            },
+        ],
+    }
+
+
 def test_stream_llm_response_raises_provider_error(monkeypatch):
     configure_llm(monkeypatch)
     FakeStreamingAsyncClient.stream_response = FakeStreamResponse(

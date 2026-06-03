@@ -771,7 +771,9 @@ h2 {
 }
 
 .plan-status.approving,
-.plan-status.executing {
+.plan-status.executing,
+.plan-status.approved,
+.plan-status.superseded {
   color: var(--ink-soft);
   background: var(--accent-soft);
 }

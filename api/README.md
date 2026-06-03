@@ -2,7 +2,7 @@
 
 Small FastAPI backend used by the Tauri UI. It exposes a WebSocket endpoint that
 runs a bounded agent loop against a DeepSeek-compatible LLM provider and streams
-the final response back to the client.
+provider token deltas back to the client while the agent loop is running.
 
 In the packaged desktop app, this API is built with PyInstaller and launched by
 Tauri as a sidecar. The commands below are only for backend-only development.
@@ -151,7 +151,8 @@ non-pending plans emit `plan_error`.
 
 The response stream starts with `started`, may include `agent_step`,
 `context_compressed`, `tool_call`, and `tool_result` events while the agent loop
-is running, then emits one or more `token` events followed by `done`.
+is running, emits provider-driven `token` events as text is generated, then
+finishes with `done`.
 `context_compressed` includes `scope` (`history` or `loop`), before/after
 character counts, summary size, and compressed message counts. The built-in
 tools are real `read_file`, `write_file`, `rg`, `grep`, `run_bash`,

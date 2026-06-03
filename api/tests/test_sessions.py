@@ -116,6 +116,26 @@ def test_session_plans_supersede_pending_plans(client):
     assert executed["status"] == "executed"
 
 
+def test_session_messages_include_plan_metadata(client):
+    session = client.post("/sessions", json={"title": "Plan metadata"}).json()
+    prompt = save_message(session_id=session["id"], role="user", content="prompt")
+    plan_message = save_message(session_id=session["id"], role="agent", content="plan")
+    plan = create_plan(
+        session_id=session["id"],
+        prompt_message_id=prompt["id"],
+        plan_message_id=plan_message["id"],
+        content="plan",
+    )
+
+    messages = client.get(f"/sessions/{session['id']}/messages").json()
+
+    assert messages[0]["plan_id"] is None
+    assert messages[0]["plan_status"] is None
+    assert messages[1]["id"] == plan_message["id"]
+    assert messages[1]["plan_id"] == plan["id"]
+    assert messages[1]["plan_status"] == "pending"
+
+
 def test_session_delete_cascades_plans(client):
     session = client.post("/sessions", json={"title": "Plan cascade"}).json()
     prompt = save_message(session_id=session["id"], role="user", content="prompt")

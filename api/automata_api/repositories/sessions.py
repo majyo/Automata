@@ -92,9 +92,19 @@ def list_messages(session_id: str) -> list[dict[str, Any]]:
         ensure_session(db, session_id)
         rows = db.execute(
             """
-            SELECT id, session_id, role, content, sequence, created_at
+            SELECT
+                messages.id,
+                messages.session_id,
+                messages.role,
+                messages.content,
+                messages.sequence,
+                messages.created_at,
+                session_plans.id AS plan_id,
+                session_plans.status AS plan_status
             FROM messages
-            WHERE session_id = ?
+            LEFT JOIN session_plans
+                ON session_plans.plan_message_id = messages.id
+            WHERE messages.session_id = ?
             ORDER BY sequence ASC
             """,
             (session_id,),

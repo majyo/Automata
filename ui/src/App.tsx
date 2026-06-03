@@ -53,7 +53,8 @@ type ChatMessage = {
   created_at?: string;
 };
 
-type PlanStatus = "pending" | "approving" | "executing" | "executed" | "error";
+type PersistedPlanStatus = "pending" | "approved" | "executed" | "superseded";
+type PlanStatus = PersistedPlanStatus | "approving" | "executing" | "error";
 type SendMode = "execute" | "plan";
 
 type ApiMessage = {
@@ -63,6 +64,8 @@ type ApiMessage = {
   content: string;
   sequence: number;
   created_at: string;
+  plan_id?: string | null;
+  plan_status?: PersistedPlanStatus | null;
 };
 
 type SocketPayload =
@@ -978,11 +981,17 @@ function formatPlanStatus(status?: PlanStatus): string {
   if (status === "approving") {
     return "Approving";
   }
+  if (status === "approved") {
+    return "Approved";
+  }
   if (status === "executing") {
     return "Executing";
   }
   if (status === "executed") {
     return "Executed";
+  }
+  if (status === "superseded") {
+    return "Superseded";
   }
   if (status === "error") {
     return "Error";
@@ -1022,6 +1031,9 @@ async function fetchMessages(config: ApiRuntimeConfig, sessionId: string): Promi
     session_id: message.session_id,
     role: message.role,
     text: message.content,
+    kind: message.plan_id ? "plan" : "normal",
+    plan_id: message.plan_id ?? undefined,
+    plan_status: message.plan_status ?? undefined,
     sequence: message.sequence,
     created_at: message.created_at,
   }));

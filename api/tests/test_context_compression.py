@@ -35,6 +35,32 @@ def token_content(events):
     )
 
 
+def stream_from_completion(create_response):
+    async def fake_stream_chat_completion(messages, tools=None):
+        response = await create_response(messages, tools)
+        delta = {}
+        content = response.get("content")
+        if isinstance(content, str) and content:
+            delta["content"] = content
+
+        tool_calls = response.get("tool_calls")
+        if isinstance(tool_calls, list) and tool_calls:
+            delta["tool_calls"] = [
+                {
+                    "index": index,
+                    "id": tool_call.get("id", f"call_{index}"),
+                    "type": tool_call.get("type", "function"),
+                    "function": tool_call.get("function", {}),
+                }
+                for index, tool_call in enumerate(tool_calls)
+            ]
+
+        if delta:
+            yield delta
+
+    return fake_stream_chat_completion
+
+
 class CapturingWebSocket:
     def __init__(self):
         self.events = []
@@ -212,6 +238,11 @@ def test_chat_websocket_emits_history_compression_event(client, monkeypatch):
         }
 
     monkeypatch.setattr(llm, "create_llm_response", fake_create_llm_response)
+    monkeypatch.setattr(
+        llm,
+        "stream_chat_completion",
+        stream_from_completion(fake_create_llm_response),
+    )
 
     with client.websocket_connect("/ws/chat") as websocket:
         websocket.receive_json()
@@ -295,6 +326,11 @@ def test_chat_websocket_emits_loop_compression_event(client, monkeypatch):
         return ToolResult(name=name, arguments={}, content=content, success=True)
 
     monkeypatch.setattr(llm, "create_llm_response", fake_create_llm_response)
+    monkeypatch.setattr(
+        llm,
+        "stream_chat_completion",
+        stream_from_completion(fake_create_llm_response),
+    )
     monkeypatch.setattr(runtime, "run_tool", fake_run_tool)
 
     with client.websocket_connect("/ws/chat") as websocket:

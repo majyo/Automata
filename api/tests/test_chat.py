@@ -33,6 +33,36 @@ def token_content(events):
     )
 
 
+def stream_from_completion(create_response):
+    async def fake_stream_chat_completion(messages, tools=None):
+        response = await create_response(messages, tools)
+        delta = {}
+        content = response.get("content")
+        if isinstance(content, str) and content:
+            delta["content"] = content
+
+        reasoning_content = response.get("reasoning_content")
+        if isinstance(reasoning_content, str):
+            delta["reasoning_content"] = reasoning_content
+
+        tool_calls = response.get("tool_calls")
+        if isinstance(tool_calls, list) and tool_calls:
+            delta["tool_calls"] = [
+                {
+                    "index": index,
+                    "id": tool_call.get("id", f"call_{index}"),
+                    "type": tool_call.get("type", "function"),
+                    "function": tool_call.get("function", {}),
+                }
+                for index, tool_call in enumerate(tool_calls)
+            ]
+
+        if delta:
+            yield delta
+
+    return fake_stream_chat_completion
+
+
 def test_chat_websocket_reports_missing_llm_config(client):
     session = client.post("/sessions", json={"title": "Chat"}).json()
 
@@ -107,8 +137,8 @@ def test_chat_websocket_runs_agent_loop_with_read_file_tool(client, monkeypatch,
         }
 
     monkeypatch.setattr(
-        "automata_api.agent.llm.create_llm_response",
-        fake_create_llm_response,
+        "automata_api.agent.llm.stream_chat_completion",
+        stream_from_completion(fake_create_llm_response),
     )
 
     with client.websocket_connect("/ws/chat") as websocket:
@@ -195,8 +225,8 @@ def test_chat_websocket_runs_agent_loop_with_real_bash_tool(client, monkeypatch)
         }
 
     monkeypatch.setattr(
-        "automata_api.agent.llm.create_llm_response",
-        fake_create_llm_response,
+        "automata_api.agent.llm.stream_chat_completion",
+        stream_from_completion(fake_create_llm_response),
     )
 
     with client.websocket_connect("/ws/chat") as websocket:
@@ -276,8 +306,8 @@ def test_chat_websocket_runs_agent_loop_with_rg_tool(client, monkeypatch):
         }
 
     monkeypatch.setattr(
-        "automata_api.agent.llm.create_llm_response",
-        fake_create_llm_response,
+        "automata_api.agent.llm.stream_chat_completion",
+        stream_from_completion(fake_create_llm_response),
     )
 
     with client.websocket_connect("/ws/chat") as websocket:
@@ -368,8 +398,8 @@ def test_chat_websocket_runs_agent_loop_with_file_tools(client, monkeypatch, tmp
         }
 
     monkeypatch.setattr(
-        "automata_api.agent.llm.create_llm_response",
-        fake_create_llm_response,
+        "automata_api.agent.llm.stream_chat_completion",
+        stream_from_completion(fake_create_llm_response),
     )
 
     with client.websocket_connect("/ws/chat") as websocket:
@@ -463,8 +493,8 @@ def test_chat_websocket_runs_agent_loop_with_apply_patch_tool(client, monkeypatc
         }
 
     monkeypatch.setattr(
-        "automata_api.agent.llm.create_llm_response",
-        fake_create_llm_response,
+        "automata_api.agent.llm.stream_chat_completion",
+        stream_from_completion(fake_create_llm_response),
     )
 
     with client.websocket_connect("/ws/chat") as websocket:
@@ -522,8 +552,8 @@ def test_chat_websocket_plan_mode_persists_pending_plan(client, monkeypatch):
         }
 
     monkeypatch.setattr(
-        "automata_api.agent.llm.create_llm_response",
-        fake_create_llm_response,
+        "automata_api.agent.llm.stream_chat_completion",
+        stream_from_completion(fake_create_llm_response),
     )
 
     with client.websocket_connect("/ws/chat") as websocket:
@@ -547,10 +577,12 @@ def test_chat_websocket_plan_mode_persists_pending_plan(client, monkeypatch):
     assert compact_event_types(events) == [
         "started",
         "agent_step",
+        "token",
         "plan_ready",
         "done",
     ]
-    plan_ready = events[2]
+    assert token_content(events) == "# Plan\n\n1. Inspect.\n2. Implement."
+    plan_ready = next(event for event in events if event["type"] == "plan_ready")
     assert plan_ready["status"] == "pending"
     assert plan_ready["content"] == "# Plan\n\n1. Inspect.\n2. Implement."
 
@@ -602,8 +634,8 @@ def test_chat_websocket_plan_mode_blocks_mutating_tools(client, monkeypatch, tmp
         }
 
     monkeypatch.setattr(
-        "automata_api.agent.llm.create_llm_response",
-        fake_create_llm_response,
+        "automata_api.agent.llm.stream_chat_completion",
+        stream_from_completion(fake_create_llm_response),
     )
 
     with client.websocket_connect("/ws/chat") as websocket:
@@ -630,6 +662,7 @@ def test_chat_websocket_plan_mode_blocks_mutating_tools(client, monkeypatch, tmp
         "tool_call",
         "tool_result",
         "agent_step",
+        "token",
         "plan_ready",
         "done",
     ]
@@ -667,8 +700,8 @@ def test_chat_websocket_approve_plan_executes_and_marks_executed(client, monkeyp
         }
 
     monkeypatch.setattr(
-        "automata_api.agent.llm.create_llm_response",
-        fake_create_llm_response,
+        "automata_api.agent.llm.stream_chat_completion",
+        stream_from_completion(fake_create_llm_response),
     )
 
     with client.websocket_connect("/ws/chat") as websocket:
@@ -689,7 +722,8 @@ def test_chat_websocket_approve_plan_executes_and_marks_executed(client, monkeyp
             if event["type"] == "done":
                 break
 
-        plan_id = plan_events[2]["plan_id"]
+        plan_ready = next(event for event in plan_events if event["type"] == "plan_ready")
+        plan_id = plan_ready["plan_id"]
         websocket.send_json(
             {
                 "type": "approve_plan",

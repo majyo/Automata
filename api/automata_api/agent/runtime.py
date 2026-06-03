@@ -1,4 +1,5 @@
 import json
+from collections.abc import AsyncIterator
 from typing import Any
 
 from automata_api.agent import llm
@@ -12,7 +13,7 @@ from automata_api.agent.prompts import (
     plan_system_prompt,
 )
 from automata_api.agent.tools import ToolResult, run_tool, tool_specs
-from automata_api.agent.types import AgentContextStore, EventEmitter
+from automata_api.agent.types import AgentContextStore, AgentLoopEvent
 from automata_api.config import (
     ContextCompressionConfig,
     get_agent_config,
@@ -29,106 +30,134 @@ PLAN_TOOL_NAMES = {
 }
 
 
-async def run_agent_loop(
+class EventCollector:
+    def __init__(self) -> None:
+        self.events: list[dict[str, Any]] = []
+
+    async def emit(self, event: dict[str, Any]) -> None:
+        self.events.append(event)
+
+
+async def stream_agent_loop(
     *,
     session_id: str,
     store: AgentContextStore,
-    emit_event: EventEmitter,
     approved_plan_content: str | None = None,
-) -> str:
+) -> AsyncIterator[AgentLoopEvent]:
     config = get_agent_config()
     compression_config = get_context_compression_config()
+    collector = EventCollector()
     messages = await fetch_agent_context(
-        emit_event=emit_event,
+        emit_event=collector.emit,
         session_id=session_id,
         store=store,
         compression_config=compression_config,
     )
+    for event in collector.events:
+        yield event
+
     if approved_plan_content:
         messages.insert(1, approved_plan_message(approved_plan_content))
     tools = tool_specs()
 
-    return await run_model_loop(
-        emit_event=emit_event,
+    async for event in stream_model_loop(
         messages=messages,
         tools=tools,
         compression_config=compression_config,
         model=config.model,
         mode="act",
         allowed_tool_names=None,
-    )
+    ):
+        yield event
 
 
-async def run_plan_loop(
+async def stream_plan_loop(
     *,
     session_id: str,
     store: AgentContextStore,
-    emit_event: EventEmitter,
-) -> str:
+) -> AsyncIterator[AgentLoopEvent]:
     config = get_agent_config()
     compression_config = get_context_compression_config()
+    collector = EventCollector()
     messages = await fetch_agent_context(
-        emit_event=emit_event,
+        emit_event=collector.emit,
         session_id=session_id,
         store=store,
         compression_config=compression_config,
         system_prompt=plan_system_prompt(),
     )
+    for event in collector.events:
+        yield event
     tools = tool_specs_for_names(tool_specs(), PLAN_TOOL_NAMES)
 
-    return await run_model_loop(
-        emit_event=emit_event,
+    async for event in stream_model_loop(
         messages=messages,
         tools=tools,
         compression_config=compression_config,
         model=config.model,
         mode="plan",
         allowed_tool_names=PLAN_TOOL_NAMES,
-    )
+    ):
+        yield event
 
-
-async def run_model_loop(
+async def stream_model_loop(
     *,
-    emit_event: EventEmitter,
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]],
     compression_config: ContextCompressionConfig,
     model: str,
     mode: str,
     allowed_tool_names: set[str] | None,
-) -> str:
+) -> AsyncIterator[AgentLoopEvent]:
     for step in range(1, MAX_AGENT_STEPS + 1):
-        await emit_event(
-            {
-                "type": "agent_step",
-                "step": step,
-                "mode": mode,
-                "message": f"Calling model {model}",
-            }
-        )
-        assistant_message = await llm.create_llm_response(messages, tools=tools)
+        yield {
+            "type": "agent_step",
+            "step": step,
+            "mode": mode,
+            "message": f"Calling model {model}",
+        }
+        accumulator = llm.AssistantStreamAccumulator()
+        tool_call_started = False
+        emitted_text = False
+        async for delta in llm.stream_chat_completion(messages, tools=tools):
+            accumulator.add(delta)
+            if delta.get("tool_calls"):
+                tool_call_started = True
+
+            content = delta.get("content")
+            if isinstance(content, str) and content and (
+                emitted_text or not tool_call_started
+            ):
+                emitted_text = True
+                yield {"type": "token", "content": content}
+
+        assistant_message = accumulator.message()
         tool_calls = assistant_message.get("tool_calls")
 
         if isinstance(tool_calls, list) and tool_calls:
             messages.append(assistant_message_for_provider(assistant_message))
             for tool_call in tool_calls:
-                await execute_tool_call(
-                    emit_event=emit_event,
+                async for event in stream_execute_tool_call(
                     messages=messages,
                     tool_call=tool_call,
                     mode=mode,
                     allowed_tool_names=allowed_tool_names,
-                )
+                ):
+                    yield event
+            collector = EventCollector()
             messages = await compress_loop_context_if_needed(
-                emit_event=emit_event,
+                emit_event=collector.emit,
                 messages=messages,
                 compression_config=compression_config,
             )
+            for event in collector.events:
+                yield event
             continue
 
         content = assistant_message.get("content")
         if isinstance(content, str) and content.strip():
-            return content
+            yield {"type": "final", "content": content, "mode": mode}
+            return
 
         raise llm.AgentProviderError("LLM provider returned an empty response.")
 
@@ -136,15 +165,13 @@ async def run_model_loop(
         f"Agent reached the maximum step limit ({MAX_AGENT_STEPS}) before finishing."
     )
 
-
-async def execute_tool_call(
+async def stream_execute_tool_call(
     *,
-    emit_event: EventEmitter,
     messages: list[dict[str, Any]],
     tool_call: dict[str, Any],
     mode: str = "act",
     allowed_tool_names: set[str] | None = None,
-) -> None:
+) -> AsyncIterator[AgentLoopEvent]:
     function = tool_call.get("function")
     if not isinstance(function, dict):
         raise llm.AgentProviderError("LLM provider returned an invalid tool call.")
@@ -154,27 +181,22 @@ async def execute_tool_call(
     if not isinstance(name, str) or not name.strip():
         raise llm.AgentProviderError("LLM provider returned a tool call without a name.")
 
-    await emit_event(
-        {
-            "type": "tool_call",
-            "tool": name,
-            "arguments": arguments if isinstance(arguments, str) else "{}",
-        }
-    )
+    yield {
+        "type": "tool_call",
+        "tool": name,
+        "arguments": arguments if isinstance(arguments, str) else "{}",
+    }
     if allowed_tool_names is not None and name not in allowed_tool_names:
         result = blocked_tool_result(name, arguments, mode, allowed_tool_names)
     else:
         result = await run_tool(name, arguments, agent_workspace())
-    await emit_event(
-        {
-            "type": "tool_result",
-            "tool": result.name,
-            "success": result.success,
-            "content": result.content,
-        }
-    )
+    yield {
+        "type": "tool_result",
+        "tool": result.name,
+        "success": result.success,
+        "content": result.content,
+    }
     messages.append(tool_result_for_provider(tool_call, result))
-
 
 def tool_specs_for_names(
     tools: list[dict[str, Any]], allowed_names: set[str]

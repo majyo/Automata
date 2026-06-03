@@ -26,6 +26,8 @@ class MessageRecord(BaseModel):
     content: str
     sequence: int
     created_at: str
+    plan_id: str | None = None
+    plan_status: Literal["pending", "approved", "executed", "superseded"] | None = None
 
 
 class ChatPayload(TypedDict):

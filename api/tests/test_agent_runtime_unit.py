@@ -32,14 +32,6 @@ class MemoryStore:
         }
 
 
-class EventRecorder:
-    def __init__(self):
-        self.events = []
-
-    async def emit(self, event):
-        self.events.append(event)
-
-
 def configure_runtime(monkeypatch):
     monkeypatch.setattr(
         runtime,
@@ -63,29 +55,43 @@ def configure_runtime(monkeypatch):
     )
 
 
-def test_run_agent_loop_injects_approved_plan(monkeypatch):
+async def collect_events(events):
+    return [event async for event in events]
+
+
+def test_stream_agent_loop_yields_tokens_final_and_injects_approved_plan(monkeypatch):
     configure_runtime(monkeypatch)
     calls = []
 
-    async def fake_create_llm_response(messages, tools=None):
+    async def fake_stream_chat_completion(messages, tools=None):
         calls.append({"messages": messages, "tools": tools})
-        return {"role": "assistant", "content": "done", "tool_calls": []}
+        yield {"content": "streamed "}
+        yield {"content": "done"}
 
-    monkeypatch.setattr(llm, "create_llm_response", fake_create_llm_response)
+    monkeypatch.setattr(llm, "stream_chat_completion", fake_stream_chat_completion)
 
-    recorder = EventRecorder()
-    response = asyncio.run(
-        runtime.run_agent_loop(
-            session_id="session-1",
-            store=MemoryStore(
-                recent_messages=[{"role": "user", "content": "implement it"}]
-            ),
-            emit_event=recorder.emit,
-            approved_plan_content="Approved plan body",
+    events = asyncio.run(
+        collect_events(
+            runtime.stream_agent_loop(
+                session_id="session-1",
+                store=MemoryStore(
+                    recent_messages=[{"role": "user", "content": "implement it"}]
+                ),
+                approved_plan_content="Approved plan body",
+            )
         )
     )
 
-    assert response == "done"
+    assert [event["type"] for event in events] == [
+        "agent_step",
+        "token",
+        "token",
+        "final",
+    ]
+    assert "".join(
+        event.get("content", "") for event in events if event["type"] == "token"
+    ) == "streamed done"
+    assert events[-1] == {"type": "final", "content": "streamed done", "mode": "act"}
     assert calls[0]["messages"][0]["role"] == "system"
     assert "Approved plan body" in calls[0]["messages"][1]["content"]
     assert calls[0]["messages"][2] == {"role": "user", "content": "implement it"}
@@ -94,136 +100,127 @@ def test_run_agent_loop_injects_approved_plan(monkeypatch):
         "write_file",
         "apply_patch",
     }
-    assert recorder.events == [
-        {
-            "type": "agent_step",
-            "step": 1,
-            "mode": "act",
-            "message": "Calling model unit-model",
-        }
-    ]
 
 
-def test_run_plan_loop_exposes_only_plan_mode_tools(monkeypatch):
+def test_stream_plan_loop_yields_tokens_final_and_plan_tools(monkeypatch):
     configure_runtime(monkeypatch)
     calls = []
 
-    async def fake_create_llm_response(messages, tools=None):
+    async def fake_stream_chat_completion(messages, tools=None):
         calls.append({"messages": messages, "tools": tools})
-        return {"role": "assistant", "content": "plan", "tool_calls": []}
+        yield {"content": "# Plan\n"}
+        yield {"content": "\n1. Inspect."}
 
-    monkeypatch.setattr(llm, "create_llm_response", fake_create_llm_response)
+    monkeypatch.setattr(llm, "stream_chat_completion", fake_stream_chat_completion)
 
-    recorder = EventRecorder()
-    response = asyncio.run(
-        runtime.run_plan_loop(
-            session_id="session-1",
-            store=MemoryStore(recent_messages=[]),
-            emit_event=recorder.emit,
+    events = asyncio.run(
+        collect_events(
+            runtime.stream_plan_loop(
+                session_id="session-1",
+                store=MemoryStore(recent_messages=[]),
+            )
         )
     )
 
+    assert [event["type"] for event in events] == [
+        "agent_step",
+        "token",
+        "token",
+        "final",
+    ]
+    assert events[0]["mode"] == "plan"
+    assert events[-1] == {"type": "final", "content": "# Plan\n\n1. Inspect.", "mode": "plan"}
     tool_names = {tool["function"]["name"] for tool in calls[0]["tools"]}
-    assert response == "plan"
     assert tool_names == runtime.PLAN_TOOL_NAMES
-    assert {"run_bash", "write_file", "apply_patch"}.isdisjoint(tool_names)
     assert "backend Plan mode" in calls[0]["messages"][0]["content"]
-    assert recorder.events[0]["mode"] == "plan"
 
 
-def test_run_model_loop_returns_content_without_tools(monkeypatch):
-    async def fake_create_llm_response(messages, tools=None):
+def test_stream_model_loop_yields_tokens_and_final(monkeypatch):
+    async def fake_stream_chat_completion(messages, tools=None):
         assert messages == [{"role": "user", "content": "hello"}]
         assert tools == []
-        return {"role": "assistant", "content": "final answer", "tool_calls": []}
+        yield {"content": "final "}
+        yield {"content": "answer"}
 
-    monkeypatch.setattr(llm, "create_llm_response", fake_create_llm_response)
+    monkeypatch.setattr(llm, "stream_chat_completion", fake_stream_chat_completion)
 
-    recorder = EventRecorder()
-    response = asyncio.run(
-        runtime.run_model_loop(
-            emit_event=recorder.emit,
-            messages=[{"role": "user", "content": "hello"}],
-            tools=[],
-            compression_config=ContextCompressionConfig(False, 1_000, 100),
-            model="unit-model",
-            mode="act",
-            allowed_tool_names=None,
-        )
-    )
+    async def collect():
+        return [
+            event
+            async for event in runtime.stream_model_loop(
+                messages=[{"role": "user", "content": "hello"}],
+                tools=[],
+                compression_config=ContextCompressionConfig(False, 1_000, 100),
+                model="unit-model",
+                mode="act",
+                allowed_tool_names=None,
+            )
+        ]
 
-    assert response == "final answer"
-    assert [event["type"] for event in recorder.events] == ["agent_step"]
+    events = asyncio.run(collect())
+
+    assert [event["type"] for event in events] == [
+        "agent_step",
+        "token",
+        "token",
+        "final",
+    ]
+    assert "".join(
+        event.get("content", "") for event in events if event["type"] == "token"
+    ) == "final answer"
+    assert events[-1] == {"type": "final", "content": "final answer", "mode": "act"}
 
 
-def test_run_model_loop_executes_tool_then_continues(monkeypatch):
+def test_stream_model_loop_accumulates_split_tool_call_then_streams_final(monkeypatch):
     calls = []
 
-    async def fake_create_llm_response(messages, tools=None):
+    async def fake_stream_chat_completion(messages, tools=None):
         calls.append(list(messages))
         if len(calls) == 1:
-            return {
-                "role": "assistant",
-                "content": "",
+            yield {
                 "tool_calls": [
                     {
-                        "id": "call_1",
+                        "index": 0,
+                        "id": "call_split",
                         "type": "function",
-                        "function": {"name": "read_file", "arguments": "{}"},
+                        "function": {"name": "read_file", "arguments": '{"path": '},
                     }
-                ],
+                ]
             }
+            yield {
+                "tool_calls": [
+                    {
+                        "index": 0,
+                        "function": {"arguments": '"README.md"}'},
+                    }
+                ]
+            }
+            return
 
+        assert messages[-2]["role"] == "assistant"
+        assert messages[-2]["tool_calls"][0]["function"] == {
+            "name": "read_file",
+            "arguments": '{"path": "README.md"}',
+        }
         assert messages[-1]["role"] == "tool"
-        assert messages[-1]["name"] == "read_file"
-        return {"role": "assistant", "content": "after tool", "tool_calls": []}
+        assert messages[-1]["tool_call_id"] == "call_split"
+        yield {"content": "after "}
+        yield {"content": "tool"}
 
     async def fake_run_tool(name, arguments, workspace):
-        return ToolResult(
-            name=name,
-            arguments={},
-            content='{"ok": true}',
-            success=True,
-        )
+        assert name == "read_file"
+        assert arguments == '{"path": "README.md"}'
+        assert workspace == "workspace"
+        return ToolResult(name=name, arguments={}, content='{"ok": true}', success=True)
 
-    monkeypatch.setattr(llm, "create_llm_response", fake_create_llm_response)
+    monkeypatch.setattr(llm, "stream_chat_completion", fake_stream_chat_completion)
     monkeypatch.setattr(runtime, "run_tool", fake_run_tool)
     monkeypatch.setattr(runtime, "agent_workspace", lambda: "workspace")
 
-    recorder = EventRecorder()
-    response = asyncio.run(
-        runtime.run_model_loop(
-            emit_event=recorder.emit,
-            messages=[{"role": "user", "content": "inspect"}],
-            tools=[],
-            compression_config=ContextCompressionConfig(False, 1_000, 100),
-            model="unit-model",
-            mode="act",
-            allowed_tool_names=None,
-        )
-    )
-
-    assert response == "after tool"
-    assert [event["type"] for event in recorder.events] == [
-        "agent_step",
-        "tool_call",
-        "tool_result",
-        "agent_step",
-    ]
-    assert len(calls) == 2
-
-
-def test_run_model_loop_rejects_empty_response(monkeypatch):
-    async def fake_create_llm_response(messages, tools=None):
-        return {"role": "assistant", "content": "  ", "tool_calls": []}
-
-    monkeypatch.setattr(llm, "create_llm_response", fake_create_llm_response)
-
-    with pytest.raises(llm.AgentProviderError, match="empty response"):
-        asyncio.run(
-            runtime.run_model_loop(
-                emit_event=EventRecorder().emit,
-                messages=[],
+    events = asyncio.run(
+        collect_events(
+            runtime.stream_model_loop(
+                messages=[{"role": "user", "content": "inspect"}],
                 tools=[],
                 compression_config=ContextCompressionConfig(False, 1_000, 100),
                 model="unit-model",
@@ -231,76 +228,179 @@ def test_run_model_loop_rejects_empty_response(monkeypatch):
                 allowed_tool_names=None,
             )
         )
+    )
+
+    assert [event["type"] for event in events] == [
+        "agent_step",
+        "tool_call",
+        "tool_result",
+        "agent_step",
+        "token",
+        "token",
+        "final",
+    ]
+    assert events[1] == {
+        "type": "tool_call",
+        "tool": "read_file",
+        "arguments": '{"path": "README.md"}',
+    }
+    assert events[-1] == {"type": "final", "content": "after tool", "mode": "act"}
+    assert len(calls) == 2
 
 
-def test_run_model_loop_rejects_max_steps(monkeypatch):
-    async def fake_create_llm_response(messages, tools=None):
-        return {
-            "role": "assistant",
-            "content": "",
+def test_stream_model_loop_does_not_emit_tool_turn_content_as_token(monkeypatch):
+    async def fake_stream_chat_completion(messages, tools=None):
+        if any(message.get("role") == "tool" for message in messages):
+            yield {"content": "final"}
+            return
+
+        yield {
             "tool_calls": [
                 {
+                    "index": 0,
+                    "id": "call_read",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": "{}"},
+                }
+            ]
+        }
+        yield {"content": "internal tool preface"}
+
+    async def fake_run_tool(name, arguments, workspace):
+        return ToolResult(name=name, arguments={}, content='{"ok": true}', success=True)
+
+    monkeypatch.setattr(llm, "stream_chat_completion", fake_stream_chat_completion)
+    monkeypatch.setattr(runtime, "run_tool", fake_run_tool)
+    monkeypatch.setattr(runtime, "agent_workspace", lambda: "workspace")
+
+    events = asyncio.run(
+        collect_events(
+            runtime.stream_model_loop(
+                messages=[{"role": "user", "content": "inspect"}],
+                tools=[],
+                compression_config=ContextCompressionConfig(False, 1_000, 100),
+                model="unit-model",
+                mode="act",
+                allowed_tool_names=None,
+            )
+        )
+    )
+
+    token_text = "".join(
+        event.get("content", "") for event in events if event["type"] == "token"
+    )
+    assert token_text == "final"
+    assert [event["type"] for event in events] == [
+        "agent_step",
+        "tool_call",
+        "tool_result",
+        "agent_step",
+        "token",
+        "final",
+    ]
+
+
+def test_stream_model_loop_rejects_empty_response(monkeypatch):
+    async def fake_stream_chat_completion(messages, tools=None):
+        yield {"content": "  "}
+
+    monkeypatch.setattr(llm, "stream_chat_completion", fake_stream_chat_completion)
+
+    with pytest.raises(llm.AgentProviderError, match="empty response"):
+        asyncio.run(
+            collect_events(
+                runtime.stream_model_loop(
+                    messages=[],
+                    tools=[],
+                    compression_config=ContextCompressionConfig(False, 1_000, 100),
+                    model="unit-model",
+                    mode="act",
+                    allowed_tool_names=None,
+                )
+            )
+        )
+
+
+def test_stream_model_loop_rejects_max_steps(monkeypatch):
+    async def fake_stream_chat_completion(messages, tools=None):
+        yield {
+            "tool_calls": [
+                {
+                    "index": 0,
                     "id": "call_repeat",
                     "type": "function",
                     "function": {"name": "read_file", "arguments": "{}"},
                 }
-            ],
+            ]
         }
 
     async def fake_run_tool(name, arguments, workspace):
         return ToolResult(name=name, arguments={}, content="{}", success=True)
 
-    monkeypatch.setattr(llm, "create_llm_response", fake_create_llm_response)
+    monkeypatch.setattr(llm, "stream_chat_completion", fake_stream_chat_completion)
     monkeypatch.setattr(runtime, "run_tool", fake_run_tool)
     monkeypatch.setattr(runtime, "agent_workspace", lambda: "workspace")
 
     with pytest.raises(llm.AgentProviderError, match="maximum step limit"):
         asyncio.run(
-            runtime.run_model_loop(
-                emit_event=EventRecorder().emit,
-                messages=[],
-                tools=[],
-                compression_config=ContextCompressionConfig(False, 1_000, 100),
-                model="unit-model",
-                mode="act",
-                allowed_tool_names=None,
+            collect_events(
+                runtime.stream_model_loop(
+                    messages=[],
+                    tools=[],
+                    compression_config=ContextCompressionConfig(False, 1_000, 100),
+                    model="unit-model",
+                    mode="act",
+                    allowed_tool_names=None,
+                )
             )
         )
 
 
-def test_execute_tool_call_emits_tool_result(monkeypatch):
+def test_stream_execute_tool_call_yields_events_and_appends_provider_result(monkeypatch):
     async def fake_run_tool(name, arguments, workspace):
         assert name == "read_file"
         assert arguments == '{"path": "README.md"}'
         assert workspace == "workspace"
-        return ToolResult(name=name, arguments={}, content='{"content": "ok"}', success=True)
+        return ToolResult(
+            name=name,
+            arguments={"path": "README.md"},
+            content='{"content": "ok"}',
+            success=True,
+        )
 
     monkeypatch.setattr(runtime, "run_tool", fake_run_tool)
     monkeypatch.setattr(runtime, "agent_workspace", lambda: "workspace")
 
     messages = []
-    recorder = EventRecorder()
-    asyncio.run(
-        runtime.execute_tool_call(
-            emit_event=recorder.emit,
-            messages=messages,
-            tool_call={
-                "id": "call_read",
-                "type": "function",
-                "function": {
-                    "name": "read_file",
-                    "arguments": '{"path": "README.md"}',
+    events = asyncio.run(
+        collect_events(
+            runtime.stream_execute_tool_call(
+                messages=messages,
+                tool_call={
+                    "id": "call_read",
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": '{"path": "README.md"}',
+                    },
                 },
-            },
+            )
         )
     )
 
-    assert recorder.events[0] == {
-        "type": "tool_call",
-        "tool": "read_file",
-        "arguments": '{"path": "README.md"}',
-    }
-    assert recorder.events[1]["success"] is True
+    assert events == [
+        {
+            "type": "tool_call",
+            "tool": "read_file",
+            "arguments": '{"path": "README.md"}',
+        },
+        {
+            "type": "tool_result",
+            "tool": "read_file",
+            "success": True,
+            "content": '{"content": "ok"}',
+        },
+    ]
     assert messages == [
         {
             "role": "tool",
@@ -311,30 +411,31 @@ def test_execute_tool_call_emits_tool_result(monkeypatch):
     ]
 
 
-def test_execute_tool_call_blocks_disallowed_plan_tool(monkeypatch):
+def test_stream_execute_tool_call_blocks_disallowed_plan_tool(monkeypatch):
     async def fail_run_tool(name, arguments, workspace):
         raise AssertionError("blocked tools must not execute")
 
     monkeypatch.setattr(runtime, "run_tool", fail_run_tool)
 
-    recorder = EventRecorder()
     messages = []
-    asyncio.run(
-        runtime.execute_tool_call(
-            emit_event=recorder.emit,
-            messages=messages,
-            tool_call={
-                "id": "call_write",
-                "type": "function",
-                "function": {"name": "write_file", "arguments": '{"path": "x"}'},
-            },
-            mode="plan",
-            allowed_tool_names={"read_file"},
+    events = asyncio.run(
+        collect_events(
+            runtime.stream_execute_tool_call(
+                messages=messages,
+                tool_call={
+                    "id": "call_write",
+                    "type": "function",
+                    "function": {"name": "write_file", "arguments": '{"path": "x"}'},
+                },
+                mode="plan",
+                allowed_tool_names={"read_file"},
+            )
         )
     )
 
     result = json.loads(messages[-1]["content"])
-    assert recorder.events[1]["success"] is False
+    assert events[0]["type"] == "tool_call"
+    assert events[1]["success"] is False
     assert result["error"] == "blocked_by_plan_mode"
     assert result["allowed_tools"] == ["read_file"]
 
@@ -346,13 +447,11 @@ def test_execute_tool_call_blocks_disallowed_plan_tool(monkeypatch):
         ({"function": {"arguments": "{}"}}, "without a name"),
     ],
 )
-def test_execute_tool_call_rejects_invalid_tool_call(tool_call, message):
+def test_stream_execute_tool_call_rejects_invalid_tool_call(tool_call, message):
     with pytest.raises(llm.AgentProviderError, match=message):
         asyncio.run(
-            runtime.execute_tool_call(
-                emit_event=EventRecorder().emit,
-                messages=[],
-                tool_call=tool_call,
+            collect_events(
+                runtime.stream_execute_tool_call(messages=[], tool_call=tool_call)
             )
         )
 
