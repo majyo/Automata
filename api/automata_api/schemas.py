@@ -22,8 +22,10 @@ class SessionSummary(BaseModel):
 class MessageRecord(BaseModel):
     id: str
     session_id: str
-    role: Literal["user", "agent"]
+    role: Literal["user", "agent", "tool"]
+    kind: Literal["message", "tool_run"] = "message"
     content: str
+    metadata: dict[str, Any] | None = None
     sequence: int
     created_at: str
     plan_id: str | None = None

@@ -8,7 +8,7 @@ from automata_api.agent.tools import ToolResult
 from automata_api.repositories.agent_store import SessionAgentContextStore
 from automata_api.repositories.sessions import (
     fetch_context_summary,
-    save_message,
+    save_context_message,
 )
 
 
@@ -72,10 +72,12 @@ class CapturingWebSocket:
 def test_fetch_agent_context_compresses_long_history(client, monkeypatch):
     session = client.post("/sessions", json={"title": "Long History"}).json()
     for index in range(10):
-        save_message(
+        save_context_message(
             session_id=session["id"],
-            role="user" if index % 2 == 0 else "agent",
-            content=f"message-{index} " + ("x" * 220),
+            message={
+                "role": "user" if index % 2 == 0 else "assistant",
+                "content": f"message-{index} " + ("x" * 220),
+            },
         )
 
     calls = []
@@ -119,10 +121,9 @@ def test_fetch_agent_context_compresses_long_history(client, monkeypatch):
 def test_fetch_agent_context_skips_summary_when_under_threshold(client, monkeypatch):
     session = client.post("/sessions", json={"title": "Short History"}).json()
     for index in range(3):
-        save_message(
+        save_context_message(
             session_id=session["id"],
-            role="user",
-            content=f"short-{index}",
+            message={"role": "user", "content": f"short-{index}"},
         )
 
     async def fake_create_llm_response(messages, tools=None):
@@ -213,10 +214,12 @@ def test_chat_websocket_emits_history_compression_event(client, monkeypatch):
     monkeypatch.setenv("AUTOMATA_CONTEXT_COMPRESSION_TARGET_CHARS", "250")
     session = client.post("/sessions", json={"title": "History Event"}).json()
     for index in range(10):
-        save_message(
+        save_context_message(
             session_id=session["id"],
-            role="user",
-            content=f"history-{index} " + ("x" * 220),
+            message={
+                "role": "user",
+                "content": f"history-{index} " + ("x" * 220),
+            },
         )
 
     agent_calls = []

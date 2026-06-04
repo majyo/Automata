@@ -46,11 +46,24 @@ type ChatMessage = {
   session_id?: string;
   role: "user" | "agent" | "tool";
   text: string;
-  kind?: "normal" | "plan";
+  kind?: "normal" | "plan" | "tool_run";
+  metadata?: ToolRunMetadata | null;
   plan_id?: string;
   plan_status?: PlanStatus;
   sequence?: number;
   created_at?: string;
+};
+
+type ToolRunResult = {
+  success?: boolean;
+  content?: string;
+};
+
+type ToolRunMetadata = {
+  tool_call_id?: string;
+  tool?: string;
+  arguments?: string;
+  result?: ToolRunResult | null;
 };
 
 type PersistedPlanStatus = "pending" | "approved" | "executed" | "superseded";
@@ -60,8 +73,10 @@ type SendMode = "execute" | "plan";
 type ApiMessage = {
   id: string;
   session_id: string;
-  role: "user" | "agent";
+  role: "user" | "agent" | "tool";
+  kind?: "message" | "tool_run";
   content: string;
+  metadata?: ToolRunMetadata | null;
   sequence: number;
   created_at: string;
   plan_id?: string | null;
@@ -81,8 +96,8 @@ type SocketPayload =
       compressed_messages?: number;
       through_sequence?: number;
     }
-  | { type: "tool_call"; tool?: string; arguments?: string }
-  | { type: "tool_result"; tool?: string; success?: boolean; content?: string }
+  | { type: "tool_call"; tool_call_id?: string; tool?: string; arguments?: string }
+  | { type: "tool_result"; tool_call_id?: string; tool?: string; success?: boolean; content?: string }
   | { type: "plan_ready"; session_id: string; plan_id: string; status: "pending"; content: string }
   | { type: "plan_approved"; session_id: string; plan_id: string }
   | { type: "plan_error"; message?: string }
@@ -115,6 +130,7 @@ function App() {
   const streamingMessageIdRef = useRef<string | null>(null);
   const streamingSessionIdRef = useRef<string | null>(null);
   const executingPlanIdRef = useRef<string | null>(null);
+  const toolRunMessageIdsRef = useRef<Record<string, string>>({});
   const reconnectTimerRef = useRef<number | null>(null);
   const reconnectAttemptRef = useRef(0);
   const shouldReconnectRef = useRef(true);
@@ -204,13 +220,13 @@ function App() {
 
       if (payload.type === "tool_call") {
         setSocketStatus(payload.tool ? `Tool: ${payload.tool}` : "Calling tool");
-        appendRunEventMessage(formatToolCall(payload));
+        appendToolRunMessage(payload);
         return;
       }
 
       if (payload.type === "tool_result") {
         setSocketStatus(payload.tool ? `Tool complete: ${payload.tool}` : "Tool complete");
-        appendRunEventMessage(formatToolResult(payload));
+        updateToolRunMessage(payload);
         return;
       }
 
@@ -291,6 +307,7 @@ function App() {
           executingPlanIdRef.current = null;
         }
         streamingMessageIdRef.current = null;
+        toolRunMessageIdsRef.current = {};
         const sessionId = streamingSessionIdRef.current;
         streamingSessionIdRef.current = null;
         if (sessionId) {
@@ -565,6 +582,7 @@ function App() {
     streamingMessageIdRef.current = null;
     streamingSessionIdRef.current = null;
     executingPlanIdRef.current = null;
+    toolRunMessageIdsRef.current = {};
   }
 
   function finishStreamingWithError(errorText: string) {
@@ -644,6 +662,77 @@ function App() {
         text,
       },
     ]);
+  }
+
+  function appendToolRunMessage(payload: Extract<SocketPayload, { type: "tool_call" }>) {
+    const sessionId = streamingSessionIdRef.current ?? activeSessionIdRef.current ?? undefined;
+    const toolCallId = payload.tool_call_id || crypto.randomUUID();
+    const messageId = crypto.randomUUID();
+    toolRunMessageIdsRef.current[toolCallId] = messageId;
+    setMessages((current) => [
+      ...current,
+      {
+        id: messageId,
+        session_id: sessionId,
+        role: "tool",
+        text: "",
+        kind: "tool_run",
+        metadata: {
+          tool_call_id: toolCallId,
+          tool: payload.tool ?? "unknown_tool",
+          arguments: payload.arguments ?? "{}",
+          result: null,
+        },
+      },
+    ]);
+  }
+
+  function updateToolRunMessage(payload: Extract<SocketPayload, { type: "tool_result" }>) {
+    const sessionId = streamingSessionIdRef.current ?? activeSessionIdRef.current ?? undefined;
+    const toolCallId = payload.tool_call_id || "unknown_tool_call";
+    const messageId = toolRunMessageIdsRef.current[toolCallId] ?? crypto.randomUUID();
+    const result = {
+      success: payload.success !== false,
+      content: payload.content ?? "",
+    };
+
+    if (!toolRunMessageIdsRef.current[toolCallId]) {
+      toolRunMessageIdsRef.current[toolCallId] = messageId;
+    }
+
+    setMessages((current) =>
+      current.some((message) => message.id === messageId)
+        ? current.map((message) =>
+            message.id === messageId
+              ? {
+                  ...message,
+                  metadata: {
+                    ...(message.metadata ?? {}),
+                    tool_call_id: toolCallId,
+                    tool: message.metadata?.tool ?? payload.tool ?? "unknown_tool",
+                    arguments: message.metadata?.arguments ?? "{}",
+                    result,
+                  },
+                }
+              : message,
+          )
+        : [
+            ...current,
+            {
+              id: messageId,
+              session_id: sessionId,
+              role: "tool",
+              text: "",
+              kind: "tool_run",
+              metadata: {
+                tool_call_id: toolCallId,
+                tool: payload.tool ?? "unknown_tool",
+                arguments: "{}",
+                result,
+              },
+            },
+          ],
+    );
   }
 
   function renderComposer(options: { autoFocus?: boolean; draft?: boolean } = {}) {
@@ -916,13 +1005,20 @@ function App() {
                     </article>
                   )}
                   {messages.map((message) => (
-                    <article className={`message ${message.role} ${message.kind === "plan" ? "plan" : ""}`} key={message.id}>
+                    <article
+                      className={`message ${message.role} ${message.kind === "plan" ? "plan" : ""} ${
+                        message.kind === "tool_run" ? "tool-run" : ""
+                      }`}
+                      key={message.id}
+                    >
                       {message.role === "user" && (
                         <div className="avatar">
                           <Code2 size={18} />
                         </div>
                       )}
-                      {message.kind === "plan" ? (
+                      {message.kind === "tool_run" ? (
+                        <ToolCard metadata={message.metadata ?? null} />
+                      ) : message.kind === "plan" ? (
                         <div className="plan-bubble">
                           <div className="plan-header">
                             <span>
@@ -962,6 +1058,62 @@ function App() {
       </section>
     </main>
   );
+}
+
+function ToolCard({ metadata }: { metadata: ToolRunMetadata | null }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const tool = metadata?.tool?.trim() || "unknown_tool";
+  const argumentsText = metadata?.arguments ?? "{}";
+  const result = metadata?.result ?? null;
+  const status = result ? (result.success === false ? "failed" : "completed") : "running";
+  const resultText = result?.content ?? "";
+
+  return (
+    <div className={`tool-card ${status}`}>
+      <button
+        className="tool-card-header"
+        type="button"
+        aria-expanded={isExpanded}
+        onClick={() => setIsExpanded((expanded) => !expanded)}
+      >
+        <span className="tool-card-title">
+          {status === "running" ? (
+            <Activity size={15} />
+          ) : status === "failed" ? (
+            <X size={15} />
+          ) : (
+            <CheckCircle2 size={15} />
+          )}
+          <strong>{tool}</strong>
+        </span>
+        <span className={`tool-card-status ${status}`}>{formatToolRunStatus(status)}</span>
+        {isExpanded ? <ChevronUp size={17} /> : <ChevronDown size={17} />}
+      </button>
+
+      {isExpanded && (
+        <div className="tool-card-body">
+          <section className="tool-card-section">
+            <span>Arguments</span>
+            <pre className="tool-card-content">{argumentsText || "{}"}</pre>
+          </section>
+          <section className="tool-card-section">
+            <span>Result</span>
+            <pre className="tool-card-content">{result ? resultText || "(empty)" : "Running..."}</pre>
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatToolRunStatus(status: "running" | "completed" | "failed"): string {
+  if (status === "failed") {
+    return "Failed";
+  }
+  if (status === "completed") {
+    return "Completed";
+  }
+  return "Running";
 }
 
 async function loadApiConfig(): Promise<ApiRuntimeConfig> {
@@ -1031,7 +1183,8 @@ async function fetchMessages(config: ApiRuntimeConfig, sessionId: string): Promi
     session_id: message.session_id,
     role: message.role,
     text: message.content,
-    kind: message.plan_id ? "plan" : "normal",
+    kind: message.kind === "tool_run" ? "tool_run" : message.plan_id ? "plan" : "normal",
+    metadata: message.metadata ?? null,
     plan_id: message.plan_id ?? undefined,
     plan_status: message.plan_status ?? undefined,
     sequence: message.sequence,
@@ -1059,28 +1212,6 @@ function formatContextCompressed(payload: Extract<SocketPayload, { type: "contex
   const scope = payload.scope === "loop" ? "tool context" : "session context";
   const compressed = typeof payload.compressed_messages === "number" ? `${payload.compressed_messages} messages` : "context";
   return `Context compressed: ${scope}\nCompressed ${compressed}.`;
-}
-
-function formatToolCall(payload: Extract<SocketPayload, { type: "tool_call" }>): string {
-  const tool = payload.tool ?? "unknown_tool";
-  const argumentsText = compactToolText(payload.arguments ?? "{}");
-  return `Tool call: ${tool}\n${argumentsText}`;
-}
-
-function formatToolResult(payload: Extract<SocketPayload, { type: "tool_result" }>): string {
-  const tool = payload.tool ?? "unknown_tool";
-  const status = payload.success === false ? "failed" : "completed";
-  const content = compactToolText(payload.content ?? "");
-  return content ? `Tool result: ${tool} ${status}\n${content}` : `Tool result: ${tool} ${status}`;
-}
-
-function compactToolText(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return "";
-  }
-
-  return trimmed.length > 700 ? `${trimmed.slice(0, 700)}...` : trimmed;
 }
 
 function sleep(milliseconds: number): Promise<void> {

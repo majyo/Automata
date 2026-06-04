@@ -67,6 +67,8 @@ async def stream_agent_loop(
         model=config.model,
         mode="act",
         allowed_tool_names=None,
+        session_id=session_id,
+        store=store,
     ):
         yield event
 
@@ -97,6 +99,8 @@ async def stream_plan_loop(
         model=config.model,
         mode="plan",
         allowed_tool_names=PLAN_TOOL_NAMES,
+        session_id=session_id,
+        store=store,
     ):
         yield event
 
@@ -108,6 +112,8 @@ async def stream_model_loop(
     model: str,
     mode: str,
     allowed_tool_names: set[str] | None,
+    session_id: str | None = None,
+    store: AgentContextStore | None = None,
 ) -> AsyncIterator[AgentLoopEvent]:
     for step in range(1, MAX_AGENT_STEPS + 1):
         yield {
@@ -135,13 +141,19 @@ async def stream_model_loop(
         tool_calls = assistant_message.get("tool_calls")
 
         if isinstance(tool_calls, list) and tool_calls:
-            messages.append(assistant_message_for_provider(assistant_message))
+            provider_message = assistant_message_for_provider(assistant_message)
+            messages.append(provider_message)
+            save_context_message_if_possible(
+                store=store, session_id=session_id, message=provider_message
+            )
             for tool_call in tool_calls:
                 async for event in stream_execute_tool_call(
                     messages=messages,
                     tool_call=tool_call,
                     mode=mode,
                     allowed_tool_names=allowed_tool_names,
+                    session_id=session_id,
+                    store=store,
                 ):
                     yield event
             collector = EventCollector()
@@ -156,6 +168,11 @@ async def stream_model_loop(
 
         content = assistant_message.get("content")
         if isinstance(content, str) and content.strip():
+            save_context_message_if_possible(
+                store=store,
+                session_id=session_id,
+                message={"role": "assistant", "content": content},
+            )
             yield {"type": "final", "content": content, "mode": mode}
             return
 
@@ -171,6 +188,8 @@ async def stream_execute_tool_call(
     tool_call: dict[str, Any],
     mode: str = "act",
     allowed_tool_names: set[str] | None = None,
+    session_id: str | None = None,
+    store: AgentContextStore | None = None,
 ) -> AsyncIterator[AgentLoopEvent]:
     function = tool_call.get("function")
     if not isinstance(function, dict):
@@ -178,11 +197,15 @@ async def stream_execute_tool_call(
 
     name = function.get("name")
     arguments = function.get("arguments")
+    call_id = tool_call.get("id")
     if not isinstance(name, str) or not name.strip():
         raise llm.AgentProviderError("LLM provider returned a tool call without a name.")
+    if not isinstance(call_id, str) or not call_id.strip():
+        call_id = ""
 
     yield {
         "type": "tool_call",
+        "tool_call_id": call_id,
         "tool": name,
         "arguments": arguments if isinstance(arguments, str) else "{}",
     }
@@ -192,11 +215,28 @@ async def stream_execute_tool_call(
         result = await run_tool(name, arguments, agent_workspace())
     yield {
         "type": "tool_result",
+        "tool_call_id": call_id,
         "tool": result.name,
         "success": result.success,
         "content": result.content,
     }
-    messages.append(tool_result_for_provider(tool_call, result))
+    provider_message = tool_result_for_provider(tool_call, result)
+    messages.append(provider_message)
+    save_context_message_if_possible(
+        store=store, session_id=session_id, message=provider_message
+    )
+
+
+def save_context_message_if_possible(
+    *,
+    store: AgentContextStore | None,
+    session_id: str | None,
+    message: dict[str, Any],
+) -> None:
+    if store is None or not session_id:
+        return
+
+    store.save_context_message(session_id, message)
 
 def tool_specs_for_names(
     tools: list[dict[str, Any]], allowed_names: set[str]
@@ -267,6 +307,5 @@ def tool_result_for_provider(
     return {
         "role": "tool",
         "tool_call_id": call_id if isinstance(call_id, str) else "",
-        "name": result.name,
         "content": result.content,
     }

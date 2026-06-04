@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from typing import Any
 
@@ -96,7 +97,9 @@ def list_messages(session_id: str) -> list[dict[str, Any]]:
                 messages.id,
                 messages.session_id,
                 messages.role,
+                messages.kind,
                 messages.content,
+                messages.metadata_json,
                 messages.sequence,
                 messages.created_at,
                 session_plans.id AS plan_id,
@@ -109,7 +112,7 @@ def list_messages(session_id: str) -> list[dict[str, Any]]:
             """,
             (session_id,),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return [message_row_from_db(row) for row in rows]
 
 
 def session_exists(session_id: str) -> bool:
@@ -120,9 +123,21 @@ def session_exists(session_id: str) -> bool:
         return row is not None
 
 
-def save_message(session_id: str, role: str, content: str) -> dict[str, Any]:
+def save_message(
+    session_id: str,
+    role: str,
+    content: str,
+    *,
+    kind: str = "message",
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     message_id = new_id()
     created_at = now_iso()
+    metadata_json = (
+        json.dumps(metadata, ensure_ascii=False, sort_keys=True)
+        if metadata is not None
+        else None
+    )
 
     with db_lock, connect_db() as db:
         row = db.execute(
@@ -132,10 +147,28 @@ def save_message(session_id: str, role: str, content: str) -> dict[str, Any]:
         sequence = int(row["next_sequence"])
         db.execute(
             """
-            INSERT INTO messages (id, session_id, role, content, sequence, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO messages (
+                id,
+                session_id,
+                role,
+                kind,
+                content,
+                metadata_json,
+                sequence,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (message_id, session_id, role, content, sequence, created_at),
+            (
+                message_id,
+                session_id,
+                role,
+                kind,
+                content,
+                metadata_json,
+                sequence,
+                created_at,
+            ),
         )
         db.execute(
             "UPDATE sessions SET updated_at = ? WHERE id = ?", (created_at, session_id)
@@ -146,17 +179,124 @@ def save_message(session_id: str, role: str, content: str) -> dict[str, Any]:
         "id": message_id,
         "session_id": session_id,
         "role": role,
+        "kind": kind,
         "content": content,
+        "metadata": metadata,
         "sequence": sequence,
         "created_at": created_at,
     }
 
 
-def get_recent_messages(session_id: str, limit: int) -> list[dict[str, str]]:
+def save_tool_run_message(
+    *,
+    session_id: str,
+    tool_call_id: str,
+    tool: str,
+    arguments: str,
+) -> dict[str, Any]:
+    return save_message(
+        session_id=session_id,
+        role="tool",
+        kind="tool_run",
+        content="",
+        metadata={
+            "tool_call_id": tool_call_id,
+            "tool": tool,
+            "arguments": arguments,
+            "result": None,
+        },
+    )
+
+
+def update_tool_run_result(
+    *,
+    session_id: str,
+    message_id: str,
+    success: bool,
+    content: str,
+) -> dict[str, Any]:
+    with db_lock, connect_db() as db:
+        ensure_session(db, session_id)
+        row = db.execute(
+            """
+            SELECT
+                id,
+                session_id,
+                role,
+                kind,
+                content,
+                metadata_json,
+                sequence,
+                created_at
+            FROM messages
+            WHERE session_id = ? AND id = ? AND kind = 'tool_run'
+            """,
+            (session_id, message_id),
+        ).fetchone()
+        if row is None:
+            raise ValueError("Tool run message not found")
+
+        message = message_row_from_db(row)
+        metadata = message.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+        metadata["result"] = {"success": success, "content": content}
+        metadata_json = json.dumps(metadata, ensure_ascii=False, sort_keys=True)
+        db.execute(
+            """
+            UPDATE messages
+            SET metadata_json = ?
+            WHERE session_id = ? AND id = ?
+            """,
+            (metadata_json, session_id, message_id),
+        )
+        db.commit()
+
+    message["metadata"] = metadata
+    return message
+
+
+def save_context_message(session_id: str, message: dict[str, Any]) -> dict[str, Any]:
+    message_id = new_id()
+    created_at = now_iso()
+    message_json = json.dumps(message, ensure_ascii=False, sort_keys=True)
+
+    with db_lock, connect_db() as db:
+        ensure_session(db, session_id)
+        row = db.execute(
+            """
+            SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence
+            FROM agent_context_messages
+            WHERE session_id = ?
+            """,
+            (session_id,),
+        ).fetchone()
+        sequence = int(row["next_sequence"])
+        db.execute(
+            """
+            INSERT INTO agent_context_messages (
+                id, session_id, message_json, sequence, created_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (message_id, session_id, message_json, sequence, created_at),
+        )
+        db.commit()
+
+    return {
+        "id": message_id,
+        "session_id": session_id,
+        "message": message,
+        "sequence": sequence,
+        "created_at": created_at,
+    }
+
+
+def get_recent_messages(session_id: str, limit: int) -> list[dict[str, Any]]:
     with db_lock, connect_db() as db:
         rows = db.execute(
             """
-            SELECT role, content
+            SELECT role, kind, content, metadata_json, sequence
             FROM messages
             WHERE session_id = ?
             ORDER BY sequence DESC
@@ -165,7 +305,23 @@ def get_recent_messages(session_id: str, limit: int) -> list[dict[str, str]]:
             (session_id, limit),
         ).fetchall()
 
-    return [dict(row) for row in reversed(rows)]
+    return [message_row_from_db(row) for row in reversed(rows)]
+
+
+def get_recent_context_messages(session_id: str, limit: int) -> list[dict[str, Any]]:
+    with db_lock, connect_db() as db:
+        rows = db.execute(
+            """
+            SELECT message_json, sequence
+            FROM agent_context_messages
+            WHERE session_id = ?
+            ORDER BY sequence DESC
+            LIMIT ?
+            """,
+            (session_id, limit),
+        ).fetchall()
+
+    return [context_row_from_db(row) for row in reversed(rows)]
 
 
 def get_messages_after_sequence(
@@ -174,7 +330,7 @@ def get_messages_after_sequence(
     with db_lock, connect_db() as db:
         rows = db.execute(
             """
-            SELECT role, content, sequence
+            SELECT role, kind, content, metadata_json, sequence
             FROM messages
             WHERE session_id = ? AND sequence > ?
             ORDER BY sequence ASC
@@ -182,7 +338,53 @@ def get_messages_after_sequence(
             (session_id, sequence),
         ).fetchall()
 
-    return [dict(row) for row in rows]
+    return [message_row_from_db(row) for row in rows]
+
+
+def get_context_messages_after_sequence(
+    session_id: str, sequence: int
+) -> list[dict[str, Any]]:
+    with db_lock, connect_db() as db:
+        rows = db.execute(
+            """
+            SELECT message_json, sequence
+            FROM agent_context_messages
+            WHERE session_id = ? AND sequence > ?
+            ORDER BY sequence ASC
+            """,
+            (session_id, sequence),
+        ).fetchall()
+
+    return [context_row_from_db(row) for row in rows]
+
+
+def context_row_from_db(row: sqlite3.Row) -> dict[str, Any]:
+    try:
+        message = json.loads(row["message_json"])
+    except json.JSONDecodeError as error:
+        raise RuntimeError("Stored agent context message is invalid JSON.") from error
+
+    if not isinstance(message, dict):
+        raise RuntimeError("Stored agent context message must be a JSON object.")
+
+    return {"message": message, "sequence": int(row["sequence"])}
+
+
+def message_row_from_db(row: sqlite3.Row) -> dict[str, Any]:
+    row_dict = dict(row)
+    metadata_json = row_dict.pop("metadata_json", None)
+    metadata = None
+    if isinstance(metadata_json, str) and metadata_json:
+        try:
+            metadata = json.loads(metadata_json)
+        except json.JSONDecodeError as error:
+            raise RuntimeError("Stored message metadata is invalid JSON.") from error
+        if not isinstance(metadata, dict):
+            raise RuntimeError("Stored message metadata must be a JSON object.")
+
+    row_dict["kind"] = row_dict.get("kind") or "message"
+    row_dict["metadata"] = metadata
+    return row_dict
 
 
 def fetch_context_summary(session_id: str) -> dict[str, Any] | None:

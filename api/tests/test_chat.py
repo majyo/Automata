@@ -3,6 +3,7 @@ import json
 import pytest
 
 from automata_api.repositories.sessions import fetch_plan
+from automata_api.repositories.sessions import get_context_messages_after_sequence
 from automata_api.agent import tools
 
 
@@ -31,6 +32,26 @@ def token_content(events):
     return "".join(
         event.get("content", "") for event in events if event["type"] == "token"
     )
+
+
+def assert_tool_run_message(
+    message,
+    *,
+    tool_call_id,
+    tool,
+    arguments_contains,
+    result_contains,
+    success=True,
+):
+    assert message["role"] == "tool"
+    assert message["kind"] == "tool_run"
+    assert message["content"] == ""
+    metadata = message["metadata"]
+    assert metadata["tool_call_id"] == tool_call_id
+    assert metadata["tool"] == tool
+    assert arguments_contains in metadata["arguments"]
+    assert metadata["result"]["success"] is success
+    assert result_contains in metadata["result"]["content"]
 
 
 def stream_from_completion(create_response):
@@ -170,15 +191,203 @@ def test_chat_websocket_runs_agent_loop_with_read_file_tool(client, monkeypatch,
         "done",
     ]
     assert events[2]["tool"] == "read_file"
+    assert events[2]["tool_call_id"] == "call_1"
+    assert events[3]["tool_call_id"] == "call_1"
     assert events[3]["success"] is True
     assert '"simulated": false' in events[3]["content"]
     assert "workspace details" in events[3]["content"]
     assert token_content(events) == "I read the workspace file and finished."
 
     messages = client.get(f"/sessions/{session['id']}/messages").json()
-    assert [message["role"] for message in messages] == ["user", "agent"]
-    assert messages[1]["content"] == "I read the workspace file and finished."
+    assert [message["role"] for message in messages] == [
+        "user",
+        "tool",
+        "agent",
+    ]
+    assert_tool_run_message(
+        messages[1],
+        tool_call_id="call_1",
+        tool="read_file",
+        arguments_contains="README.md",
+        result_contains="workspace details",
+    )
+    assert messages[2]["content"] == "I read the workspace file and finished."
     assert len(calls) == 2
+
+
+def test_chat_websocket_restores_persisted_tool_protocol_context(
+    client, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
+    monkeypatch.setenv("AUTOMATA_WORKSPACE_DIR", str(tmp_path))
+    (tmp_path / "README.md").write_text("readme details\n", encoding="utf-8")
+    (tmp_path / "NOTES.md").write_text("notes details\n", encoding="utf-8")
+    session = client.post("/sessions", json={"title": "Restored Agent"}).json()
+    calls = []
+
+    async def fake_create_llm_response(messages, tools=None):
+        calls.append({"messages": list(messages), "tools": tools})
+        if len(calls) == 1:
+            assert [message["role"] for message in messages] == ["system", "user"]
+            return {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_readme",
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "arguments": '{"path": "README.md"}',
+                        },
+                    },
+                    {
+                        "id": "call_notes",
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "arguments": '{"path": "NOTES.md"}',
+                        },
+                    },
+                ],
+            }
+
+        if len(calls) == 2:
+            assert messages[-3]["role"] == "assistant"
+            assert len(messages[-3]["tool_calls"]) == 2
+            assert messages[-2]["role"] == "tool"
+            assert messages[-2]["tool_call_id"] == "call_readme"
+            assert messages[-1]["role"] == "tool"
+            assert messages[-1]["tool_call_id"] == "call_notes"
+            return {
+                "role": "assistant",
+                "content": "First run done.",
+                "tool_calls": [],
+            }
+
+        assert [message["role"] for message in messages] == [
+            "system",
+            "user",
+            "assistant",
+            "tool",
+            "tool",
+            "assistant",
+            "user",
+        ]
+        restored_tool_call = messages[2]
+        assert restored_tool_call["content"] is None
+        assert [call["id"] for call in restored_tool_call["tool_calls"]] == [
+            "call_readme",
+            "call_notes",
+        ]
+        assert messages[3]["tool_call_id"] == "call_readme"
+        assert "readme details" in messages[3]["content"]
+        assert messages[4]["tool_call_id"] == "call_notes"
+        assert "notes details" in messages[4]["content"]
+        assert messages[5] == {"role": "assistant", "content": "First run done."}
+        assert messages[6] == {"role": "user", "content": "continue with context"}
+        assert not any(
+            isinstance(message.get("content"), str)
+            and message["content"].startswith("Tool call:")
+            for message in messages
+        )
+        return {
+            "role": "assistant",
+            "content": "Restored context ok.",
+            "tool_calls": [],
+        }
+
+    monkeypatch.setattr(
+        "automata_api.agent.llm.stream_chat_completion",
+        stream_from_completion(fake_create_llm_response),
+    )
+
+    with client.websocket_connect("/ws/chat") as websocket:
+        websocket.receive_json()
+        websocket.send_json(
+            {
+                "type": "prompt",
+                "session_id": session["id"],
+                "prompt": "read both files",
+            }
+        )
+        first_events = []
+        while True:
+            event = websocket.receive_json()
+            first_events.append(event)
+            if event["type"] in {"done", "error"}:
+                break
+
+        websocket.send_json(
+            {
+                "type": "prompt",
+                "session_id": session["id"],
+                "prompt": "continue with context",
+            }
+        )
+        second_events = []
+        while True:
+            event = websocket.receive_json()
+            second_events.append(event)
+            if event["type"] in {"done", "error"}:
+                break
+
+    assert compact_event_types(first_events) == [
+        "started",
+        "agent_step",
+        "tool_call",
+        "tool_result",
+        "tool_call",
+        "tool_result",
+        "agent_step",
+        "token",
+        "done",
+    ]
+    assert compact_event_types(second_events) == [
+        "started",
+        "agent_step",
+        "token",
+        "done",
+    ]
+    assert token_content(first_events) == "First run done."
+    assert token_content(second_events) == "Restored context ok."
+
+    visible_messages = client.get(f"/sessions/{session['id']}/messages").json()
+    assert [message["role"] for message in visible_messages] == [
+        "user",
+        "tool",
+        "tool",
+        "agent",
+        "user",
+        "agent",
+    ]
+    assert_tool_run_message(
+        visible_messages[1],
+        tool_call_id="call_readme",
+        tool="read_file",
+        arguments_contains="README.md",
+        result_contains="readme details",
+    )
+    assert_tool_run_message(
+        visible_messages[2],
+        tool_call_id="call_notes",
+        tool="read_file",
+        arguments_contains="NOTES.md",
+        result_contains="notes details",
+    )
+    context_messages = get_context_messages_after_sequence(session["id"], 0)
+    assert [row["message"]["role"] for row in context_messages] == [
+        "user",
+        "assistant",
+        "tool",
+        "tool",
+        "assistant",
+        "user",
+        "assistant",
+    ]
+    assert len(context_messages[1]["message"]["tool_calls"]) == 2
+    assert context_messages[2]["message"]["tool_call_id"] == "call_readme"
+    assert context_messages[3]["message"]["tool_call_id"] == "call_notes"
 
 
 def test_chat_websocket_runs_agent_loop_with_real_bash_tool(client, monkeypatch):
@@ -259,6 +468,21 @@ def test_chat_websocket_runs_agent_loop_with_real_bash_tool(client, monkeypatch)
     assert events[3]["success"] is True
     assert '"simulated": false' in events[3]["content"]
     assert token_content(events) == "Bash finished."
+
+    messages = client.get(f"/sessions/{session['id']}/messages").json()
+    assert [message["role"] for message in messages] == [
+        "user",
+        "tool",
+        "agent",
+    ]
+    assert_tool_run_message(
+        messages[1],
+        tool_call_id="call_bash_1",
+        tool="run_bash",
+        arguments_contains="printf agent-bash",
+        result_contains='"stdout": "agent-bash"',
+    )
+    assert messages[2]["content"] == "Bash finished."
     assert len(calls) == 2
 
 
@@ -340,6 +564,21 @@ def test_chat_websocket_runs_agent_loop_with_rg_tool(client, monkeypatch):
     assert events[3]["success"] is True
     assert '"simulated": false' in events[3]["content"]
     assert token_content(events) == "Search finished."
+
+    messages = client.get(f"/sessions/{session['id']}/messages").json()
+    assert [message["role"] for message in messages] == [
+        "user",
+        "tool",
+        "agent",
+    ]
+    assert_tool_run_message(
+        messages[1],
+        tool_call_id="call_rg_1",
+        tool="rg",
+        arguments_contains="async def run_tool",
+        result_contains='"matched": true',
+    )
+    assert messages[2]["content"] == "Search finished."
     assert len(calls) == 2
 
 
@@ -435,6 +674,29 @@ def test_chat_websocket_runs_agent_loop_with_file_tools(client, monkeypatch, tmp
     assert events[4]["tool"] == "read_file"
     assert events[5]["success"] is True
     assert token_content(events) == "File tools finished."
+
+    messages = client.get(f"/sessions/{session['id']}/messages").json()
+    assert [message["role"] for message in messages] == [
+        "user",
+        "tool",
+        "tool",
+        "agent",
+    ]
+    assert_tool_run_message(
+        messages[1],
+        tool_call_id="call_write_1",
+        tool="write_file",
+        arguments_contains=".build/test-file-tool.txt",
+        result_contains='"ok": true',
+    )
+    assert_tool_run_message(
+        messages[2],
+        tool_call_id="call_read_1",
+        tool="read_file",
+        arguments_contains=".build/test-file-tool.txt",
+        result_contains="file-tool-ok",
+    )
+    assert messages[3]["content"] == "File tools finished."
     assert len(calls) == 2
 
 
@@ -527,6 +789,21 @@ def test_chat_websocket_runs_agent_loop_with_apply_patch_tool(client, monkeypatc
     assert events[3]["success"] is True
     assert '"simulated": false' in events[3]["content"]
     assert token_content(events) == "Patch finished."
+
+    messages = client.get(f"/sessions/{session['id']}/messages").json()
+    assert [message["role"] for message in messages] == [
+        "user",
+        "tool",
+        "agent",
+    ]
+    assert_tool_run_message(
+        messages[1],
+        tool_call_id="call_patch_1",
+        tool="apply_patch",
+        arguments_contains='"dry_run": false',
+        result_contains='"dry_run": false',
+    )
+    assert messages[2]["content"] == "Patch finished."
     assert len(calls) == 2
 
 
@@ -670,6 +947,22 @@ def test_chat_websocket_plan_mode_blocks_mutating_tools(client, monkeypatch, tmp
     assert events[3]["success"] is False
     assert "blocked_by_plan_mode" in events[3]["content"]
     assert not target.exists()
+
+    messages = client.get(f"/sessions/{session['id']}/messages").json()
+    assert [message["role"] for message in messages] == [
+        "user",
+        "tool",
+        "agent",
+    ]
+    assert_tool_run_message(
+        messages[1],
+        tool_call_id="call_write_blocked",
+        tool="write_file",
+        arguments_contains="blocked.txt",
+        result_contains="blocked_by_plan_mode",
+        success=False,
+    )
+    assert messages[2]["content"] == "Plan after blocked tool."
 
 
 def test_chat_websocket_approve_plan_executes_and_marks_executed(client, monkeypatch):

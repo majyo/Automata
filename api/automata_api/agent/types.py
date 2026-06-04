@@ -19,12 +19,14 @@ class AgentTokenEvent(TypedDict):
 
 class AgentToolCallEvent(TypedDict):
     type: Literal["tool_call"]
+    tool_call_id: str
     tool: str
     arguments: str
 
 
 class AgentToolResultEvent(TypedDict):
     type: Literal["tool_result"]
+    tool_call_id: str
     tool: str
     success: bool
     content: str
@@ -53,6 +55,21 @@ class AgentContextStore(Protocol):
     def get_messages_after_sequence(
         self, session_id: str, sequence: int
     ) -> list[dict[str, Any]]:
+        ...
+
+    def get_recent_context_messages(
+        self, session_id: str, limit: int
+    ) -> list[dict[str, Any]]:
+        ...
+
+    def get_context_messages_after_sequence(
+        self, session_id: str, sequence: int
+    ) -> list[dict[str, Any]]:
+        ...
+
+    def save_context_message(
+        self, session_id: str, message: dict[str, Any]
+    ) -> dict[str, Any]:
         ...
 
     def fetch_context_summary(self, session_id: str) -> dict[str, Any] | None:

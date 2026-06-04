@@ -29,7 +29,12 @@ async def fetch_agent_context(
     }
     summary = store.fetch_context_summary(session_id)
     through_sequence = int(summary["through_sequence"]) if summary else 0
-    rows = store.get_messages_after_sequence(session_id, through_sequence)
+    rows = store.get_context_messages_after_sequence(session_id, through_sequence)
+    if not summary and not rows:
+        return fetch_recent_agent_context(
+            session_id=session_id, store=store, system_prompt=system_prompt
+        )
+
     messages = build_context_messages(system_message, summary, rows)
 
     if context_char_count(messages) <= compression_config.threshold_chars:
@@ -79,6 +84,12 @@ def fetch_recent_agent_context(
         }
     ]
 
+    context_rows = store.get_recent_context_messages(session_id, MAX_CONTEXT_MESSAGES)
+    if context_rows:
+        for row in context_rows:
+            messages.append(message_from_row(row))
+        return messages
+
     for row in store.get_recent_messages(session_id, MAX_CONTEXT_MESSAGES):
         messages.append(message_from_row(row))
 
@@ -100,8 +111,12 @@ def build_context_messages(
     return messages
 
 
-def message_from_row(row: dict[str, Any]) -> dict[str, str]:
-    role = "assistant" if row["role"] == "agent" else "user"
+def message_from_row(row: dict[str, Any]) -> dict[str, Any]:
+    message = row.get("message")
+    if isinstance(message, dict):
+        return dict(message)
+
+    role = "user" if row["role"] == "user" else "assistant"
     return {"role": role, "content": row["content"]}
 
 
@@ -203,10 +218,22 @@ async def create_context_summary(
 
 
 def history_rows_text(rows: list[dict[str, Any]]) -> str:
-    return "\n\n".join(
-        f"[sequence={row['sequence']} role={row['role']}]\n{row['content']}"
-        for row in rows
-    )
+    parts = []
+    for row in rows:
+        if isinstance(row.get("message"), dict):
+            parts.append(
+                "[sequence={sequence} provider_message]\n{message}".format(
+                    sequence=row["sequence"],
+                    message=json.dumps(
+                        row["message"], ensure_ascii=False, sort_keys=True
+                    ),
+                )
+            )
+            continue
+
+        parts.append(f"[sequence={row['sequence']} role={row['role']}]\n{row['content']}")
+
+    return "\n\n".join(parts)
 
 
 def messages_text(messages: list[dict[str, Any]]) -> str:
@@ -241,4 +268,3 @@ async def send_context_compressed_event(
         event["through_sequence"] = through_sequence
 
     await emit_event(event)
-

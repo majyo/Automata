@@ -12,11 +12,15 @@ class MemoryStore:
         self,
         *,
         recent_messages=None,
+        context_messages=None,
         rows_after_sequence=None,
+        context_rows_after_sequence=None,
         summary=None,
     ):
         self.recent_messages = recent_messages or []
+        self.context_messages = context_messages or []
         self.rows_after_sequence = rows_after_sequence or []
+        self.context_rows_after_sequence = context_rows_after_sequence or []
         self.summary = summary
         self.upserts = []
         self.calls = []
@@ -32,6 +36,28 @@ class MemoryStore:
             for row in self.rows_after_sequence
             if int(row["sequence"]) > sequence
         ]
+
+    def get_recent_context_messages(self, session_id: str, limit: int) -> list[dict]:
+        self.calls.append(("recent_context", session_id, limit))
+        return self.context_messages[-limit:]
+
+    def get_context_messages_after_sequence(
+        self, session_id: str, sequence: int
+    ) -> list[dict]:
+        self.calls.append(("after_context", session_id, sequence))
+        return [
+            row
+            for row in self.context_rows_after_sequence
+            if int(row["sequence"]) > sequence
+        ]
+
+    def save_context_message(self, session_id: str, message: dict) -> dict:
+        row = {
+            "message": message,
+            "sequence": len(self.context_messages) + 1,
+        }
+        self.context_messages.append(row)
+        return row
 
     def fetch_context_summary(self, session_id: str) -> dict | None:
         self.calls.append(("summary", session_id))
@@ -69,11 +95,25 @@ def rows(count: int, *, content_size: int = 8) -> list[dict]:
     ]
 
 
+def provider_rows(count: int, *, content_size: int = 8) -> list[dict]:
+    return [
+        {
+            "message": {
+                "role": "assistant" if index % 2 else "user",
+                "content": f"message-{index} " + ("x" * content_size),
+            },
+            "sequence": index + 1,
+        }
+        for index in range(count)
+    ]
+
+
 def test_fetch_recent_agent_context_uses_recent_store_and_role_mapping():
     store = MemoryStore(
         recent_messages=[
             {"role": "user", "content": "hello"},
             {"role": "agent", "content": "hi"},
+            {"role": "tool", "content": "Tool result: read_file completed"},
         ]
     )
 
@@ -87,20 +127,28 @@ def test_fetch_recent_agent_context_uses_recent_store_and_role_mapping():
         {"role": "system", "content": "custom system"},
         {"role": "user", "content": "hello"},
         {"role": "assistant", "content": "hi"},
+        {"role": "assistant", "content": "Tool result: read_file completed"},
     ]
-    assert store.calls == [("recent", "session-1", 24)]
+    assert store.calls == [
+        ("recent_context", "session-1", 24),
+        ("recent", "session-1", 24),
+    ]
 
 
 def test_build_context_messages_injects_existing_summary():
     built = context.build_context_messages(
         {"role": "system", "content": "system"},
         {"content": "prior summary", "through_sequence": 7},
-        [{"role": "agent", "content": "reply", "sequence": 8}],
+        [
+            {"role": "agent", "content": "reply", "sequence": 8},
+            {"role": "tool", "content": "Tool call: rg\n{}", "sequence": 9},
+        ],
     )
 
     assert built[0] == {"role": "system", "content": "system"}
     assert built[1] == context.summary_message("prior summary", 7)
     assert built[2] == {"role": "assistant", "content": "reply"}
+    assert built[3] == {"role": "assistant", "content": "Tool call: rg\n{}"}
 
 
 def test_fetch_agent_context_skips_compression_when_disabled(monkeypatch):
@@ -121,7 +169,10 @@ def test_fetch_agent_context_skips_compression_when_disabled(monkeypatch):
     )
 
     assert messages[-1] == {"role": "user", "content": "recent"}
-    assert store.calls == [("recent", "session-1", 24)]
+    assert store.calls == [
+        ("recent_context", "session-1", 24),
+        ("recent", "session-1", 24),
+    ]
     assert recorder.events == []
 
 
@@ -131,7 +182,7 @@ def test_fetch_agent_context_keeps_uncompressed_messages_below_threshold(monkeyp
 
     monkeypatch.setattr(context, "create_context_summary", fail_create_context_summary)
 
-    store = MemoryStore(rows_after_sequence=rows(2))
+    store = MemoryStore(context_rows_after_sequence=provider_rows(2))
     recorder = EventRecorder()
     messages = asyncio.run(
         context.fetch_agent_context(
@@ -158,7 +209,7 @@ def test_fetch_agent_context_skips_history_compression_when_tail_too_short(monke
 
     monkeypatch.setattr(context, "create_context_summary", fail_create_context_summary)
 
-    store = MemoryStore(rows_after_sequence=rows(3, content_size=200))
+    store = MemoryStore(context_rows_after_sequence=provider_rows(3, content_size=200))
     recorder = EventRecorder()
     messages = asyncio.run(
         context.fetch_agent_context(
@@ -181,14 +232,15 @@ def test_fetch_agent_context_compresses_history_and_persists_summary(monkeypatch
     ):
         assert title == "Conversation history compression"
         assert existing_summary == "old summary"
-        assert "[sequence=2 role=agent]" in content
+        assert "[sequence=2 provider_message]" in content
+        assert "message-1" in content
         assert target_chars == 150
         return "new summary"
 
     monkeypatch.setattr(context, "create_context_summary", fake_create_context_summary)
 
     store = MemoryStore(
-        rows_after_sequence=rows(10, content_size=220),
+        context_rows_after_sequence=provider_rows(10, content_size=220),
         summary={"content": "old summary", "through_sequence": 0},
     )
     recorder = EventRecorder()
@@ -353,7 +405,7 @@ def test_create_context_summary_strips_content_and_rejects_empty(monkeypatch):
 
 def test_context_formatting_helpers():
     history = context.history_rows_text(
-        [{"sequence": 3, "role": "user", "content": "hello"}]
+        [{"sequence": 3, "role": "tool", "content": "Tool result: rg completed"}]
     )
     serialized = context.messages_text(
         [{"role": "user", "content": "hello", "z": 1}]
@@ -372,7 +424,7 @@ def test_context_formatting_helpers():
         )
     )
 
-    assert history == "[sequence=3 role=user]\nhello"
+    assert history == "[sequence=3 role=tool]\nTool result: rg completed"
     assert json.loads(serialized) == {"content": "hello", "role": "user", "z": 1}
     assert context.context_char_count([{"role": "user", "content": "hi"}]) > 0
     assert context.latest_tool_protocol_start([{"role": "assistant"}]) is None

@@ -5,6 +5,7 @@ from automata_api.repositories.sessions import (
     PlanStateError,
     SessionNotFoundError,
     approve_plan,
+    save_context_message,
     save_message,
     session_exists,
 )
@@ -55,6 +56,10 @@ async def chat(websocket: WebSocket) -> None:
 
             user_message = save_message(
                 session_id=session_id, role="user", content=prompt
+            )
+            save_context_message(
+                session_id=session_id,
+                message={"role": "user", "content": prompt},
             )
             if str(payload.get("mode", "")).strip() == "plan":
                 await stream_plan_reply(

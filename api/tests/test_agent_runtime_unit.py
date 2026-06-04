@@ -12,12 +12,35 @@ from automata_api.config import AgentConfig, ContextCompressionConfig
 @dataclass
 class MemoryStore:
     recent_messages: list[dict]
+    context_messages: list[dict] | None = None
 
     def get_recent_messages(self, session_id: str, limit: int) -> list[dict]:
         return self.recent_messages[-limit:]
 
     def get_messages_after_sequence(self, session_id: str, sequence: int) -> list[dict]:
         return []
+
+    def get_recent_context_messages(self, session_id: str, limit: int) -> list[dict]:
+        return (self.context_messages or [])[-limit:]
+
+    def get_context_messages_after_sequence(
+        self, session_id: str, sequence: int
+    ) -> list[dict]:
+        return [
+            row
+            for row in self.context_messages or []
+            if int(row["sequence"]) > sequence
+        ]
+
+    def save_context_message(self, session_id: str, message: dict) -> dict:
+        if self.context_messages is None:
+            self.context_messages = []
+        row = {
+            "message": message,
+            "sequence": len(self.context_messages) + 1,
+        }
+        self.context_messages.append(row)
+        return row
 
     def fetch_context_summary(self, session_id: str) -> dict | None:
         return None
@@ -241,6 +264,7 @@ def test_stream_model_loop_accumulates_split_tool_call_then_streams_final(monkey
     ]
     assert events[1] == {
         "type": "tool_call",
+        "tool_call_id": "call_split",
         "tool": "read_file",
         "arguments": '{"path": "README.md"}',
     }
@@ -391,11 +415,13 @@ def test_stream_execute_tool_call_yields_events_and_appends_provider_result(monk
     assert events == [
         {
             "type": "tool_call",
+            "tool_call_id": "call_read",
             "tool": "read_file",
             "arguments": '{"path": "README.md"}',
         },
         {
             "type": "tool_result",
+            "tool_call_id": "call_read",
             "tool": "read_file",
             "success": True,
             "content": '{"content": "ok"}',
@@ -405,7 +431,6 @@ def test_stream_execute_tool_call_yields_events_and_appends_provider_result(monk
         {
             "role": "tool",
             "tool_call_id": "call_read",
-            "name": "read_file",
             "content": '{"content": "ok"}',
         }
     ]
@@ -493,7 +518,6 @@ def test_runtime_conversion_helpers():
     assert tool_result == {
         "role": "tool",
         "tool_call_id": "call_1",
-        "name": "read_file",
         "content": "ok",
     }
     assert json.loads(blocked.content)["allowed_tools"] == ["read_file", "rg"]

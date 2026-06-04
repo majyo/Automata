@@ -13,6 +13,8 @@ from automata_api.repositories.sessions import (
     create_plan,
     mark_plan_executed,
     save_message,
+    save_tool_run_message,
+    update_tool_run_result,
 )
 from automata_api.schemas import ChatPayload
 
@@ -44,8 +46,9 @@ async def stream_agent_reply(
 
     try:
         response = await forward_agent_events(
-            websocket,
-            stream_agent_loop(
+            session_id=session_id,
+            websocket=websocket,
+            events=stream_agent_loop(
                 session_id=session_id,
                 store=SessionAgentContextStore(),
                 approved_plan_content=approved_plan_content,
@@ -82,8 +85,9 @@ async def stream_plan_reply(
 
     try:
         response = await forward_agent_events(
-            websocket,
-            stream_plan_loop(
+            session_id=session_id,
+            websocket=websocket,
+            events=stream_plan_loop(
                 session_id=session_id,
                 store=SessionAgentContextStore(),
             ),
@@ -139,10 +143,11 @@ async def stream_approved_plan_reply(
 
 
 async def forward_agent_events(
-    websocket: WebSocket, events: AsyncIterator[dict[str, Any]]
+    session_id: str, websocket: WebSocket, events: AsyncIterator[dict[str, Any]]
 ) -> str:
     response_parts: list[str] = []
     final_content = ""
+    tool_run_message_ids: dict[str, str] = {}
 
     async for event in events:
         event_type = event["type"]
@@ -159,6 +164,64 @@ async def forward_agent_events(
                 final_content = content
             continue
 
+        if event_type == "tool_call":
+            tool_call_id = tool_call_id_from_event(event)
+            message = save_tool_run_message(
+                session_id=session_id,
+                tool_call_id=tool_call_id,
+                tool=tool_name_from_event(event),
+                arguments=arguments_from_event(event),
+            )
+            tool_run_message_ids[tool_call_id] = str(message["id"])
+            await websocket.send_json(event)
+            continue
+
+        if event_type == "tool_result":
+            tool_call_id = tool_call_id_from_event(event)
+            message_id = tool_run_message_ids.get(tool_call_id)
+            if message_id:
+                update_tool_run_result(
+                    session_id=session_id,
+                    message_id=message_id,
+                    success=event.get("success") is not False,
+                    content=content_from_event(event),
+                )
+            else:
+                message = save_tool_run_message(
+                    session_id=session_id,
+                    tool_call_id=tool_call_id,
+                    tool=tool_name_from_event(event),
+                    arguments="{}",
+                )
+                update_tool_run_result(
+                    session_id=session_id,
+                    message_id=str(message["id"]),
+                    success=event.get("success") is not False,
+                    content=content_from_event(event),
+                )
+            await websocket.send_json(event)
+            continue
+
         await websocket.send_json(event)
 
     return final_content or "".join(response_parts)
+
+
+def tool_call_id_from_event(event: dict[str, Any]) -> str:
+    tool_call_id = event.get("tool_call_id")
+    return tool_call_id if isinstance(tool_call_id, str) and tool_call_id else "unknown_tool_call"
+
+
+def tool_name_from_event(event: dict[str, Any]) -> str:
+    tool = event.get("tool")
+    return tool if isinstance(tool, str) and tool else "unknown_tool"
+
+
+def arguments_from_event(event: dict[str, Any]) -> str:
+    arguments = event.get("arguments")
+    return arguments if isinstance(arguments, str) else "{}"
+
+
+def content_from_event(event: dict[str, Any]) -> str:
+    content = event.get("content")
+    return content if isinstance(content, str) else ""

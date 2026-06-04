@@ -153,6 +153,8 @@ The response stream starts with `started`, may include `agent_step`,
 `context_compressed`, `tool_call`, and `tool_result` events while the agent loop
 is running, emits provider-driven `token` events as text is generated, then
 finishes with `done`.
+Tool call and result events are also saved as visible `tool` messages, so
+reopening a session preserves the run activity shown during streaming.
 `context_compressed` includes `scope` (`history` or `loop`), before/after
 character counts, summary size, and compressed message counts. The built-in
 tools are real `read_file`, `write_file`, `rg`, `grep`, `run_bash`,
