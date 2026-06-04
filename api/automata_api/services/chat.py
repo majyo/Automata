@@ -10,10 +10,12 @@ from automata_api.agent.runtime import stream_agent_loop, stream_plan_loop
 from automata_api.config import AgentConfigurationError
 from automata_api.repositories.agent_store import SessionAgentContextStore
 from automata_api.repositories.sessions import (
+    SessionNotFoundError,
     create_plan,
     mark_plan_executed,
     save_message,
     save_tool_run_message,
+    session_working_directory,
     update_tool_run_result,
 )
 from automata_api.schemas import ChatPayload
@@ -45,15 +47,20 @@ async def stream_agent_reply(
     response = ""
 
     try:
+        workspace = session_working_directory(session_id)
         response = await forward_agent_events(
             session_id=session_id,
             websocket=websocket,
             events=stream_agent_loop(
                 session_id=session_id,
                 store=SessionAgentContextStore(),
+                workspace=workspace,
                 approved_plan_content=approved_plan_content,
             ),
         )
+    except SessionNotFoundError as error:
+        await websocket.send_json({"type": "error", "message": str(error)})
+        return
     except AgentConfigurationError as error:
         await websocket.send_json({"type": "error", "message": str(error)})
         return
@@ -84,14 +91,19 @@ async def stream_plan_reply(
     response = ""
 
     try:
+        workspace = session_working_directory(session_id)
         response = await forward_agent_events(
             session_id=session_id,
             websocket=websocket,
             events=stream_plan_loop(
                 session_id=session_id,
                 store=SessionAgentContextStore(),
+                workspace=workspace,
             ),
         )
+    except SessionNotFoundError as error:
+        await websocket.send_json({"type": "error", "message": str(error)})
+        return
     except AgentConfigurationError as error:
         await websocket.send_json({"type": "error", "message": str(error)})
         return

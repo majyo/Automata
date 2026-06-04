@@ -202,6 +202,16 @@ button:disabled {
   font-size: 0.74rem;
 }
 
+.session-item small.session-directory {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-item small.session-directory svg {
+  flex: 0 0 auto;
+}
+
 .session-item em {
   padding: 3px 8px;
   color: var(--muted-strong);
@@ -273,11 +283,65 @@ button:disabled {
 }
 
 .sidebar-footer {
-  display: flex;
-  gap: 10px;
+  display: grid;
+  gap: 12px;
   margin-top: auto;
   padding: 10px 8px 0;
   border-top: 1px solid var(--line);
+}
+
+.sidebar-footer-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.workspace-picker {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.workspace-picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.workspace-picker-header span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted-strong);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.workspace-picker input {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px;
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-size: 0.76rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.workspace-picker input:focus {
+  border-color: rgba(17, 17, 17, 0.28);
+  box-shadow: 0 0 0 4px rgba(17, 17, 17, 0.06);
+}
+
+.workspace-picker.locked input {
+  color: var(--muted-strong);
+  background: var(--panel-soft);
 }
 
 .icon-button {
@@ -333,6 +397,14 @@ button:disabled {
   font-weight: 800;
   letter-spacing: 0;
   text-transform: uppercase;
+}
+
+.workspace-eyebrow {
+  display: block;
+  max-width: min(56vw, 760px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 h1,

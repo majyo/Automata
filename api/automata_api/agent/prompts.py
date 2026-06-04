@@ -20,10 +20,11 @@ def approved_plan_message(content: str) -> dict[str, str]:
     }
 
 
-def plan_system_prompt() -> str:
+def plan_system_prompt(workspace: str | None = None) -> str:
+    current_workspace = workspace or agent_workspace()
     return (
         f"{get_system_prompt()}\n\n"
-        f"Current workspace: {agent_workspace()}\n\n"
+        f"Current workspace: {current_workspace}\n\n"
         "You are in backend Plan mode. Your job is to create a concrete, "
         "implementation-ready Markdown plan for the user's request. Inspect "
         "the workspace with read-only tools as needed, but do not execute the "
@@ -37,10 +38,11 @@ def plan_system_prompt() -> str:
     )
 
 
-def agent_system_prompt() -> str:
+def agent_system_prompt(workspace: str | None = None) -> str:
+    current_workspace = workspace or agent_workspace()
     return (
         f"{get_system_prompt()}\n\n"
-        f"Current workspace: {agent_workspace()}\n\n"
+        f"Current workspace: {current_workspace}\n\n"
         "You can use run_bash to execute real bash commands inside the "
         "workspace. run_bash results have simulated=false and may have command "
         "side effects. Prefer run_bash for checks and tests.\n\n"

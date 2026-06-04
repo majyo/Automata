@@ -1,12 +1,18 @@
 import json
 import sqlite3
+from pathlib import Path
 from typing import Any
 
+from automata_api.agent.prompts import agent_workspace
 from automata_api.db.connection import connect_db, db_lock
 from automata_api.utils import new_id, normalize_title, now_iso
 
 
 class SessionNotFoundError(ValueError):
+    pass
+
+
+class InvalidWorkingDirectoryError(ValueError):
     pass
 
 
@@ -25,6 +31,7 @@ def list_sessions() -> list[dict[str, Any]]:
             SELECT
                 sessions.id,
                 sessions.title,
+                sessions.working_directory,
                 sessions.created_at,
                 sessions.updated_at,
                 COUNT(messages.id) AS message_count
@@ -37,24 +44,30 @@ def list_sessions() -> list[dict[str, Any]]:
         return [dict(row) for row in rows]
 
 
-def create_session(title: str | None) -> dict[str, Any]:
+def create_session(
+    title: str | None, working_directory: str | None = None
+) -> dict[str, Any]:
     session_title = normalize_title(title)
+    resolved_working_directory = normalize_working_directory(working_directory)
     session_id = new_id()
     now = now_iso()
 
     with db_lock, connect_db() as db:
         db.execute(
             """
-            INSERT INTO sessions (id, title, created_at, updated_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO sessions (
+                id, title, working_directory, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?)
             """,
-            (session_id, session_title, now, now),
+            (session_id, session_title, resolved_working_directory, now, now),
         )
         db.commit()
 
     return {
         "id": session_id,
         "title": session_title,
+        "working_directory": resolved_working_directory,
         "created_at": now,
         "updated_at": now,
         "message_count": 0,
@@ -121,6 +134,14 @@ def session_exists(session_id: str) -> bool:
             "SELECT 1 FROM sessions WHERE id = ?", (session_id,)
         ).fetchone()
         return row is not None
+
+
+def session_working_directory(session_id: str) -> str:
+    with db_lock, connect_db() as db:
+        row = fetch_session(db, session_id)
+        if row is None:
+            raise SessionNotFoundError("Session not found")
+        return str(row["working_directory"])
 
 
 def save_message(
@@ -626,6 +647,7 @@ def fetch_session(
         SELECT
             sessions.id,
             sessions.title,
+            sessions.working_directory,
             sessions.created_at,
             sessions.updated_at,
             COUNT(messages.id) AS message_count
@@ -642,3 +664,28 @@ def fetch_session(
 def ensure_session(db: sqlite3.Connection, session_id: str) -> None:
     if fetch_session(db, session_id) is None:
         raise SessionNotFoundError("Session not found")
+
+
+def normalize_working_directory(working_directory: str | None) -> str:
+    raw_value = (
+        working_directory.strip()
+        if isinstance(working_directory, str) and working_directory.strip()
+        else agent_workspace()
+    )
+    try:
+        path = Path(raw_value).expanduser().resolve()
+    except OSError as error:
+        raise InvalidWorkingDirectoryError(
+            f"Working directory is invalid: {raw_value}"
+        ) from error
+
+    if not path.exists():
+        raise InvalidWorkingDirectoryError(
+            f"Working directory does not exist: {path}"
+        )
+    if not path.is_dir():
+        raise InvalidWorkingDirectoryError(
+            f"Working directory is not a directory: {path}"
+        )
+
+    return str(path)

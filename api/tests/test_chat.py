@@ -117,9 +117,17 @@ def test_chat_websocket_reports_missing_llm_config(client):
 
 def test_chat_websocket_runs_agent_loop_with_read_file_tool(client, monkeypatch, tmp_path):
     monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
-    monkeypatch.setenv("AUTOMATA_WORKSPACE_DIR", str(tmp_path))
-    (tmp_path / "README.md").write_text("workspace details\n", encoding="utf-8")
-    session = client.post("/sessions", json={"title": "Agent"}).json()
+    default_workspace = tmp_path / "default"
+    session_workspace = tmp_path / "session"
+    default_workspace.mkdir()
+    session_workspace.mkdir()
+    monkeypatch.setenv("AUTOMATA_WORKSPACE_DIR", str(default_workspace))
+    (default_workspace / "README.md").write_text("default details\n", encoding="utf-8")
+    (session_workspace / "README.md").write_text("workspace details\n", encoding="utf-8")
+    session = client.post(
+        "/sessions",
+        json={"title": "Agent", "working_directory": str(session_workspace)},
+    ).json()
     calls = []
 
     async def fake_create_llm_response(messages, tools=None):

@@ -1,5 +1,7 @@
 import sqlite3
+from pathlib import Path
 
+from automata_api.agent.prompts import agent_workspace
 from automata_api.db.schema import init_db
 from automata_api.repositories.sessions import (
     PlanNotFoundError,
@@ -47,6 +49,42 @@ def test_session_crud_and_messages(client):
     deleted = client.delete(f"/sessions/{created['id']}")
     assert deleted.status_code == 204
     assert client.get(f"/sessions/{created['id']}/messages").status_code == 404
+
+
+def test_create_session_persists_working_directory(client, tmp_path):
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+
+    created = client.post(
+        "/sessions",
+        json={"title": "Workspace", "working_directory": str(workspace)},
+    ).json()
+
+    assert created["working_directory"] == str(workspace.resolve())
+    sessions = client.get("/sessions").json()
+    assert sessions[0]["working_directory"] == str(workspace.resolve())
+
+
+def test_create_session_defaults_working_directory(client):
+    created = client.post("/sessions", json={"title": "Default workspace"}).json()
+
+    assert Path(created["working_directory"]) == Path(agent_workspace()).resolve()
+
+
+def test_create_session_rejects_invalid_working_directory(client, tmp_path):
+    missing = client.post(
+        "/sessions",
+        json={"title": "Missing", "working_directory": str(tmp_path / "missing")},
+    )
+    file_path = tmp_path / "file.txt"
+    file_path.write_text("not a directory\n", encoding="utf-8")
+    file_response = client.post(
+        "/sessions",
+        json={"title": "File", "working_directory": str(file_path)},
+    )
+
+    assert missing.status_code == 422
+    assert file_response.status_code == 422
 
 
 def test_context_summary_is_hidden_from_visible_messages(client):
@@ -329,6 +367,54 @@ def test_init_db_resets_legacy_messages_schema(
         }
         assert {"kind", "metadata_json"}.issubset(columns)
         assert db.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
+
+
+def test_init_db_migrates_session_working_directory(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("AUTOMATA_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("AUTOMATA_WORKSPACE_DIR", str(workspace))
+    db_file = tmp_path / "automata.db"
+    with sqlite3.connect(db_file) as db:
+        db.executescript(
+            """
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE messages (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role IN ('user', 'agent', 'tool')),
+                kind TEXT NOT NULL DEFAULT 'message' CHECK (kind IN ('message', 'tool_run')),
+                content TEXT NOT NULL,
+                metadata_json TEXT,
+                sequence INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+                UNIQUE (session_id, sequence)
+            );
+
+            INSERT INTO sessions (id, title, created_at, updated_at)
+            VALUES ('session-1', 'Existing', '2026-06-04T00:00:00', '2026-06-04T00:00:00');
+            """
+        )
+
+    init_db()
+
+    with sqlite3.connect(db_file) as db:
+        columns = {
+            row[1]
+            for row in db.execute("PRAGMA table_info(sessions)").fetchall()
+        }
+        working_directory = db.execute(
+            "SELECT working_directory FROM sessions WHERE id = 'session-1'"
+        ).fetchone()[0]
+        assert "working_directory" in columns
+        assert working_directory == str(workspace)
 
 
 def client_orphan_session_is_gone():

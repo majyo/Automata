@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 class CreateSessionRequest(BaseModel):
     title: str | None = None
+    working_directory: str | None = None
 
 
 class UpdateSessionRequest(BaseModel):
@@ -14,6 +15,7 @@ class UpdateSessionRequest(BaseModel):
 class SessionSummary(BaseModel):
     id: str
     title: str
+    working_directory: str
     created_at: str
     updated_at: str
     message_count: int

@@ -9,6 +9,7 @@ import {
   Code2,
   FileCode2,
   FolderGit2,
+  FolderOpen,
   GitBranch,
   Pencil,
   Play,
@@ -20,6 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import "./App.css";
 
 const DEFAULT_API_CONFIG: ApiRuntimeConfig = {
@@ -27,6 +29,7 @@ const DEFAULT_API_CONFIG: ApiRuntimeConfig = {
   wsChatUrl: "ws://127.0.0.1:8765/ws/chat",
 };
 const RECONNECT_DELAYS_MS = [500, 1_000, 2_000, 5_000];
+const DEFAULT_WORKING_DIRECTORY = "D:/workspace/projects/automata";
 
 type ApiRuntimeConfig = {
   httpBaseUrl: string;
@@ -36,6 +39,7 @@ type ApiRuntimeConfig = {
 type SessionSummary = {
   id: string;
   title: string;
+  working_directory: string;
   created_at: string;
   updated_at: string;
   message_count: number;
@@ -121,6 +125,7 @@ function App() {
   const [socketStatus, setSocketStatus] = useState("Connecting");
   const [isStreaming, setIsStreaming] = useState(false);
   const [isNewSessionDraft, setIsNewSessionDraft] = useState(false);
+  const [draftWorkingDirectory, setDraftWorkingDirectory] = useState(DEFAULT_WORKING_DIRECTORY);
   const [isInspectorExpanded, setIsInspectorExpanded] = useState(true);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
@@ -137,6 +142,9 @@ function App() {
   const messagesRef = useRef<HTMLDivElement | null>(null);
 
   const activeSession = sessions.find((session) => session.id === activeSessionId) ?? null;
+  const displayedWorkingDirectory = isNewSessionDraft
+    ? draftWorkingDirectory
+    : activeSession?.working_directory ?? DEFAULT_WORKING_DIRECTORY;
 
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
@@ -415,6 +423,7 @@ function App() {
     setActiveSessionId(null);
     setMessages([]);
     setEditingSessionId(null);
+    setDraftWorkingDirectory(DEFAULT_WORKING_DIRECTORY);
     setIsNewSessionDraft(true);
   }
 
@@ -473,6 +482,25 @@ function App() {
     }
   }
 
+  async function chooseDraftWorkingDirectory() {
+    if (!isNewSessionDraft || isStreaming) {
+      return;
+    }
+
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: "Select working directory",
+      });
+      if (typeof selected === "string" && selected.trim()) {
+        setDraftWorkingDirectory(selected);
+      }
+    } catch {
+      setSocketStatus("Type a working directory path");
+    }
+  }
+
   async function sendPrompt(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -485,7 +513,11 @@ function App() {
     let sessionId = activeSessionId;
     if (!sessionId) {
       try {
-        const session = await createSession(apiConfigRef.current, "New session");
+        const session = await createSession(
+          apiConfigRef.current,
+          "New session",
+          draftWorkingDirectory,
+        );
         sessionId = session.id;
         setSessions(await fetchSessions(apiConfigRef.current));
         activeSessionIdRef.current = session.id;
@@ -829,6 +861,10 @@ function App() {
                   <GitBranch size={13} />
                   {session.message_count} messages
                 </small>
+                <small className="session-directory" title={session.working_directory ?? DEFAULT_WORKING_DIRECTORY}>
+                  <FolderOpen size={13} />
+                  {formatDirectoryName(session.working_directory)}
+                </small>
               </span>
               <em>{session.id === activeSessionId ? "Active" : "Saved"}</em>
               <span className="session-actions">
@@ -889,19 +925,45 @@ function App() {
         </nav>
 
         <div className="sidebar-footer">
-          <button className="icon-button" onClick={handleCreateSession} aria-label="New session">
-            <Plus size={18} />
-          </button>
-          <button className="icon-button" aria-label="Open terminal">
-            <TerminalSquare size={18} />
-          </button>
+          <section className={`workspace-picker ${isNewSessionDraft ? "" : "locked"}`} aria-label="Working directory">
+            <div className="workspace-picker-header">
+              <span>Working directory</span>
+              <button
+                className="icon-button small"
+                type="button"
+                onClick={chooseDraftWorkingDirectory}
+                disabled={!isNewSessionDraft || isStreaming}
+                aria-label="Choose working directory"
+              >
+                <FolderOpen size={16} />
+              </button>
+            </div>
+            <input
+              value={displayedWorkingDirectory}
+              onChange={(event) => setDraftWorkingDirectory(event.currentTarget.value)}
+              disabled={!isNewSessionDraft || isStreaming}
+              title={displayedWorkingDirectory}
+              placeholder={DEFAULT_WORKING_DIRECTORY}
+            />
+          </section>
+
+          <div className="sidebar-footer-actions">
+            <button className="icon-button" onClick={handleCreateSession} aria-label="New session">
+              <Plus size={18} />
+            </button>
+            <button className="icon-button" aria-label="Open terminal">
+              <TerminalSquare size={18} />
+            </button>
+          </div>
         </div>
       </aside>
 
       <section className="workspace">
         <header className="topbar">
           <div>
-            <span className="eyebrow">D:/workspace/projects/automata</span>
+            <span className="eyebrow workspace-eyebrow" title={displayedWorkingDirectory}>
+              {displayedWorkingDirectory}
+            </span>
             <h1>{isNewSessionDraft ? "New session" : activeSession?.title ?? "Agent workspace"}</h1>
           </div>
           <button className="run-button" onClick={runBridgeCheck}>
@@ -1155,10 +1217,17 @@ async function fetchSessions(config: ApiRuntimeConfig): Promise<SessionSummary[]
   return requestJson<SessionSummary[]>(config, "/sessions");
 }
 
-async function createSession(config: ApiRuntimeConfig, title: string): Promise<SessionSummary> {
+async function createSession(
+  config: ApiRuntimeConfig,
+  title: string,
+  workingDirectory?: string,
+): Promise<SessionSummary> {
   return requestJson<SessionSummary>(config, "/sessions", {
     method: "POST",
-    body: JSON.stringify({ title }),
+    body: JSON.stringify({
+      title,
+      working_directory: workingDirectory?.trim() || undefined,
+    }),
   });
 }
 
@@ -1212,6 +1281,13 @@ function formatContextCompressed(payload: Extract<SocketPayload, { type: "contex
   const scope = payload.scope === "loop" ? "tool context" : "session context";
   const compressed = typeof payload.compressed_messages === "number" ? `${payload.compressed_messages} messages` : "context";
   return `Context compressed: ${scope}\nCompressed ${compressed}.`;
+}
+
+function formatDirectoryName(path?: string): string {
+  const value = path?.trim() || DEFAULT_WORKING_DIRECTORY;
+  const normalized = value.replace(/\\/g, "/").replace(/\/+$/, "");
+  const parts = normalized.split("/").filter(Boolean);
+  return parts[parts.length - 1] ?? value;
 }
 
 function sleep(milliseconds: number): Promise<void> {

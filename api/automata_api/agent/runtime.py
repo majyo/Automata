@@ -8,7 +8,7 @@ from automata_api.agent.context import (
     fetch_agent_context,
 )
 from automata_api.agent.prompts import (
-    agent_workspace,
+    agent_system_prompt,
     approved_plan_message,
     plan_system_prompt,
 )
@@ -42,6 +42,7 @@ async def stream_agent_loop(
     *,
     session_id: str,
     store: AgentContextStore,
+    workspace: str,
     approved_plan_content: str | None = None,
 ) -> AsyncIterator[AgentLoopEvent]:
     config = get_agent_config()
@@ -52,6 +53,7 @@ async def stream_agent_loop(
         session_id=session_id,
         store=store,
         compression_config=compression_config,
+        system_prompt=agent_system_prompt(workspace),
     )
     for event in collector.events:
         yield event
@@ -67,6 +69,7 @@ async def stream_agent_loop(
         model=config.model,
         mode="act",
         allowed_tool_names=None,
+        workspace=workspace,
         session_id=session_id,
         store=store,
     ):
@@ -77,6 +80,7 @@ async def stream_plan_loop(
     *,
     session_id: str,
     store: AgentContextStore,
+    workspace: str,
 ) -> AsyncIterator[AgentLoopEvent]:
     config = get_agent_config()
     compression_config = get_context_compression_config()
@@ -86,7 +90,7 @@ async def stream_plan_loop(
         session_id=session_id,
         store=store,
         compression_config=compression_config,
-        system_prompt=plan_system_prompt(),
+        system_prompt=plan_system_prompt(workspace),
     )
     for event in collector.events:
         yield event
@@ -99,6 +103,7 @@ async def stream_plan_loop(
         model=config.model,
         mode="plan",
         allowed_tool_names=PLAN_TOOL_NAMES,
+        workspace=workspace,
         session_id=session_id,
         store=store,
     ):
@@ -112,6 +117,7 @@ async def stream_model_loop(
     model: str,
     mode: str,
     allowed_tool_names: set[str] | None,
+    workspace: str,
     session_id: str | None = None,
     store: AgentContextStore | None = None,
 ) -> AsyncIterator[AgentLoopEvent]:
@@ -152,6 +158,7 @@ async def stream_model_loop(
                     tool_call=tool_call,
                     mode=mode,
                     allowed_tool_names=allowed_tool_names,
+                    workspace=workspace,
                     session_id=session_id,
                     store=store,
                 ):
@@ -186,6 +193,7 @@ async def stream_execute_tool_call(
     *,
     messages: list[dict[str, Any]],
     tool_call: dict[str, Any],
+    workspace: str,
     mode: str = "act",
     allowed_tool_names: set[str] | None = None,
     session_id: str | None = None,
@@ -212,7 +220,7 @@ async def stream_execute_tool_call(
     if allowed_tool_names is not None and name not in allowed_tool_names:
         result = blocked_tool_result(name, arguments, mode, allowed_tool_names)
     else:
-        result = await run_tool(name, arguments, agent_workspace())
+        result = await run_tool(name, arguments, workspace)
     yield {
         "type": "tool_result",
         "tool_call_id": call_id,

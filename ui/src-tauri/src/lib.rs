@@ -1,6 +1,7 @@
 use std::env;
 use std::fs;
 use std::net::TcpListener;
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 use serde::Serialize;
@@ -51,6 +52,7 @@ pub fn run() {
             child: Mutex::new(None),
             status: Mutex::new("Starting".to_string()),
         })
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
@@ -105,11 +107,16 @@ fn start_api_sidecar(app: &mut tauri::App) {
             return;
         }
     };
+    let workspace_dir = resolve_workspace_dir();
 
     match sidecar
         .env("AUTOMATA_DATA_DIR", data_dir)
         .env("AUTOMATA_API_HOST", api_config.host)
         .env("AUTOMATA_API_PORT", api_config.port.to_string())
+        .env(
+            "AUTOMATA_WORKSPACE_DIR",
+            workspace_dir.to_string_lossy().to_string(),
+        )
         .spawn()
     {
         Ok((mut receiver, child)) => {
@@ -144,6 +151,27 @@ fn start_api_sidecar(app: &mut tauri::App) {
             set_backend_status(&app_handle, format!("Failed to start sidecar: {error}"));
         }
     }
+}
+
+fn resolve_workspace_dir() -> PathBuf {
+    if let Some(path) = env::var("AUTOMATA_WORKSPACE_DIR")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        return PathBuf::from(path);
+    }
+
+    if cfg!(debug_assertions) {
+        if let Some(project_root) = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|path| path.parent())
+        {
+            return project_root.to_path_buf();
+        }
+    }
+
+    env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
 fn stop_api_sidecar(app_handle: &tauri::AppHandle) {

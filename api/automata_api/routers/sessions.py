@@ -3,7 +3,10 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 
 from automata_api.repositories import sessions as session_repository
-from automata_api.repositories.sessions import SessionNotFoundError
+from automata_api.repositories.sessions import (
+    InvalidWorkingDirectoryError,
+    SessionNotFoundError,
+)
 from automata_api.schemas import (
     CreateSessionRequest,
     MessageRecord,
@@ -22,7 +25,12 @@ async def list_sessions() -> list[dict[str, Any]]:
 
 @router.post("/sessions", response_model=SessionSummary, status_code=201)
 async def create_session(request: CreateSessionRequest) -> dict[str, Any]:
-    return session_repository.create_session(request.title)
+    try:
+        return session_repository.create_session(
+            request.title, request.working_directory
+        )
+    except InvalidWorkingDirectoryError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @router.patch("/sessions/{session_id}", response_model=SessionSummary)

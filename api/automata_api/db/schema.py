@@ -1,3 +1,4 @@
+from automata_api.agent.prompts import agent_workspace
 from automata_api.db.connection import connect_db, db_lock, db_path
 
 
@@ -63,6 +64,7 @@ SCHEMA_SQL = f"""
 CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
+    working_directory TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -94,6 +96,7 @@ def init_db() -> None:
         if messages_schema_is_legacy(db):
             reset_app_tables(db)
         db.executescript(SCHEMA_SQL)
+        migrate_sessions_working_directory(db)
         db.commit()
 
 
@@ -113,6 +116,43 @@ def messages_schema_is_legacy(db) -> bool:
         for column in db.execute("PRAGMA table_info(messages)").fetchall()
     }
     return "kind" not in columns or "metadata_json" not in columns
+
+
+def migrate_sessions_working_directory(db) -> None:
+    row = db.execute(
+        """
+        SELECT 1
+        FROM sqlite_schema
+        WHERE type = 'table' AND name = 'sessions'
+        """
+    ).fetchone()
+    if row is None:
+        return
+
+    columns = {
+        str(column["name"])
+        for column in db.execute("PRAGMA table_info(sessions)").fetchall()
+    }
+    if "working_directory" in columns:
+        db.execute(
+            """
+            UPDATE sessions
+            SET working_directory = ?
+            WHERE working_directory IS NULL OR TRIM(working_directory) = ''
+            """,
+            (agent_workspace(),),
+        )
+        return
+
+    db.execute("ALTER TABLE sessions ADD COLUMN working_directory TEXT")
+    db.execute(
+        """
+        UPDATE sessions
+        SET working_directory = ?
+        WHERE working_directory IS NULL OR TRIM(working_directory) = ''
+        """,
+        (agent_workspace(),),
+    )
 
 
 def reset_app_tables(db) -> None:

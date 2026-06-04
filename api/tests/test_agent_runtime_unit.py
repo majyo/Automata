@@ -100,6 +100,7 @@ def test_stream_agent_loop_yields_tokens_final_and_injects_approved_plan(monkeyp
                 store=MemoryStore(
                     recent_messages=[{"role": "user", "content": "implement it"}]
                 ),
+                workspace="workspace",
                 approved_plan_content="Approved plan body",
             )
         )
@@ -116,6 +117,7 @@ def test_stream_agent_loop_yields_tokens_final_and_injects_approved_plan(monkeyp
     ) == "streamed done"
     assert events[-1] == {"type": "final", "content": "streamed done", "mode": "act"}
     assert calls[0]["messages"][0]["role"] == "system"
+    assert "Current workspace: workspace" in calls[0]["messages"][0]["content"]
     assert "Approved plan body" in calls[0]["messages"][1]["content"]
     assert calls[0]["messages"][2] == {"role": "user", "content": "implement it"}
     assert {tool["function"]["name"] for tool in calls[0]["tools"]} >= {
@@ -141,6 +143,7 @@ def test_stream_plan_loop_yields_tokens_final_and_plan_tools(monkeypatch):
             runtime.stream_plan_loop(
                 session_id="session-1",
                 store=MemoryStore(recent_messages=[]),
+                workspace="workspace",
             )
         )
     )
@@ -156,6 +159,7 @@ def test_stream_plan_loop_yields_tokens_final_and_plan_tools(monkeypatch):
     tool_names = {tool["function"]["name"] for tool in calls[0]["tools"]}
     assert tool_names == runtime.PLAN_TOOL_NAMES
     assert "backend Plan mode" in calls[0]["messages"][0]["content"]
+    assert "Current workspace: workspace" in calls[0]["messages"][0]["content"]
 
 
 def test_stream_model_loop_yields_tokens_and_final(monkeypatch):
@@ -177,6 +181,7 @@ def test_stream_model_loop_yields_tokens_and_final(monkeypatch):
                 model="unit-model",
                 mode="act",
                 allowed_tool_names=None,
+                workspace="workspace",
             )
         ]
 
@@ -238,7 +243,6 @@ def test_stream_model_loop_accumulates_split_tool_call_then_streams_final(monkey
 
     monkeypatch.setattr(llm, "stream_chat_completion", fake_stream_chat_completion)
     monkeypatch.setattr(runtime, "run_tool", fake_run_tool)
-    monkeypatch.setattr(runtime, "agent_workspace", lambda: "workspace")
 
     events = asyncio.run(
         collect_events(
@@ -249,6 +253,7 @@ def test_stream_model_loop_accumulates_split_tool_call_then_streams_final(monkey
                 model="unit-model",
                 mode="act",
                 allowed_tool_names=None,
+                workspace="workspace",
             )
         )
     )
@@ -295,7 +300,6 @@ def test_stream_model_loop_does_not_emit_tool_turn_content_as_token(monkeypatch)
 
     monkeypatch.setattr(llm, "stream_chat_completion", fake_stream_chat_completion)
     monkeypatch.setattr(runtime, "run_tool", fake_run_tool)
-    monkeypatch.setattr(runtime, "agent_workspace", lambda: "workspace")
 
     events = asyncio.run(
         collect_events(
@@ -306,6 +310,7 @@ def test_stream_model_loop_does_not_emit_tool_turn_content_as_token(monkeypatch)
                 model="unit-model",
                 mode="act",
                 allowed_tool_names=None,
+                workspace="workspace",
             )
         )
     )
@@ -340,6 +345,7 @@ def test_stream_model_loop_rejects_empty_response(monkeypatch):
                     model="unit-model",
                     mode="act",
                     allowed_tool_names=None,
+                    workspace="workspace",
                 )
             )
         )
@@ -363,7 +369,6 @@ def test_stream_model_loop_rejects_max_steps(monkeypatch):
 
     monkeypatch.setattr(llm, "stream_chat_completion", fake_stream_chat_completion)
     monkeypatch.setattr(runtime, "run_tool", fake_run_tool)
-    monkeypatch.setattr(runtime, "agent_workspace", lambda: "workspace")
 
     with pytest.raises(llm.AgentProviderError, match="maximum step limit"):
         asyncio.run(
@@ -375,6 +380,7 @@ def test_stream_model_loop_rejects_max_steps(monkeypatch):
                     model="unit-model",
                     mode="act",
                     allowed_tool_names=None,
+                    workspace="workspace",
                 )
             )
         )
@@ -393,7 +399,6 @@ def test_stream_execute_tool_call_yields_events_and_appends_provider_result(monk
         )
 
     monkeypatch.setattr(runtime, "run_tool", fake_run_tool)
-    monkeypatch.setattr(runtime, "agent_workspace", lambda: "workspace")
 
     messages = []
     events = asyncio.run(
@@ -408,6 +413,7 @@ def test_stream_execute_tool_call_yields_events_and_appends_provider_result(monk
                         "arguments": '{"path": "README.md"}',
                     },
                 },
+                workspace="workspace",
             )
         )
     )
@@ -452,6 +458,7 @@ def test_stream_execute_tool_call_blocks_disallowed_plan_tool(monkeypatch):
                     "type": "function",
                     "function": {"name": "write_file", "arguments": '{"path": "x"}'},
                 },
+                workspace="workspace",
                 mode="plan",
                 allowed_tool_names={"read_file"},
             )
@@ -476,7 +483,9 @@ def test_stream_execute_tool_call_rejects_invalid_tool_call(tool_call, message):
     with pytest.raises(llm.AgentProviderError, match=message):
         asyncio.run(
             collect_events(
-                runtime.stream_execute_tool_call(messages=[], tool_call=tool_call)
+                runtime.stream_execute_tool_call(
+                    messages=[], tool_call=tool_call, workspace="workspace"
+                )
             )
         )
 
