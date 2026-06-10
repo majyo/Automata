@@ -1,3 +1,4 @@
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from typing import Any
@@ -47,7 +48,7 @@ async def stream_agent_reply(
     response = ""
 
     try:
-        workspace = session_working_directory(session_id)
+        workspace = await run_repository_call(session_working_directory, session_id)
         response = await forward_agent_events(
             session_id=session_id,
             websocket=websocket,
@@ -76,9 +77,11 @@ async def stream_agent_reply(
         )
         return
 
-    message = save_message(session_id=session_id, role="agent", content=response)
+    message = await run_repository_call(
+        save_message, session_id=session_id, role="agent", content=response
+    )
     if approved_plan_id:
-        mark_plan_executed(session_id, approved_plan_id)
+        await run_repository_call(mark_plan_executed, session_id, approved_plan_id)
     await websocket.send_json({"type": "done", "message": message})
 
 
@@ -91,7 +94,7 @@ async def stream_plan_reply(
     response = ""
 
     try:
-        workspace = session_working_directory(session_id)
+        workspace = await run_repository_call(session_working_directory, session_id)
         response = await forward_agent_events(
             session_id=session_id,
             websocket=websocket,
@@ -119,8 +122,11 @@ async def stream_plan_reply(
         )
         return
 
-    message = save_message(session_id=session_id, role="agent", content=response)
-    plan = create_plan(
+    message = await run_repository_call(
+        save_message, session_id=session_id, role="agent", content=response
+    )
+    plan = await run_repository_call(
+        create_plan,
         session_id=session_id,
         prompt_message_id=prompt_message_id,
         plan_message_id=message["id"],
@@ -178,7 +184,8 @@ async def forward_agent_events(
 
         if event_type == "tool_call":
             tool_call_id = tool_call_id_from_event(event)
-            message = save_tool_run_message(
+            message = await run_repository_call(
+                save_tool_run_message,
                 session_id=session_id,
                 tool_call_id=tool_call_id,
                 tool=tool_name_from_event(event),
@@ -192,20 +199,23 @@ async def forward_agent_events(
             tool_call_id = tool_call_id_from_event(event)
             message_id = tool_run_message_ids.get(tool_call_id)
             if message_id:
-                update_tool_run_result(
+                await run_repository_call(
+                    update_tool_run_result,
                     session_id=session_id,
                     message_id=message_id,
                     success=event.get("success") is not False,
                     content=content_from_event(event),
                 )
             else:
-                message = save_tool_run_message(
+                message = await run_repository_call(
+                    save_tool_run_message,
                     session_id=session_id,
                     tool_call_id=tool_call_id,
                     tool=tool_name_from_event(event),
                     arguments="{}",
                 )
-                update_tool_run_result(
+                await run_repository_call(
+                    update_tool_run_result,
                     session_id=session_id,
                     message_id=str(message["id"]),
                     success=event.get("success") is not False,
@@ -217,6 +227,10 @@ async def forward_agent_events(
         await websocket.send_json(event)
 
     return final_content or "".join(response_parts)
+
+
+async def run_repository_call(function, /, *args, **kwargs):
+    return await asyncio.to_thread(function, *args, **kwargs)
 
 
 def tool_call_id_from_event(event: dict[str, Any]) -> str:

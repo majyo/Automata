@@ -12,6 +12,7 @@ from automata_api.repositories.sessions import (
 from automata_api.agent.status import agent_ready_message
 from automata_api.services.chat import (
     receive_payload,
+    run_repository_call,
     stream_approved_plan_reply,
     stream_agent_reply,
     stream_plan_reply,
@@ -48,16 +49,18 @@ async def chat(websocket: WebSocket) -> None:
                 )
                 continue
 
-            if not session_exists(session_id):
+            if not await run_repository_call(session_exists, session_id):
                 await websocket.send_json(
                     {"type": "error", "message": "Session not found"}
                 )
                 continue
 
-            user_message = save_message(
+            user_message = await run_repository_call(
+                save_message,
                 session_id=session_id, role="user", content=prompt
             )
-            save_context_message(
+            await run_repository_call(
+                save_context_message,
                 session_id=session_id,
                 message={"role": "user", "content": prompt},
             )
@@ -81,7 +84,7 @@ async def handle_plan_approval(websocket: WebSocket, payload: dict) -> None:
         return
 
     try:
-        plan = approve_plan(session_id, plan_id)
+        plan = await run_repository_call(approve_plan, session_id, plan_id)
     except SessionNotFoundError:
         await websocket.send_json({"type": "plan_error", "message": "Session not found"})
         return

@@ -117,10 +117,12 @@ def test_fetch_recent_agent_context_uses_recent_store_and_role_mapping():
         ]
     )
 
-    messages = context.fetch_recent_agent_context(
-        session_id="session-1",
-        store=store,
-        system_prompt="custom system",
+    messages = asyncio.run(
+        context.fetch_recent_agent_context(
+            session_id="session-1",
+            store=store,
+            system_prompt="custom system",
+        )
     )
 
     assert messages == [
@@ -269,6 +271,32 @@ def test_fetch_agent_context_compresses_history_and_persists_summary(monkeypatch
     assert recorder.events[0]["through_sequence"] == 2
 
 
+def test_fetch_agent_context_keeps_history_when_summary_fails(monkeypatch):
+    async def fail_create_context_summary(*args, **kwargs):
+        raise llm.AgentProviderError("summary failed")
+
+    monkeypatch.setattr(context, "create_context_summary", fail_create_context_summary)
+
+    store = MemoryStore(context_rows_after_sequence=provider_rows(10, content_size=220))
+    recorder = EventRecorder()
+    messages = asyncio.run(
+        context.fetch_agent_context(
+            emit_event=recorder.emit,
+            session_id="session-1",
+            store=store,
+            compression_config=ContextCompressionConfig(True, 1_200, 150),
+            system_prompt="system",
+        )
+    )
+
+    assert store.upserts == []
+    assert recorder.events == []
+    assert [message["content"] for message in messages] == [
+        "system",
+        *[f"message-{index} " + ("x" * 220) for index in range(10)],
+    ]
+
+
 def test_compress_loop_context_skips_when_disabled_or_under_threshold(monkeypatch):
     async def fail_create_context_summary(*args, **kwargs):
         raise AssertionError("compression should be skipped")
@@ -364,6 +392,34 @@ def test_compress_loop_context_replaces_latest_tool_protocol(monkeypatch):
     assert recorder.events[0]["scope"] == "loop"
     assert recorder.events[0]["compressed_messages"] == 2
     assert context.latest_tool_protocol_start(messages) == 4
+
+
+def test_compress_loop_context_keeps_messages_when_summary_fails(monkeypatch):
+    async def fail_create_context_summary(*args, **kwargs):
+        raise llm.AgentProviderError("summary failed")
+
+    monkeypatch.setattr(context, "create_context_summary", fail_create_context_summary)
+
+    messages = [
+        {"role": "system", "content": "system"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{"id": "call_latest"}],
+        },
+        {"role": "tool", "tool_call_id": "call_latest", "content": "x" * 2_000},
+    ]
+    recorder = EventRecorder()
+    compressed = asyncio.run(
+        context.compress_loop_context_if_needed(
+            emit_event=recorder.emit,
+            messages=messages,
+            compression_config=ContextCompressionConfig(True, 1, 100),
+        )
+    )
+
+    assert compressed is messages
+    assert recorder.events == []
 
 
 def test_create_context_summary_strips_content_and_rejects_empty(monkeypatch):

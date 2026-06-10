@@ -1,0 +1,30 @@
+.app-shell {
+  display: grid;
+  grid-template-columns: 282px minmax(0, 1fr);
+  gap: 18px;
+  min-height: 100vh;
+  padding: 14px;
+  background: var(--bg);
+}
+.workspace {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 8px 8px 8px 0;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 16px;
+  min-height: 82px;
+  padding: 4px 370px 18px 10px;
+}
+.workspace-main {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}

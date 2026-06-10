@@ -1,3 +1,4 @@
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from typing import Any
@@ -149,7 +150,7 @@ async def stream_model_loop(
         if isinstance(tool_calls, list) and tool_calls:
             provider_message = assistant_message_for_provider(assistant_message)
             messages.append(provider_message)
-            save_context_message_if_possible(
+            await save_context_message_if_possible(
                 store=store, session_id=session_id, message=provider_message
             )
             for tool_call in tool_calls:
@@ -175,7 +176,7 @@ async def stream_model_loop(
 
         content = assistant_message.get("content")
         if isinstance(content, str) and content.strip():
-            save_context_message_if_possible(
+            await save_context_message_if_possible(
                 store=store,
                 session_id=session_id,
                 message={"role": "assistant", "content": content},
@@ -230,12 +231,12 @@ async def stream_execute_tool_call(
     }
     provider_message = tool_result_for_provider(tool_call, result)
     messages.append(provider_message)
-    save_context_message_if_possible(
+    await save_context_message_if_possible(
         store=store, session_id=session_id, message=provider_message
     )
 
 
-def save_context_message_if_possible(
+async def save_context_message_if_possible(
     *,
     store: AgentContextStore | None,
     session_id: str | None,
@@ -244,7 +245,7 @@ def save_context_message_if_possible(
     if store is None or not session_id:
         return
 
-    store.save_context_message(session_id, message)
+    await asyncio.to_thread(store.save_context_message, session_id, message)
 
 def tool_specs_for_names(
     tools: list[dict[str, Any]], allowed_names: set[str]

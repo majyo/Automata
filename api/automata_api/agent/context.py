@@ -1,5 +1,9 @@
+import asyncio
 import json
+import logging
 from typing import Any
+
+import httpx
 
 from automata_api.agent import llm
 from automata_api.agent.prompts import agent_system_prompt
@@ -8,6 +12,7 @@ from automata_api.config import MAX_CONTEXT_MESSAGES, ContextCompressionConfig
 
 
 RAW_CONTEXT_TAIL_MESSAGES = 8
+logger = logging.getLogger(__name__)
 
 
 async def fetch_agent_context(
@@ -19,7 +24,7 @@ async def fetch_agent_context(
     system_prompt: str | None = None,
 ) -> list[dict[str, Any]]:
     if not compression_config.enabled:
-        return fetch_recent_agent_context(
+        return await fetch_recent_agent_context(
             session_id=session_id, store=store, system_prompt=system_prompt
         )
 
@@ -27,11 +32,13 @@ async def fetch_agent_context(
         "role": "system",
         "content": system_prompt or agent_system_prompt(),
     }
-    summary = store.fetch_context_summary(session_id)
+    summary = await asyncio.to_thread(store.fetch_context_summary, session_id)
     through_sequence = int(summary["through_sequence"]) if summary else 0
-    rows = store.get_context_messages_after_sequence(session_id, through_sequence)
+    rows = await asyncio.to_thread(
+        store.get_context_messages_after_sequence, session_id, through_sequence
+    )
     if not summary and not rows:
-        return fetch_recent_agent_context(
+        return await fetch_recent_agent_context(
             session_id=session_id, store=store, system_prompt=system_prompt
         )
 
@@ -46,17 +53,21 @@ async def fetch_agent_context(
     before_chars = context_char_count(messages)
     compress_rows = rows[:-RAW_CONTEXT_TAIL_MESSAGES]
     tail_rows = rows[-RAW_CONTEXT_TAIL_MESSAGES:]
-    summary_content = await create_context_summary(
+    summary_content = await create_context_summary_or_none(
         title="Conversation history compression",
         existing_summary=summary["content"] if summary else "",
         content=history_rows_text(compress_rows),
         target_chars=compression_config.target_chars,
     )
+    if summary_content is None:
+        return messages
+
     through_sequence = int(compress_rows[-1]["sequence"])
-    stored_summary = store.upsert_context_summary(
-        session_id=session_id,
-        content=summary_content,
-        through_sequence=through_sequence,
+    stored_summary = await asyncio.to_thread(
+        store.upsert_context_summary,
+        session_id,
+        summary_content,
+        through_sequence,
     )
     compressed_messages = build_context_messages(system_message, stored_summary, tail_rows)
     await send_context_compressed_event(
@@ -71,7 +82,7 @@ async def fetch_agent_context(
     return compressed_messages
 
 
-def fetch_recent_agent_context(
+async def fetch_recent_agent_context(
     *,
     session_id: str,
     store: AgentContextStore,
@@ -84,13 +95,18 @@ def fetch_recent_agent_context(
         }
     ]
 
-    context_rows = store.get_recent_context_messages(session_id, MAX_CONTEXT_MESSAGES)
+    context_rows = await asyncio.to_thread(
+        store.get_recent_context_messages, session_id, MAX_CONTEXT_MESSAGES
+    )
     if context_rows:
         for row in context_rows:
             messages.append(message_from_row(row))
         return messages
 
-    for row in store.get_recent_messages(session_id, MAX_CONTEXT_MESSAGES):
+    rows = await asyncio.to_thread(
+        store.get_recent_messages, session_id, MAX_CONTEXT_MESSAGES
+    )
+    for row in rows:
         messages.append(message_from_row(row))
 
     return messages
@@ -148,12 +164,15 @@ async def compress_loop_context_if_needed(
         return messages
 
     loop_messages = messages[start_index:]
-    summary_content = await create_context_summary(
+    summary_content = await create_context_summary_or_none(
         title="Recent tool activity compression",
         existing_summary="",
         content=messages_text(loop_messages),
         target_chars=compression_config.target_chars,
     )
+    if summary_content is None:
+        return messages
+
     compressed_messages = [
         *messages[:start_index],
         {
@@ -215,6 +234,25 @@ async def create_context_summary(
         raise llm.AgentProviderError("LLM provider returned an empty context summary.")
 
     return summary.strip()
+
+
+async def create_context_summary_or_none(
+    *,
+    title: str,
+    existing_summary: str,
+    content: str,
+    target_chars: int,
+) -> str | None:
+    try:
+        return await create_context_summary(
+            title=title,
+            existing_summary=existing_summary,
+            content=content,
+            target_chars=target_chars,
+        )
+    except (llm.AgentProviderError, httpx.RequestError) as error:
+        logger.warning("Context compression skipped after summary failure: %s", error)
+        return None
 
 
 def history_rows_text(rows: list[dict[str, Any]]) -> str:

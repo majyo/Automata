@@ -32,6 +32,7 @@ struct ResolvedApiConfig {
 struct ApiConfigResponse {
     http_base_url: String,
     ws_chat_url: String,
+    default_working_directory: String,
 }
 
 #[tauri::command]
@@ -82,7 +83,9 @@ fn start_api_sidecar(app: &mut tauri::App) {
     if TcpListener::bind(&api_address).is_err() {
         set_backend_status(
             &app_handle,
-            format!("Port {api_address} is already in use. Close the existing process and restart."),
+            format!(
+                "Port {api_address} is already in use. Close the existing process and restart."
+            ),
         );
         return;
     }
@@ -90,13 +93,19 @@ fn start_api_sidecar(app: &mut tauri::App) {
     let data_dir = match app.path().app_data_dir() {
         Ok(path) => path,
         Err(error) => {
-            set_backend_status(&app_handle, format!("Failed to resolve app data dir: {error}"));
+            set_backend_status(
+                &app_handle,
+                format!("Failed to resolve app data dir: {error}"),
+            );
             return;
         }
     };
 
     if let Err(error) = fs::create_dir_all(&data_dir) {
-        set_backend_status(&app_handle, format!("Failed to create app data dir: {error}"));
+        set_backend_status(
+            &app_handle,
+            format!("Failed to create app data dir: {error}"),
+        );
         return;
     }
 
@@ -216,6 +225,7 @@ impl ResolvedApiConfig {
         ApiConfigResponse {
             http_base_url: format!("http://{}", self.address()),
             ws_chat_url: format!("ws://{}/ws/chat", self.address()),
+            default_working_directory: resolve_workspace_dir().to_string_lossy().to_string(),
         }
     }
 }

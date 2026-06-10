@@ -278,6 +278,72 @@ def test_chat_websocket_emits_history_compression_event(client, monkeypatch):
     assert len(agent_calls) == 1
 
 
+def test_chat_websocket_continues_when_history_compression_fails(client, monkeypatch):
+    monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
+    monkeypatch.setenv("AUTOMATA_CONTEXT_COMPRESSION_THRESHOLD_CHARS", "1200")
+    monkeypatch.setenv("AUTOMATA_CONTEXT_COMPRESSION_TARGET_CHARS", "250")
+    session = client.post("/sessions", json={"title": "History Failure"}).json()
+    for index in range(10):
+        save_context_message(
+            session_id=session["id"],
+            message={
+                "role": "user",
+                "content": f"history-{index} " + ("x" * 220),
+            },
+        )
+
+    agent_calls = []
+
+    async def fail_create_llm_response(messages, tools=None):
+        raise llm.AgentProviderError("summary failed")
+
+    async def fake_agent_response(messages, tools=None):
+        agent_calls.append(messages)
+        assert any(
+            message["role"] == "user" and message["content"].startswith("history-0 ")
+            for message in messages
+        )
+        return {
+            "role": "assistant",
+            "content": "Compression failure did not stop the chat.",
+            "tool_calls": [],
+        }
+
+    monkeypatch.setattr(llm, "create_llm_response", fail_create_llm_response)
+    monkeypatch.setattr(
+        llm,
+        "stream_chat_completion",
+        stream_from_completion(fake_agent_response),
+    )
+
+    with client.websocket_connect("/ws/chat") as websocket:
+        websocket.receive_json()
+        websocket.send_json(
+            {
+                "type": "prompt",
+                "session_id": session["id"],
+                "prompt": "continue",
+            }
+        )
+
+        events = []
+        while True:
+            event = websocket.receive_json()
+            events.append(event)
+            if event["type"] in {"done", "error"}:
+                break
+
+    assert compact_event_types(events) == [
+        "started",
+        "agent_step",
+        "token",
+        "done",
+    ]
+    assert token_content(events) == "Compression failure did not stop the chat."
+    assert events[-1]["type"] == "done"
+    assert len(agent_calls) == 1
+
+
 def test_chat_websocket_emits_loop_compression_event(client, monkeypatch):
     monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
     monkeypatch.setenv("AUTOMATA_CONTEXT_COMPRESSION_THRESHOLD_CHARS", "500")
