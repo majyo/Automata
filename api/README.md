@@ -157,15 +157,35 @@ Tool call and result events are also saved as visible `tool` messages, so
 reopening a session preserves the run activity shown during streaming.
 `context_compressed` includes `scope` (`history` or `loop`), before/after
 character counts, summary size, and compressed message counts. The built-in
-tools are real `read_file`, `write_file`, `rg`, `grep`, `run_bash`,
-`apply_patch`, and `apply_patch_preview` tools. File tools read and write UTF-8
-text within the workspace only. For search, the agent should prefer `rg`; the
-`rg` tool falls back to `grep`, then to `run_bash` with a suitable search
-command when native search commands are unavailable. `run_bash` executes inside
-the workspace, uses `bash -lc`, caps timeouts at 120 seconds, and returns
-stdout, stderr, exit code, timeout, and truncation metadata.
+tools are real `read_file`, `write_file`, `rg`, `grep`, `exec_command`,
+`run_bash`, `apply_patch`, and `apply_patch_preview` tools. File tools read and
+write UTF-8 text within the workspace only. For search, the agent should prefer
+`rg`; the `rg` tool falls back to `grep`, then to `run_bash` with a suitable search
+command when native search commands are unavailable. `exec_command` executes
+inside the workspace, supports `shell=bash` and `shell=powershell`, caps
+timeouts at 120 seconds, caps command output, and returns stdout, stderr,
+combined output, exit code, timeout, duration, shell, and truncation metadata.
+`run_bash` remains available as a compatibility bash-only command tool.
+
+`apply_patch` and `apply_patch_preview` use Codex-style patches by default:
+
+```text
+*** Begin Patch
+*** Update File: path/to/file.py
+@@
+ context line
+-old line
++new line
+*** End Patch
+```
+
+Use `*** Add File: path`, `*** Update File: path`, and
+`*** Delete File: path` sections. Update hunks use `@@` without line numbers
+and must include enough context to match uniquely. The backend still accepts
+unified diff patches as a compatibility path, but agents should prefer
+Codex-style patches.
 
 Plan mode is enforced by the backend, not only by prompting. It exposes only
 `read_file`, `rg`, `grep`, and `apply_patch_preview`. Requests for `run_bash`,
-`write_file`, or `apply_patch` return a failed tool result with
+`exec_command`, `write_file`, or `apply_patch` return a failed tool result with
 `blocked_by_plan_mode` and do not execute the tool.

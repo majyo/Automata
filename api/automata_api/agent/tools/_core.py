@@ -4,9 +4,16 @@ import os
 import re
 import shutil
 import shlex
+import time
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
+
+from .patch_codex import (
+    CodexPatchFile,
+    apply_codex_hunks_to_content,
+    parse_codex_patch,
+)
 
 
 DEFAULT_BASH_TIMEOUT_SECONDS = 30.0
@@ -14,6 +21,9 @@ MAX_BASH_TIMEOUT_SECONDS = 120.0
 OUTPUT_LIMIT = 20_000
 SEARCH_TIMEOUT_SECONDS = 30.0
 FILE_READ_LIMIT = 120_000
+DEFAULT_EXEC_OUTPUT_CHARS = OUTPUT_LIMIT
+MAX_EXEC_OUTPUT_CHARS = 60_000
+SUPPORTED_EXEC_SHELLS = ("bash", "powershell")
 
 
 @dataclass(frozen=True)
@@ -22,6 +32,32 @@ class ToolResult:
     arguments: dict[str, Any]
     content: str
     success: bool
+
+
+@dataclass(frozen=True)
+class ExecShellResolution:
+    shell: str
+    path: str | None
+    error: str | None = None
+
+    @classmethod
+    def error_result(cls, shell: str, error: str) -> "ExecShellResolution":
+        return cls(shell=shell, path=None, error=error)
+
+    def argv(self, cmd: str) -> list[str]:
+        if self.path is None:
+            return []
+        if self.shell == "bash":
+            return [self.path, "-lc", cmd]
+        if self.shell == "powershell":
+            return [
+                self.path,
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                cmd,
+            ]
+        return []
 
 
 @dataclass(frozen=True)
@@ -638,6 +674,135 @@ def run_apply_patch(
             error="Missing required string patch.",
         )
 
+    if patch.strip().startswith("*** Begin Patch"):
+        return run_codex_apply_patch(
+            arguments=arguments,
+            workspace_path=workspace_path,
+            tool_name=tool_name,
+            patch=patch,
+            dry_run=dry_run,
+            create_dirs=create_dirs,
+        )
+
+    return run_unified_apply_patch(
+        arguments=arguments,
+        workspace_path=workspace_path,
+        tool_name=tool_name,
+        patch=patch,
+        dry_run=dry_run,
+        create_dirs=create_dirs,
+    )
+
+
+def run_codex_apply_patch(
+    *,
+    arguments: dict[str, Any],
+    workspace_path: Path,
+    tool_name: str,
+    patch: str,
+    dry_run: bool,
+    create_dirs: bool,
+) -> ToolResult:
+    parsed_patch, parse_error = parse_codex_patch(patch)
+    if parse_error:
+        return patch_error_result(
+            tool_name=tool_name,
+            arguments=arguments,
+            dry_run=dry_run,
+            error=parse_error,
+            syntax="codex_patch",
+        )
+
+    assert parsed_patch is not None
+    planned_changes: list[dict[str, Any]] = []
+    file_results: list[dict[str, Any]] = []
+    for file_patch in parsed_patch.files:
+        plan, error = plan_codex_patch_file(file_patch, workspace_path)
+        if error:
+            return patch_error_result(
+                tool_name=tool_name,
+                arguments=arguments,
+                dry_run=dry_run,
+                error=error["error"],
+                path=error.get("path", ""),
+                syntax="codex_patch",
+            )
+
+        assert plan is not None
+        planned_changes.append(plan)
+        file_results.append(
+            {
+                "path": plan["path"],
+                "status": plan["status"],
+                "hunks": len(file_patch.hunks),
+                "old_lines": plan["old_lines"],
+                "new_lines": plan["new_lines"],
+            }
+        )
+
+    if not dry_run and not create_dirs:
+        for plan in planned_changes:
+            path = plan["write_path"]
+            if plan["status"] != "deleted" and not path.parent.exists():
+                return patch_error_result(
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    dry_run=dry_run,
+                    error=f"Parent directory does not exist: {path.parent}",
+                    path=plan["path"],
+                    syntax="codex_patch",
+                )
+
+    if not dry_run:
+        for plan in planned_changes:
+            try:
+                if plan["status"] == "deleted":
+                    plan["delete_path"].unlink()
+                    continue
+
+                write_path = plan["write_path"]
+                if not write_path.parent.exists():
+                    write_path.parent.mkdir(parents=True, exist_ok=True)
+                write_path.write_text(plan["content"], encoding="utf-8", newline="")
+
+                if plan["status"] == "moved" and plan["delete_path"] != write_path:
+                    plan["delete_path"].unlink()
+            except OSError as error:
+                return patch_error_result(
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    dry_run=dry_run,
+                    error=f"Failed to apply patch: {error}",
+                    path=plan["path"],
+                    syntax="codex_patch",
+                )
+
+    payload = {
+        "simulated": False,
+        "ok": True,
+        "tool": tool_name,
+        "syntax": "codex_patch",
+        "dry_run": dry_run,
+        "files": file_results,
+        "summary": patch_summary(file_results),
+    }
+    return ToolResult(
+        name=tool_name,
+        arguments=arguments,
+        content=json_response(payload),
+        success=True,
+    )
+
+
+def run_unified_apply_patch(
+    *,
+    arguments: dict[str, Any],
+    workspace_path: Path,
+    tool_name: str,
+    patch: str,
+    dry_run: bool,
+    create_dirs: bool,
+) -> ToolResult:
     parsed_files, parse_error = parse_unified_patch(patch)
     if parse_error:
         return patch_error_result(
@@ -645,6 +810,7 @@ def run_apply_patch(
             arguments=arguments,
             dry_run=dry_run,
             error=parse_error,
+            syntax="unified_diff",
         )
 
     planned_changes: list[dict[str, Any]] = []
@@ -658,6 +824,7 @@ def run_apply_patch(
                 dry_run=dry_run,
                 error=error["error"],
                 path=error.get("path", ""),
+                syntax="unified_diff",
             )
 
         assert plan is not None
@@ -682,6 +849,7 @@ def run_apply_patch(
                     dry_run=dry_run,
                     error=f"Parent directory does not exist: {path.parent}",
                     path=plan["path"],
+                    syntax="unified_diff",
                 )
 
     if not dry_run:
@@ -703,12 +871,14 @@ def run_apply_patch(
                     dry_run=dry_run,
                     error=f"Failed to apply patch: {error}",
                     path=plan["path"],
+                    syntax="unified_diff",
                 )
 
     payload = {
         "simulated": False,
         "ok": True,
         "tool": tool_name,
+        "syntax": "unified_diff",
         "dry_run": dry_run,
         "files": file_results,
         "summary": patch_summary(file_results),
@@ -718,6 +888,104 @@ def run_apply_patch(
         arguments=arguments,
         content=json_response(payload),
         success=True,
+    )
+
+
+def plan_codex_patch_file(
+    file_patch: CodexPatchFile, workspace_path: Path
+) -> tuple[dict[str, Any] | None, dict[str, str] | None]:
+    path_result = resolve_file_path(workspace_path, file_patch.path)
+    if isinstance(path_result, str):
+        return None, {"path": file_patch.path, "error": path_result}
+
+    if file_patch.kind == "added":
+        if path_result.exists():
+            return None, {
+                "path": file_patch.path,
+                "error": f"File already exists: {path_result}",
+            }
+        return (
+            {
+                "path": file_patch.path,
+                "status": "added",
+                "content": file_patch.content,
+                "delete_path": path_result,
+                "write_path": path_result,
+                "old_lines": 0,
+                "new_lines": len(file_patch.content.splitlines()),
+            },
+            None,
+        )
+
+    if not path_result.exists():
+        return None, {
+            "path": file_patch.path,
+            "error": f"File does not exist: {path_result}",
+        }
+    if not path_result.is_file():
+        return None, {
+            "path": file_patch.path,
+            "error": f"Path is not a file: {path_result}",
+        }
+
+    try:
+        original_content = path_result.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return None, {
+            "path": file_patch.path,
+            "error": f"File is not valid UTF-8 text: {path_result}",
+        }
+    except OSError as error:
+        return None, {
+            "path": file_patch.path,
+            "error": f"Failed to read file: {error}",
+        }
+
+    if file_patch.kind == "deleted":
+        return (
+            {
+                "path": file_patch.path,
+                "status": "deleted",
+                "content": "",
+                "delete_path": path_result,
+                "write_path": path_result,
+                "old_lines": len(original_content.splitlines()),
+                "new_lines": 0,
+            },
+            None,
+        )
+
+    new_content, apply_error = apply_codex_hunks_to_content(
+        original_content, file_patch.hunks, file_patch.path
+    )
+    if apply_error:
+        return None, {"path": file_patch.path, "error": apply_error}
+
+    write_path = path_result
+    display_path = file_patch.path
+    if file_patch.move_path:
+        move_result = resolve_file_path(workspace_path, file_patch.move_path)
+        if isinstance(move_result, str):
+            return None, {"path": file_patch.move_path, "error": move_result}
+        if move_result.exists() and move_result != path_result:
+            return None, {
+                "path": file_patch.move_path,
+                "error": f"Destination file already exists: {move_result}",
+            }
+        write_path = move_result
+        display_path = file_patch.move_path
+
+    return (
+        {
+            "path": display_path,
+            "status": "moved" if file_patch.move_path else "modified",
+            "content": new_content,
+            "delete_path": path_result,
+            "write_path": write_path,
+            "old_lines": len(original_content.splitlines()),
+            "new_lines": len(new_content.splitlines()),
+        },
+        None,
     )
 
 
@@ -992,6 +1260,7 @@ def patch_summary(files: list[dict[str, Any]]) -> dict[str, int]:
         "added": sum(1 for file in files if file["status"] == "added"),
         "modified": sum(1 for file in files if file["status"] == "modified"),
         "deleted": sum(1 for file in files if file["status"] == "deleted"),
+        "moved": sum(1 for file in files if file["status"] == "moved"),
         "hunks": sum(int(file["hunks"]) for file in files),
     }
 
@@ -1003,20 +1272,22 @@ def patch_error_result(
     dry_run: bool,
     error: str,
     path: str = "",
+    syntax: str | None = None,
 ) -> ToolResult:
+    payload = {
+        "simulated": False,
+        "ok": False,
+        "tool": tool_name,
+        "dry_run": dry_run,
+        "path": path,
+        "error": error,
+    }
+    if syntax is not None:
+        payload["syntax"] = syntax
     return ToolResult(
         name=tool_name,
         arguments=arguments,
-        content=json_response(
-            {
-                "simulated": False,
-                "ok": False,
-                "tool": tool_name,
-                "dry_run": dry_run,
-                "path": path,
-                "error": error,
-            }
-        ),
+        content=json_response(payload),
         success=False,
     )
 
@@ -1106,6 +1377,176 @@ def file_error_result(
         ),
         success=False,
     )
+
+
+async def run_exec_command(arguments: dict[str, Any], workspace: str) -> ToolResult:
+    cmd = string_argument(arguments, "cmd", "")
+    shell_name = shell_argument(arguments)
+    timeout_seconds = timeout_argument(arguments)
+    max_output_chars = max_output_chars_argument(arguments)
+    requested_workdir = string_argument(arguments, "workdir", ".")
+    workspace_path = Path(workspace).expanduser().resolve()
+    cwd_result = resolve_tool_cwd(workspace_path, arguments.get("workdir"))
+
+    if not cmd:
+        return exec_command_error_result(
+            arguments=arguments,
+            cmd=cmd,
+            shell=shell_name,
+            workdir=requested_workdir,
+            cwd=str(workspace_path),
+            timeout_seconds=timeout_seconds,
+            error="Missing required cmd.",
+        )
+
+    if isinstance(cwd_result, str):
+        return exec_command_error_result(
+            arguments=arguments,
+            cmd=cmd,
+            shell=shell_name,
+            workdir=requested_workdir,
+            cwd=str(workspace_path),
+            timeout_seconds=timeout_seconds,
+            error=cwd_result,
+        )
+
+    shell_resolution = resolve_exec_shell(shell_name)
+    if shell_resolution.error:
+        return exec_command_error_result(
+            arguments=arguments,
+            cmd=cmd,
+            shell=shell_name,
+            workdir=requested_workdir,
+            cwd=str(cwd_result),
+            timeout_seconds=timeout_seconds,
+            error=shell_resolution.error,
+            supported_shells=SUPPORTED_EXEC_SHELLS
+            if shell_name not in SUPPORTED_EXEC_SHELLS
+            else None,
+        )
+
+    started_at = time.monotonic()
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *shell_resolution.argv(cmd),
+            cwd=str(cwd_result),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except OSError as error:
+        duration_seconds = round(time.monotonic() - started_at, 3)
+        return exec_command_error_result(
+            arguments=arguments,
+            cmd=cmd,
+            shell=shell_name,
+            workdir=requested_workdir,
+            cwd=str(cwd_result),
+            timeout_seconds=timeout_seconds,
+            error=f"Failed to start command: {error}",
+            shell_path=shell_resolution.path,
+            duration_seconds=duration_seconds,
+        )
+
+    timed_out = False
+    try:
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+            process.communicate(), timeout=timeout_seconds
+        )
+        exit_code = process.returncode
+    except TimeoutError:
+        timed_out = True
+        process.kill()
+        stdout_bytes, stderr_bytes = await process.communicate()
+        exit_code = None
+
+    duration_seconds = round(time.monotonic() - started_at, 3)
+    raw_stdout = decode_output(stdout_bytes)
+    raw_stderr = decode_output(stderr_bytes)
+    stdout, stdout_truncated = truncate_content(raw_stdout, max_output_chars)
+    stderr, stderr_truncated = truncate_content(raw_stderr, max_output_chars)
+    output, output_truncated = truncate_content(
+        build_exec_output(raw_stdout, raw_stderr), max_output_chars
+    )
+    payload = {
+        "simulated": False,
+        "ok": exit_code == 0 and not timed_out,
+        "tool": "exec_command",
+        "cmd": cmd,
+        "shell": shell_name,
+        "workdir": requested_workdir,
+        "cwd": str(cwd_result),
+        "shell_path": shell_resolution.path,
+        "timeout_seconds": timeout_seconds,
+        "duration_seconds": duration_seconds,
+        "exit_code": exit_code,
+        "timed_out": timed_out,
+        "stdout": stdout,
+        "stderr": stderr,
+        "output": output,
+        "stdout_truncated": stdout_truncated,
+        "stderr_truncated": stderr_truncated,
+        "output_truncated": output_truncated,
+    }
+    return ToolResult(
+        name="exec_command",
+        arguments=arguments,
+        content=json_response(payload),
+        success=payload["ok"],
+    )
+
+
+def exec_command_error_result(
+    *,
+    arguments: dict[str, Any],
+    cmd: str,
+    shell: str,
+    workdir: str,
+    cwd: str,
+    timeout_seconds: float,
+    error: str,
+    shell_path: str | None = None,
+    duration_seconds: float = 0.0,
+    supported_shells: tuple[str, ...] | None = None,
+) -> ToolResult:
+    output, output_truncated = truncate_content(
+        build_exec_output("", error), DEFAULT_EXEC_OUTPUT_CHARS
+    )
+    payload: dict[str, Any] = {
+        "simulated": False,
+        "ok": False,
+        "tool": "exec_command",
+        "cmd": cmd,
+        "shell": shell,
+        "workdir": workdir,
+        "cwd": cwd,
+        "shell_path": shell_path,
+        "timeout_seconds": timeout_seconds,
+        "duration_seconds": duration_seconds,
+        "exit_code": None,
+        "timed_out": False,
+        "stdout": "",
+        "stderr": error,
+        "output": output,
+        "stdout_truncated": False,
+        "stderr_truncated": False,
+        "output_truncated": output_truncated,
+    }
+    if supported_shells is not None:
+        payload["supported_shells"] = list(supported_shells)
+    return ToolResult(
+        name="exec_command",
+        arguments=arguments,
+        content=json_response(payload),
+        success=False,
+    )
+
+
+def build_exec_output(stdout: str, stderr: str) -> str:
+    if stdout and stderr:
+        return f"{stdout}\n\nstderr:\n{stderr}"
+    if stderr:
+        return f"stderr:\n{stderr}"
+    return stdout
 
 
 async def run_bash(arguments: dict[str, Any], workspace: str) -> ToolResult:
@@ -1218,6 +1659,68 @@ def resolve_bash_executable() -> str | None:
     return None
 
 
+def shell_argument(arguments: dict[str, Any]) -> str:
+    raw_value = arguments.get("shell", "bash")
+    if not isinstance(raw_value, str) or not raw_value.strip():
+        return "bash"
+
+    return raw_value.strip().lower()
+
+
+def resolve_exec_shell(shell: str) -> ExecShellResolution:
+    if shell == "bash":
+        bash_path = resolve_bash_executable()
+        if bash_path is None:
+            return ExecShellResolution.error_result(
+                shell=shell,
+                error=(
+                    "Could not find bash. Install Git Bash on Windows or bash on PATH."
+                ),
+            )
+        return ExecShellResolution(shell=shell, path=bash_path)
+
+    if shell == "powershell":
+        powershell_path = resolve_powershell_executable()
+        if powershell_path is None:
+            return ExecShellResolution.error_result(
+                shell=shell,
+                error=(
+                    "Could not find PowerShell. Install PowerShell or ensure it is on PATH."
+                ),
+            )
+        return ExecShellResolution(shell=shell, path=powershell_path)
+
+    return ExecShellResolution.error_result(
+        shell=shell,
+        error=(
+            f"Unsupported shell: {shell}. Supported shells: "
+            f"{', '.join(SUPPORTED_EXEC_SHELLS)}."
+        ),
+    )
+
+
+def resolve_powershell_executable() -> str | None:
+    candidates: tuple[str | None, ...]
+    if os.name == "nt":
+        candidates = (
+            shutil.which("pwsh"),
+            r"C:\Program Files\PowerShell\7\pwsh.exe",
+            shutil.which("powershell"),
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+        )
+    else:
+        candidates = (
+            shutil.which("pwsh"),
+            shutil.which("powershell"),
+        )
+
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            return candidate
+
+    return None
+
+
 def is_wsl_bash(path: str) -> bool:
     normalized = str(Path(path)).lower()
     return (
@@ -1264,6 +1767,28 @@ def timeout_argument(arguments: dict[str, Any]) -> float:
         return DEFAULT_BASH_TIMEOUT_SECONDS
 
     return min(timeout_seconds, MAX_BASH_TIMEOUT_SECONDS)
+
+
+def max_output_chars_argument(arguments: dict[str, Any]) -> int:
+    raw_value = arguments.get("max_output_chars", DEFAULT_EXEC_OUTPUT_CHARS)
+    if isinstance(raw_value, bool):
+        return DEFAULT_EXEC_OUTPUT_CHARS
+    if isinstance(raw_value, int):
+        max_output_chars = raw_value
+    elif isinstance(raw_value, float):
+        max_output_chars = int(raw_value)
+    elif isinstance(raw_value, str):
+        try:
+            max_output_chars = int(raw_value)
+        except ValueError:
+            return DEFAULT_EXEC_OUTPUT_CHARS
+    else:
+        return DEFAULT_EXEC_OUTPUT_CHARS
+
+    if max_output_chars <= 0:
+        return DEFAULT_EXEC_OUTPUT_CHARS
+
+    return min(max_output_chars, MAX_EXEC_OUTPUT_CHARS)
 
 
 def bash_error_result(

@@ -13,15 +13,25 @@ class ApplyPatchTool(AgentTool):
             "function": {
                 "name": self.name,
                 "description": (
-                    "Apply or dry-run a real unified diff patch inside the "
-                    "workspace. Use dry_run=true before applying when practical."
+                    "Apply or dry-run a real Codex-style patch inside the "
+                    "workspace. The patch must start with *** Begin Patch and "
+                    "end with *** End Patch. Use *** Add File, *** Update "
+                    "File, and *** Delete File sections. Update hunks use @@ "
+                    "without line numbers and must include enough context to "
+                    "match uniquely. Use dry_run=true before applying when "
+                    "practical."
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "patch": {
                             "type": "string",
-                            "description": "Unified diff patch text.",
+                            "description": (
+                                "Codex-style patch text using Add File, Update "
+                                "File, or Delete File sections. Example update "
+                                "hunks start with @@ and lines prefixed by "
+                                "space, '-', or '+'."
+                            ),
                         },
                         "dry_run": {
                             "type": "boolean",
@@ -50,15 +60,22 @@ class ApplyPatchPreviewTool(AgentTool):
             "function": {
                 "name": self.name,
                 "description": (
-                    "Dry-run a real unified diff patch inside the workspace. "
-                    "This validates and summarizes the patch without writing files."
+                    "Dry-run a real Codex-style patch inside the workspace. "
+                    "This validates and summarizes the patch without writing "
+                    "files. Update hunks use @@ without line numbers and must "
+                    "include enough context to match uniquely."
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "patch": {
                             "type": "string",
-                            "description": "Unified diff patch text.",
+                            "description": (
+                                "Codex-style patch text using Add File, Update "
+                                "File, or Delete File sections. Example update "
+                                "hunks start with @@ and lines prefixed by "
+                                "space, '-', or '+'."
+                            ),
                         },
                     },
                     "required": ["patch"],

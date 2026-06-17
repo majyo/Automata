@@ -88,7 +88,9 @@ def plan_tool_arguments(tool_name: str) -> str:
         "read_file": '{"path": "README.md"}',
         "rg": '{"pattern": "needle", "path": "."}',
         "grep": '{"pattern": "needle", "path": "."}',
-        "apply_patch_preview": '{"patch": "--- a/x\\n+++ b/x\\n"}',
+        "apply_patch_preview": (
+            '{"patch": "*** Begin Patch\\n*** Update File: x\\n@@\\n-old\\n+new\\n*** End Patch\\n"}'
+        ),
     }[tool_name]
 
 
@@ -105,7 +107,7 @@ def test_plan_tool_allowlist_matches_registered_tools_and_prompt():
     }
     for tool_name in runtime.PLAN_TOOL_NAMES:
         assert tool_name in prompt
-    for blocked_tool in {"run_bash", "write_file", "apply_patch"}:
+    for blocked_tool in {"exec_command", "run_bash", "write_file", "apply_patch"}:
         assert blocked_tool in registered_names
         assert blocked_tool not in runtime.PLAN_TOOL_NAMES
         assert blocked_tool in prompt
@@ -136,7 +138,9 @@ def test_plan_loop_exposes_only_plan_tools(monkeypatch):
     tool_names = {tool["function"]["name"] for tool in calls[0]["tools"]}
     assert tool_names == runtime.PLAN_TOOL_NAMES
     assert tool_names == {"read_file", "rg", "grep", "apply_patch_preview"}
-    assert {"run_bash", "write_file", "apply_patch"}.isdisjoint(tool_names)
+    assert {"exec_command", "run_bash", "write_file", "apply_patch"}.isdisjoint(
+        tool_names
+    )
     assert "backend Plan mode" in calls[0]["messages"][0]["content"]
     assert events[-1] == {
         "type": "final",
@@ -260,7 +264,9 @@ def test_plan_loop_runs_allowed_preview_tool_and_keeps_plan_mode(monkeypatch):
                         "type": "function",
                         "function": {
                             "name": "apply_patch_preview",
-                            "arguments": '{"patch": "--- a/x\\n+++ b/x\\n"}',
+                            "arguments": (
+                                '{"patch": "*** Begin Patch\\n*** Update File: x\\n@@\\n-old\\n+new\\n*** End Patch\\n"}'
+                            ),
                         },
                     }
                 ]
@@ -275,7 +281,9 @@ def test_plan_loop_runs_allowed_preview_tool_and_keeps_plan_mode(monkeypatch):
         tool_runs.append((name, arguments, workspace))
         return ToolResult(
             name=name,
-            arguments={"patch": "--- a/x\n+++ b/x\n"},
+            arguments={
+                "patch": "*** Begin Patch\n*** Update File: x\n@@\n-old\n+new\n*** End Patch\n"
+            },
             content='{"ok": true, "dry_run": true}',
             success=True,
         )
@@ -304,7 +312,11 @@ def test_plan_loop_runs_allowed_preview_tool_and_keeps_plan_mode(monkeypatch):
     assert events[0]["mode"] == "plan"
     assert events[3]["mode"] == "plan"
     assert tool_runs == [
-        ("apply_patch_preview", '{"patch": "--- a/x\\n+++ b/x\\n"}', "workspace")
+        (
+            "apply_patch_preview",
+            '{"patch": "*** Begin Patch\\n*** Update File: x\\n@@\\n-old\\n+new\\n*** End Patch\\n"}',
+            "workspace",
+        )
     ]
     assert events[2]["success"] is True
     assert events[-1] == {
@@ -403,7 +415,9 @@ def test_plan_loop_executes_multiple_allowed_tool_calls_in_one_turn(monkeypatch)
     assert events[-1]["content"] == "Plan after both inspections."
 
 
-@pytest.mark.parametrize("tool_name", ["run_bash", "write_file", "apply_patch"])
+@pytest.mark.parametrize(
+    "tool_name", ["exec_command", "run_bash", "write_file", "apply_patch"]
+)
 def test_plan_loop_blocks_every_mutating_tool(monkeypatch, tool_name):
     configure_runtime(monkeypatch)
 

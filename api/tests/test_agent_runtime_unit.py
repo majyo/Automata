@@ -121,6 +121,7 @@ def test_stream_agent_loop_yields_tokens_final_and_injects_approved_plan(monkeyp
     assert "Approved plan body" in calls[0]["messages"][1]["content"]
     assert calls[0]["messages"][2] == {"role": "user", "content": "implement it"}
     assert {tool["function"]["name"] for tool in calls[0]["tools"]} >= {
+        "exec_command",
         "run_bash",
         "write_file",
         "apply_patch",

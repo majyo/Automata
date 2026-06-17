@@ -23,9 +23,14 @@ def test_agent_system_prompt_includes_workspace_and_tool_guidance(monkeypatch, t
 
     assert "Base system prompt" in prompt
     assert f"Current workspace: {tmp_path}" in prompt
+    assert "exec_command" in prompt
+    assert "shell=bash" in prompt
+    assert "shell=powershell" in prompt
     assert "run_bash" in prompt
     assert "write_file" in prompt
     assert "apply_patch" in prompt
+    assert "Codex-style patches" in prompt
+    assert "*** Begin Patch" in prompt
 
 
 def test_plan_system_prompt_includes_allowed_and_blocked_tools(monkeypatch, tmp_path):
@@ -38,7 +43,8 @@ def test_plan_system_prompt_includes_allowed_and_blocked_tools(monkeypatch, tmp_
     assert f"Current workspace: {tmp_path}" in prompt
     assert "backend Plan mode" in prompt
     assert "Allowed tools in Plan mode are read_file, rg, grep" in prompt
-    assert "Do not call run_bash, write_file, or apply_patch" in prompt
+    assert "Do not call exec_command, run_bash, write_file" in prompt
+    assert "Codex-style patches" in prompt
 
 
 def test_approved_plan_message_wraps_content():

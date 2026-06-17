@@ -494,6 +494,99 @@ def test_chat_websocket_runs_agent_loop_with_real_bash_tool(client, monkeypatch)
     assert len(calls) == 2
 
 
+def test_chat_websocket_runs_agent_loop_with_exec_command_tool(client, monkeypatch):
+    if tools.resolve_bash_executable() is None:
+        pytest.skip("bash is not available")
+
+    monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
+    session = client.post("/sessions", json={"title": "Exec Agent"}).json()
+    calls = []
+
+    async def fake_create_llm_response(messages, tools=None):
+        calls.append({"messages": list(messages), "tools": tools})
+        if len(calls) == 1:
+            assert tools is not None
+            assert any(tool["function"]["name"] == "exec_command" for tool in tools)
+            return {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_exec_1",
+                        "type": "function",
+                        "function": {
+                            "name": "exec_command",
+                            "arguments": (
+                                '{"cmd": "printf agent-exec", '
+                                '"shell": "bash", "timeout_seconds": 5}'
+                            ),
+                        },
+                    }
+                ],
+            }
+
+        assert messages[-1]["role"] == "tool"
+        assert messages[-1]["tool_call_id"] == "call_exec_1"
+        result = json.loads(messages[-1]["content"])
+        assert result["simulated"] is False
+        assert result["ok"] is True
+        assert result["tool"] == "exec_command"
+        assert result["stdout"] == "agent-exec"
+        assert result["output"] == "agent-exec"
+        return {
+            "role": "assistant",
+            "content": "Exec finished.",
+            "tool_calls": [],
+        }
+
+    monkeypatch.setattr(
+        "automata_api.agent.llm.stream_chat_completion",
+        stream_from_completion(fake_create_llm_response),
+    )
+
+    with client.websocket_connect("/ws/chat") as websocket:
+        websocket.receive_json()
+        websocket.send_json(
+            {
+                "type": "prompt",
+                "session_id": session["id"],
+                "prompt": "run an exec check",
+            }
+        )
+
+        events = []
+        while True:
+            event = websocket.receive_json()
+            events.append(event)
+            if event["type"] in {"done", "error"}:
+                break
+
+    assert compact_event_types(events) == [
+        "started",
+        "agent_step",
+        "tool_call",
+        "tool_result",
+        "agent_step",
+        "token",
+        "done",
+    ]
+    assert events[2]["tool"] == "exec_command"
+    assert events[3]["success"] is True
+    assert '"tool": "exec_command"' in events[3]["content"]
+    assert token_content(events) == "Exec finished."
+
+    messages = client.get(f"/sessions/{session['id']}/messages").json()
+    assert_tool_run_message(
+        messages[1],
+        tool_call_id="call_exec_1",
+        tool="exec_command",
+        arguments_contains="printf agent-exec",
+        result_contains='"output": "agent-exec"',
+    )
+    assert messages[2]["content"] == "Exec finished."
+    assert len(calls) == 2
+
+
 def test_chat_websocket_runs_agent_loop_with_rg_tool(client, monkeypatch):
     monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
     session = client.post("/sessions", json={"title": "Search Agent"}).json()
@@ -715,13 +808,14 @@ def test_chat_websocket_runs_agent_loop_with_apply_patch_tool(client, monkeypatc
     source.write_text("one\ntwo\nthree\n", encoding="utf-8")
     session = client.post("/sessions", json={"title": "Patch Agent"}).json()
     patch = patch_text(
-        "--- a/sample.txt",
-        "+++ b/sample.txt",
-        "@@ -1,3 +1,3 @@",
+        "*** Begin Patch",
+        "*** Update File: sample.txt",
+        "@@",
         " one",
         "-two",
         "+TWO",
         " three",
+        "*** End Patch",
     )
     calls = []
 
@@ -754,6 +848,7 @@ def test_chat_websocket_runs_agent_loop_with_apply_patch_tool(client, monkeypatc
         assert result["simulated"] is False
         assert result["ok"] is True
         assert result["tool"] == "apply_patch"
+        assert result["syntax"] == "codex_patch"
         assert result["dry_run"] is False
         assert source.read_text(encoding="utf-8") == "one\nTWO\nthree\n"
         return {
@@ -826,6 +921,7 @@ def test_chat_websocket_plan_mode_persists_pending_plan(client, monkeypatch):
         tool_names = {tool["function"]["name"] for tool in tools}
         assert "read_file" in tool_names
         assert "apply_patch_preview" in tool_names
+        assert "exec_command" not in tool_names
         assert "run_bash" not in tool_names
         assert "write_file" not in tool_names
         assert "apply_patch" not in tool_names

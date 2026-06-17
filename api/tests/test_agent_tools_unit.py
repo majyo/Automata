@@ -20,6 +20,7 @@ def test_tool_specs_include_expected_tool_names():
     assert names == {
         "rg",
         "grep",
+        "exec_command",
         "run_bash",
         "read_file",
         "write_file",
@@ -29,6 +30,16 @@ def test_tool_specs_include_expected_tool_names():
     assert specs == [tool.spec() for tool in registered_tools]
     assert names == {tool.name for tool in registered_tools}
     assert all(spec["type"] == "function" for spec in specs)
+
+    exec_command_spec = next(
+        spec for spec in specs if spec["function"]["name"] == "exec_command"
+    )
+    exec_command_parameters = exec_command_spec["function"]["parameters"]
+    assert exec_command_parameters["required"] == ["cmd"]
+    assert exec_command_parameters["properties"]["shell"]["enum"] == [
+        "bash",
+        "powershell",
+    ]
 
 
 def test_registered_tool_names_are_unique():
@@ -223,6 +234,7 @@ def test_patch_summary_and_error_result():
             {"status": "added", "hunks": 1},
             {"status": "modified", "hunks": 2},
             {"status": "deleted", "hunks": 1},
+            {"status": "moved", "hunks": 1},
         ]
     )
     error = tools.patch_error_result(
@@ -233,7 +245,7 @@ def test_patch_summary_and_error_result():
         path="sample.txt",
     )
 
-    assert summary == {"added": 1, "modified": 1, "deleted": 1, "hunks": 4}
+    assert summary == {"added": 1, "modified": 1, "deleted": 1, "moved": 1, "hunks": 5}
     payload = json.loads(error.content)
     assert error.success is False
     assert payload["path"] == "sample.txt"

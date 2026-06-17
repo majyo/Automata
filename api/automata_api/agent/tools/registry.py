@@ -2,6 +2,7 @@ from typing import Iterable
 
 from .base import AgentTool
 from .bash import run_bash_tool
+from .exec_command import exec_command_tool
 from .files import read_file_tool, write_file_tool
 from .patch import apply_patch_preview_tool, apply_patch_tool
 from .search import grep_tool, rg_tool
@@ -10,6 +11,7 @@ from .search import grep_tool, rg_tool
 REGISTERED_TOOLS: tuple[AgentTool, ...] = (
     rg_tool,
     grep_tool,
+    exec_command_tool,
     run_bash_tool,
     read_file_tool,
     write_file_tool,
