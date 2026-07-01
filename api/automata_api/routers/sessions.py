@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 
 from automata_api.repositories import sessions as session_repository
 from automata_api.repositories.sessions import (
+    InvalidBackendError,
     InvalidWorkingDirectoryError,
     SessionNotFoundError,
 )
@@ -29,8 +30,12 @@ async def create_session(request: CreateSessionRequest) -> dict[str, Any]:
     try:
         return await run_repository_call(
             session_repository.create_session,
-            request.title, request.working_directory
+            request.title,
+            request.working_directory,
+            request.backend,
         )
+    except InvalidBackendError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
     except InvalidWorkingDirectoryError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 

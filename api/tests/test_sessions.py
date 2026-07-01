@@ -2,6 +2,7 @@ import sqlite3
 from pathlib import Path
 
 from automata_api.agent.prompts import agent_workspace
+from automata_api.agent.backends.factory import default_backend_kind
 from automata_api.db.schema import init_db
 from automata_api.repositories.sessions import (
     PlanNotFoundError,
@@ -63,6 +64,39 @@ def test_create_session_persists_working_directory(client, tmp_path):
     assert created["working_directory"] == str(workspace.resolve())
     sessions = client.get("/sessions").json()
     assert sessions[0]["working_directory"] == str(workspace.resolve())
+
+
+def test_create_session_persists_backend(client, tmp_path):
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+
+    created = client.post(
+        "/sessions",
+        json={
+            "title": "Backend",
+            "working_directory": str(workspace),
+            "backend": "local",
+        },
+    ).json()
+
+    assert created["backend"] == "local"
+    assert client.get("/sessions").json()[0]["backend"] == "local"
+
+
+def test_create_session_defaults_backend(client):
+    created = client.post("/sessions", json={"title": "Default backend"}).json()
+
+    assert created["backend"] == default_backend_kind()
+
+
+def test_create_session_rejects_invalid_backend(client):
+    response = client.post(
+        "/sessions",
+        json={"title": "Bad backend", "backend": "missing"},
+    )
+
+    assert response.status_code == 422
+    assert "Backend is invalid" in response.json()["detail"]
 
 
 def test_create_session_defaults_working_directory(client):
@@ -415,6 +449,63 @@ def test_init_db_migrates_session_working_directory(tmp_path, monkeypatch):
         ).fetchone()[0]
         assert "working_directory" in columns
         assert working_directory == str(workspace)
+
+
+def test_init_db_migrates_session_backend(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("AUTOMATA_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("AUTOMATA_WORKSPACE_DIR", str(workspace))
+    db_file = tmp_path / "automata.db"
+    with sqlite3.connect(db_file) as db:
+        db.executescript(
+            """
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                working_directory TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE messages (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role IN ('user', 'agent', 'tool')),
+                kind TEXT NOT NULL DEFAULT 'message' CHECK (kind IN ('message', 'tool_run')),
+                content TEXT NOT NULL,
+                metadata_json TEXT,
+                sequence INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+                UNIQUE (session_id, sequence)
+            );
+
+            INSERT INTO sessions (
+                id, title, working_directory, created_at, updated_at
+            )
+            VALUES (
+                'session-1',
+                'Existing',
+                'D:/workspace',
+                '2026-06-04T00:00:00',
+                '2026-06-04T00:00:00'
+            );
+            """
+        )
+
+    init_db()
+
+    with sqlite3.connect(db_file) as db:
+        columns = {
+            row[1]
+            for row in db.execute("PRAGMA table_info(sessions)").fetchall()
+        }
+        backend = db.execute(
+            "SELECT backend FROM sessions WHERE id = 'session-1'"
+        ).fetchone()[0]
+        assert "backend" in columns
+        assert backend == "local"
 
 
 def client_orphan_session_is_gone():

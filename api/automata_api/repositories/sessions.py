@@ -3,6 +3,10 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from automata_api.agent.backends.factory import (
+    available_backend_kinds,
+    default_backend_kind,
+)
 from automata_api.agent.prompts import agent_workspace
 from automata_api.db.connection import connect_db, db_lock
 from automata_api.utils import new_id, normalize_title, now_iso
@@ -13,6 +17,10 @@ class SessionNotFoundError(ValueError):
 
 
 class InvalidWorkingDirectoryError(ValueError):
+    pass
+
+
+class InvalidBackendError(ValueError):
     pass
 
 
@@ -32,6 +40,7 @@ def list_sessions() -> list[dict[str, Any]]:
                 sessions.id,
                 sessions.title,
                 sessions.working_directory,
+                sessions.backend,
                 sessions.created_at,
                 sessions.updated_at,
                 COUNT(messages.id) AS message_count
@@ -45,10 +54,13 @@ def list_sessions() -> list[dict[str, Any]]:
 
 
 def create_session(
-    title: str | None, working_directory: str | None = None
+    title: str | None,
+    working_directory: str | None = None,
+    backend: str | None = None,
 ) -> dict[str, Any]:
     session_title = normalize_title(title)
     resolved_working_directory = normalize_working_directory(working_directory)
+    resolved_backend = normalize_backend(backend)
     session_id = new_id()
     now = now_iso()
 
@@ -56,11 +68,18 @@ def create_session(
         db.execute(
             """
             INSERT INTO sessions (
-                id, title, working_directory, created_at, updated_at
+                id, title, working_directory, backend, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (session_id, session_title, resolved_working_directory, now, now),
+            (
+                session_id,
+                session_title,
+                resolved_working_directory,
+                resolved_backend,
+                now,
+                now,
+            ),
         )
         db.commit()
 
@@ -68,6 +87,7 @@ def create_session(
         "id": session_id,
         "title": session_title,
         "working_directory": resolved_working_directory,
+        "backend": resolved_backend,
         "created_at": now,
         "updated_at": now,
         "message_count": 0,
@@ -142,6 +162,17 @@ def session_working_directory(session_id: str) -> str:
         if row is None:
             raise SessionNotFoundError("Session not found")
         return str(row["working_directory"])
+
+
+def session_backend_config(session_id: str) -> dict[str, str]:
+    with db_lock, connect_db() as db:
+        row = fetch_session(db, session_id)
+        if row is None:
+            raise SessionNotFoundError("Session not found")
+        return {
+            "working_directory": str(row["working_directory"]),
+            "backend": str(row["backend"] or "local"),
+        }
 
 
 def save_message(
@@ -648,6 +679,7 @@ def fetch_session(
             sessions.id,
             sessions.title,
             sessions.working_directory,
+            sessions.backend,
             sessions.created_at,
             sessions.updated_at,
             COUNT(messages.id) AS message_count
@@ -689,3 +721,17 @@ def normalize_working_directory(working_directory: str | None) -> str:
         )
 
     return str(path)
+
+
+def normalize_backend(backend: str | None) -> str:
+    raw_value = (
+        backend.strip().lower()
+        if isinstance(backend, str) and backend.strip()
+        else default_backend_kind()
+    )
+    if raw_value not in available_backend_kinds():
+        allowed = ", ".join(available_backend_kinds())
+        raise InvalidBackendError(
+            f"Backend is invalid: {raw_value}. Available backends: {allowed}"
+        )
+    return raw_value

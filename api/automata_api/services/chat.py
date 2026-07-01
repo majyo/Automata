@@ -6,8 +6,13 @@ from typing import Any
 import httpx
 from fastapi import WebSocket
 
+from automata_api.agent.backends.factory import (
+    BackendConfigurationError,
+    create_backend,
+)
 from automata_api.agent.llm import AgentProviderError
 from automata_api.agent.runtime import stream_agent_loop, stream_plan_loop
+from automata_api.agent.tools.registry import ToolRegistry
 from automata_api.config import AgentConfigurationError
 from automata_api.repositories.agent_store import SessionAgentContextStore
 from automata_api.repositories.sessions import (
@@ -16,7 +21,7 @@ from automata_api.repositories.sessions import (
     mark_plan_executed,
     save_message,
     save_tool_run_message,
-    session_working_directory,
+    session_backend_config,
     update_tool_run_result,
 )
 from automata_api.schemas import ChatPayload
@@ -48,18 +53,30 @@ async def stream_agent_reply(
     response = ""
 
     try:
-        workspace = await run_repository_call(session_working_directory, session_id)
-        response = await forward_agent_events(
-            session_id=session_id,
-            websocket=websocket,
-            events=stream_agent_loop(
-                session_id=session_id,
-                store=SessionAgentContextStore(),
-                workspace=workspace,
-                approved_plan_content=approved_plan_content,
-            ),
+        session_config = await run_repository_call(session_backend_config, session_id)
+        backend = create_backend(
+            session_config["backend"],
+            workspace=session_config["working_directory"],
         )
+        async with backend:
+            registry = ToolRegistry(backend.tools())
+            response = await forward_agent_events(
+                session_id=session_id,
+                websocket=websocket,
+                events=stream_agent_loop(
+                    session_id=session_id,
+                    store=SessionAgentContextStore(),
+                    workspace=session_config["working_directory"],
+                    workspace_label=backend.workspace_label,
+                    registry=registry,
+                    tool_notes=backend.prompt_notes(),
+                    approved_plan_content=approved_plan_content,
+                ),
+            )
     except SessionNotFoundError as error:
+        await websocket.send_json({"type": "error", "message": str(error)})
+        return
+    except BackendConfigurationError as error:
         await websocket.send_json({"type": "error", "message": str(error)})
         return
     except AgentConfigurationError as error:
@@ -94,17 +111,29 @@ async def stream_plan_reply(
     response = ""
 
     try:
-        workspace = await run_repository_call(session_working_directory, session_id)
-        response = await forward_agent_events(
-            session_id=session_id,
-            websocket=websocket,
-            events=stream_plan_loop(
-                session_id=session_id,
-                store=SessionAgentContextStore(),
-                workspace=workspace,
-            ),
+        session_config = await run_repository_call(session_backend_config, session_id)
+        backend = create_backend(
+            session_config["backend"],
+            workspace=session_config["working_directory"],
         )
+        async with backend:
+            registry = ToolRegistry(backend.tools())
+            response = await forward_agent_events(
+                session_id=session_id,
+                websocket=websocket,
+                events=stream_plan_loop(
+                    session_id=session_id,
+                    store=SessionAgentContextStore(),
+                    workspace=session_config["working_directory"],
+                    workspace_label=backend.workspace_label,
+                    registry=registry,
+                    tool_notes=backend.prompt_notes(),
+                ),
+            )
     except SessionNotFoundError as error:
+        await websocket.send_json({"type": "error", "message": str(error)})
+        return
+    except BackendConfigurationError as error:
         await websocket.send_json({"type": "error", "message": str(error)})
         return
     except AgentConfigurationError as error:
@@ -163,7 +192,7 @@ async def stream_approved_plan_reply(
 async def forward_agent_events(
     session_id: str, websocket: WebSocket, events: AsyncIterator[dict[str, Any]]
 ) -> str:
-    response_parts: list[str] = []
+    pending_agent_parts: list[str] = []
     final_content = ""
     tool_run_message_ids: dict[str, str] = {}
 
@@ -172,7 +201,7 @@ async def forward_agent_events(
         if event_type == "token":
             content = event.get("content")
             if isinstance(content, str):
-                response_parts.append(content)
+                pending_agent_parts.append(content)
             await websocket.send_json(event)
             continue
 
@@ -183,6 +212,7 @@ async def forward_agent_events(
             continue
 
         if event_type == "tool_call":
+            await save_pending_agent_message(session_id, pending_agent_parts)
             tool_call_id = tool_call_id_from_event(event)
             message = await run_repository_call(
                 save_tool_run_message,
@@ -226,7 +256,18 @@ async def forward_agent_events(
 
         await websocket.send_json(event)
 
-    return final_content or "".join(response_parts)
+    return final_content or "".join(pending_agent_parts)
+
+
+async def save_pending_agent_message(session_id: str, parts: list[str]) -> None:
+    content = "".join(parts)
+    parts.clear()
+    if not content.strip():
+        return
+
+    await run_repository_call(
+        save_message, session_id=session_id, role="agent", content=content
+    )
 
 
 async def run_repository_call(function, /, *args, **kwargs):

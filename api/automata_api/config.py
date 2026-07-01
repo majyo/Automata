@@ -11,7 +11,14 @@ Respond in the user's language. Be concise, practical, and engineering-focused.
 Use the prior session messages as context. If the user asks for code changes, give concrete file-level guidance and do not claim that files were changed unless an external tool actually changed them."""
 
 MAX_CONTEXT_MESSAGES = 24
-DEFAULT_CONTEXT_COMPRESSION_THRESHOLD_CHARS = 60_000
+DEFAULT_CONTEXT_MAX_TOKENS = 1_000_000
+DEFAULT_CONTEXT_COMPRESSION_TRIGGER_RATIO = 0.8
+CONTEXT_COMPRESSION_ESTIMATED_CHARS_PER_TOKEN = 4
+DEFAULT_CONTEXT_COMPRESSION_THRESHOLD_CHARS = int(
+    DEFAULT_CONTEXT_MAX_TOKENS
+    * DEFAULT_CONTEXT_COMPRESSION_TRIGGER_RATIO
+    * CONTEXT_COMPRESSION_ESTIMATED_CHARS_PER_TOKEN
+)
 DEFAULT_CONTEXT_COMPRESSION_TARGET_CHARS = 20_000
 
 
@@ -41,6 +48,8 @@ class ContextCompressionConfig:
     enabled: bool
     threshold_chars: int
     target_chars: int
+    max_context_tokens: int = DEFAULT_CONTEXT_MAX_TOKENS
+    trigger_ratio: float = DEFAULT_CONTEXT_COMPRESSION_TRIGGER_RATIO
 
 
 class AgentConfigurationError(RuntimeError):
@@ -160,14 +169,34 @@ def get_agent_config() -> AgentConfig:
 
 
 def get_context_compression_config() -> ContextCompressionConfig:
-    threshold_chars = read_int_env(
-        "AUTOMATA_CONTEXT_COMPRESSION_THRESHOLD_CHARS",
-        DEFAULT_CONTEXT_COMPRESSION_THRESHOLD_CHARS,
+    max_context_tokens = read_int_env(
+        "AUTOMATA_CONTEXT_MAX_TOKENS", DEFAULT_CONTEXT_MAX_TOKENS
+    )
+    trigger_ratio = read_float_env(
+        "AUTOMATA_CONTEXT_COMPRESSION_TRIGGER_RATIO",
+        DEFAULT_CONTEXT_COMPRESSION_TRIGGER_RATIO,
+    )
+    threshold_chars = read_optional_int_env(
+        "AUTOMATA_CONTEXT_COMPRESSION_THRESHOLD_CHARS"
     )
     target_chars = read_int_env(
         "AUTOMATA_CONTEXT_COMPRESSION_TARGET_CHARS",
         DEFAULT_CONTEXT_COMPRESSION_TARGET_CHARS,
     )
+    if max_context_tokens <= 0:
+        raise AgentConfigurationError(
+            "AUTOMATA_CONTEXT_MAX_TOKENS must be greater than 0."
+        )
+    if trigger_ratio <= 0 or trigger_ratio > 1:
+        raise AgentConfigurationError(
+            "AUTOMATA_CONTEXT_COMPRESSION_TRIGGER_RATIO must be greater than 0 "
+            "and at most 1."
+        )
+    if threshold_chars is None:
+        threshold_chars = context_compression_threshold_chars(
+            max_context_tokens=max_context_tokens,
+            trigger_ratio=trigger_ratio,
+        )
     if threshold_chars <= 0:
         raise AgentConfigurationError(
             "AUTOMATA_CONTEXT_COMPRESSION_THRESHOLD_CHARS must be greater than 0."
@@ -181,11 +210,23 @@ def get_context_compression_config() -> ContextCompressionConfig:
         enabled=read_bool_env("AUTOMATA_CONTEXT_COMPRESSION_ENABLED", True),
         threshold_chars=threshold_chars,
         target_chars=target_chars,
+        max_context_tokens=max_context_tokens,
+        trigger_ratio=trigger_ratio,
     )
 
 
 def get_system_prompt() -> str:
     return os.environ.get("AUTOMATA_AGENT_SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT)
+
+
+def context_compression_threshold_chars(
+    *, max_context_tokens: int, trigger_ratio: float
+) -> int:
+    return int(
+        max_context_tokens
+        * trigger_ratio
+        * CONTEXT_COMPRESSION_ESTIMATED_CHARS_PER_TOKEN
+    )
 
 
 def read_float_env(name: str, default: float) -> float:
@@ -203,6 +244,17 @@ def read_int_env(name: str, default: int) -> int:
     raw_value = os.environ.get(name)
     if raw_value is None or not raw_value.strip():
         return default
+
+    try:
+        return int(raw_value)
+    except ValueError as error:
+        raise AgentConfigurationError(f"{name} must be an integer.") from error
+
+
+def read_optional_int_env(name: str) -> int | None:
+    raw_value = os.environ.get(name)
+    if raw_value is None or not raw_value.strip():
+        return None
 
     try:
         return int(raw_value)

@@ -1,11 +1,16 @@
 from typing import Any
 
-from ._core import ToolResult, run_exec_command
+from automata_api.agent.backends.base import Backend
+
+from ._core import ToolResult, exec_command_error_result, string_argument, timeout_argument
 from .base import AgentTool
 
 
 class ExecCommandTool(AgentTool):
     name = "exec_command"
+
+    def __init__(self, backend: Backend | None = None) -> None:
+        self.backend = backend
 
     def spec(self) -> dict[str, Any]:
         return {
@@ -62,8 +67,24 @@ class ExecCommandTool(AgentTool):
             },
         }
 
-    async def run(self, arguments: dict[str, Any], workspace: str) -> ToolResult:
-        return await run_exec_command(arguments, workspace)
+    async def run(self, arguments: dict[str, Any]) -> ToolResult:
+        if self.backend is None:
+            raise RuntimeError("Tool instance is not bound to a backend.")
+        run_exec_command = getattr(self.backend, "run_exec_command", None)
+        if run_exec_command is None:
+            cmd = string_argument(arguments, "cmd", "")
+            shell = string_argument(arguments, "shell", "bash")
+            workdir = string_argument(arguments, "workdir", ".")
+            return exec_command_error_result(
+                arguments=arguments,
+                cmd=cmd,
+                shell=shell,
+                workdir=workdir,
+                cwd=self.backend.workspace_label,
+                timeout_seconds=timeout_argument(arguments),
+                error=f"exec_command is not supported by backend: {self.backend.kind}",
+            )
+        return await run_exec_command(arguments)
 
 
 exec_command_tool = ExecCommandTool()

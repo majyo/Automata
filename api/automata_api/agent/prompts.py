@@ -3,6 +3,37 @@ import os
 from automata_api.config import get_system_prompt, workspace_dir
 
 
+DEFAULT_TOOL_NOTES = (
+    "Use exec_command to execute real shell commands inside the workspace. "
+    "Choose shell=bash for POSIX shell scripts and shell=powershell for "
+    "PowerShell scripts. exec_command results have simulated=false and may "
+    "have command side effects. Prefer exec_command for checks and tests.\n\n"
+    "run_bash remains available as a compatibility tool for bash-only "
+    "commands, but prefer exec_command for new command execution.\n\n"
+    "For code or text search, prefer the rg tool first. It automatically "
+    "falls back to grep and then to run_bash when needed. Use grep directly "
+    "only when grep behavior is specifically required.\n\n"
+    "Use read_file to inspect exact file contents and write_file only when "
+    "the user explicitly asks you to create or change files. Both operate "
+    "on real workspace files and return simulated=false.\n\n"
+    "Use apply_patch for targeted code edits with Codex-style patches. A "
+    "patch must start with *** Begin Patch and end with *** End Patch. Use "
+    "*** Add File, *** Update File, and *** Delete File sections. Update "
+    "hunks use @@ without line numbers and must include enough surrounding "
+    "context to match uniquely. When practical, call apply_patch with "
+    "dry_run=true before applying changes with dry_run=false. Only claim "
+    "files were changed after apply_patch or write_file returns "
+    "simulated=false and ok=true."
+)
+
+DEFAULT_PLAN_TOOL_NAMES = (
+    "read_file",
+    "rg",
+    "grep",
+    "apply_patch_preview",
+)
+
+
 def agent_workspace() -> str:
     return os.environ.get("AUTOMATA_WORKSPACE_DIR") or str(workspace_dir())
 
@@ -20,8 +51,16 @@ def approved_plan_message(content: str) -> dict[str, str]:
     }
 
 
-def plan_system_prompt(workspace: str | None = None) -> str:
+def plan_system_prompt(
+    workspace: str | None = None,
+    *,
+    allowed_tool_names: set[str] | None = None,
+    tool_notes: str | None = None,
+) -> str:
     current_workspace = workspace or agent_workspace()
+    allowed_names = tuple(sorted(allowed_tool_names)) if allowed_tool_names else DEFAULT_PLAN_TOOL_NAMES
+    allowed_text = ", ".join(allowed_names)
+    notes = tool_notes or DEFAULT_TOOL_NOTES
     return (
         f"{get_system_prompt()}\n\n"
         f"Current workspace: {current_workspace}\n\n"
@@ -29,39 +68,23 @@ def plan_system_prompt(workspace: str | None = None) -> str:
         "implementation-ready Markdown plan for the user's request. Inspect "
         "the workspace with read-only tools as needed, but do not execute the "
         "implementation.\n\n"
-        "Allowed tools in Plan mode are read_file, rg, grep, and "
-        "apply_patch_preview. Do not call exec_command, run_bash, write_file, "
-        "or apply_patch in Plan mode. apply_patch_preview validates Codex-style "
-        "patches that start with *** Begin Patch and end with *** End Patch.\n\n"
+        f"Allowed tools in Plan mode are {allowed_text}. Do not call tools "
+        "outside this read-only list in Plan mode. Do not call exec_command, "
+        "run_bash, write_file, or apply_patch in Plan mode.\n\n"
+        f"{notes}\n\n"
         "Return only the plan content. Include enough detail that a later "
         "approved execution can follow it without asking the user to choose "
         "between implementation options."
     )
 
 
-def agent_system_prompt(workspace: str | None = None) -> str:
+def agent_system_prompt(
+    workspace: str | None = None, *, tool_notes: str | None = None
+) -> str:
     current_workspace = workspace or agent_workspace()
+    notes = tool_notes or DEFAULT_TOOL_NOTES
     return (
         f"{get_system_prompt()}\n\n"
         f"Current workspace: {current_workspace}\n\n"
-        "Use exec_command to execute real shell commands inside the workspace. "
-        "Choose shell=bash for POSIX shell scripts and shell=powershell for "
-        "PowerShell scripts. exec_command results have simulated=false and may "
-        "have command side effects. Prefer exec_command for checks and tests.\n\n"
-        "run_bash remains available as a compatibility tool for bash-only "
-        "commands, but prefer exec_command for new command execution.\n\n"
-        "For code or text search, prefer the rg tool first. It automatically "
-        "falls back to grep and then to run_bash when needed. Use grep directly "
-        "only when grep behavior is specifically required.\n\n"
-        "Use read_file to inspect exact file contents and write_file only when "
-        "the user explicitly asks you to create or change files. Both operate "
-        "on real workspace files and return simulated=false.\n\n"
-        "Use apply_patch for targeted code edits with Codex-style patches. A "
-        "patch must start with *** Begin Patch and end with *** End Patch. Use "
-        "*** Add File, *** Update File, and *** Delete File sections. Update "
-        "hunks use @@ without line numbers and must include enough surrounding "
-        "context to match uniquely. When practical, call apply_patch with "
-        "dry_run=true before applying changes with dry_run=false. Only claim "
-        "files were changed after apply_patch or write_file returns "
-        "simulated=false and ok=true."
+        f"{notes}"
     )

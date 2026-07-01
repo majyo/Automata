@@ -14,6 +14,7 @@ from automata_api.agent.prompts import (
     plan_system_prompt,
 )
 from automata_api.agent.tools import ToolResult, run_tool, tool_specs
+from automata_api.agent.tools.registry import ToolRegistry, registered_tools
 from automata_api.agent.types import AgentContextStore, AgentLoopEvent
 from automata_api.config import (
     ContextCompressionConfig,
@@ -23,12 +24,7 @@ from automata_api.config import (
 
 
 MAX_AGENT_STEPS = 6
-PLAN_TOOL_NAMES = {
-    "read_file",
-    "rg",
-    "grep",
-    "apply_patch_preview",
-}
+PLAN_TOOL_NAMES = {tool.name for tool in registered_tools() if tool.read_only}
 
 
 class EventCollector:
@@ -43,7 +39,10 @@ async def stream_agent_loop(
     *,
     session_id: str,
     store: AgentContextStore,
-    workspace: str,
+    workspace: str | None = None,
+    workspace_label: str | None = None,
+    registry: ToolRegistry | None = None,
+    tool_notes: str | None = None,
     approved_plan_content: str | None = None,
 ) -> AsyncIterator[AgentLoopEvent]:
     config = get_agent_config()
@@ -54,14 +53,14 @@ async def stream_agent_loop(
         session_id=session_id,
         store=store,
         compression_config=compression_config,
-        system_prompt=agent_system_prompt(workspace),
+        system_prompt=agent_system_prompt(workspace_label or workspace, tool_notes=tool_notes),
     )
     for event in collector.events:
         yield event
 
     if approved_plan_content:
         messages.insert(1, approved_plan_message(approved_plan_content))
-    tools = tool_specs()
+    tools = registry.specs() if registry is not None else tool_specs()
 
     async for event in stream_model_loop(
         messages=messages,
@@ -71,6 +70,7 @@ async def stream_agent_loop(
         mode="act",
         allowed_tool_names=None,
         workspace=workspace,
+        registry=registry,
         session_id=session_id,
         store=store,
     ):
@@ -81,21 +81,37 @@ async def stream_plan_loop(
     *,
     session_id: str,
     store: AgentContextStore,
-    workspace: str,
+    workspace: str | None = None,
+    workspace_label: str | None = None,
+    registry: ToolRegistry | None = None,
+    tool_notes: str | None = None,
 ) -> AsyncIterator[AgentLoopEvent]:
     config = get_agent_config()
     compression_config = get_context_compression_config()
     collector = EventCollector()
+    allowed_tool_names = (
+        registry.allowed_names(read_only_only=True)
+        if registry is not None
+        else PLAN_TOOL_NAMES
+    )
     messages = await fetch_agent_context(
         emit_event=collector.emit,
         session_id=session_id,
         store=store,
         compression_config=compression_config,
-        system_prompt=plan_system_prompt(workspace),
+        system_prompt=plan_system_prompt(
+            workspace_label or workspace,
+            allowed_tool_names=allowed_tool_names,
+            tool_notes=tool_notes,
+        ),
     )
     for event in collector.events:
         yield event
-    tools = tool_specs_for_names(tool_specs(), PLAN_TOOL_NAMES)
+    tools = (
+        registry.specs(read_only_only=True)
+        if registry is not None
+        else tool_specs_for_names(tool_specs(), PLAN_TOOL_NAMES)
+    )
 
     async for event in stream_model_loop(
         messages=messages,
@@ -103,8 +119,9 @@ async def stream_plan_loop(
         compression_config=compression_config,
         model=config.model,
         mode="plan",
-        allowed_tool_names=PLAN_TOOL_NAMES,
+        allowed_tool_names=allowed_tool_names,
         workspace=workspace,
+        registry=registry,
         session_id=session_id,
         store=store,
     ):
@@ -118,7 +135,8 @@ async def stream_model_loop(
     model: str,
     mode: str,
     allowed_tool_names: set[str] | None,
-    workspace: str,
+    workspace: str | None = None,
+    registry: ToolRegistry | None = None,
     session_id: str | None = None,
     store: AgentContextStore | None = None,
 ) -> AsyncIterator[AgentLoopEvent]:
@@ -160,6 +178,7 @@ async def stream_model_loop(
                     mode=mode,
                     allowed_tool_names=allowed_tool_names,
                     workspace=workspace,
+                    registry=registry,
                     session_id=session_id,
                     store=store,
                 ):
@@ -194,7 +213,8 @@ async def stream_execute_tool_call(
     *,
     messages: list[dict[str, Any]],
     tool_call: dict[str, Any],
-    workspace: str,
+    workspace: str | None = None,
+    registry: ToolRegistry | None = None,
     mode: str = "act",
     allowed_tool_names: set[str] | None = None,
     session_id: str | None = None,
@@ -220,8 +240,10 @@ async def stream_execute_tool_call(
     }
     if allowed_tool_names is not None and name not in allowed_tool_names:
         result = blocked_tool_result(name, arguments, mode, allowed_tool_names)
+    elif registry is not None:
+        result = await registry.run(name, arguments)
     else:
-        result = await run_tool(name, arguments, workspace)
+        result = await run_tool(name, arguments, workspace or "")
     yield {
         "type": "tool_result",
         "tool_call_id": call_id,

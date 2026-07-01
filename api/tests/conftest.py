@@ -10,6 +10,8 @@ def client(tmp_path, monkeypatch):
     monkeypatch.delenv("AUTOMATA_LLM_API_KEY", raising=False)
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("AUTOMATA_CONTEXT_COMPRESSION_ENABLED", raising=False)
+    monkeypatch.delenv("AUTOMATA_CONTEXT_MAX_TOKENS", raising=False)
+    monkeypatch.delenv("AUTOMATA_CONTEXT_COMPRESSION_TRIGGER_RATIO", raising=False)
     monkeypatch.delenv("AUTOMATA_CONTEXT_COMPRESSION_THRESHOLD_CHARS", raising=False)
     monkeypatch.delenv("AUTOMATA_CONTEXT_COMPRESSION_TARGET_CHARS", raising=False)
 

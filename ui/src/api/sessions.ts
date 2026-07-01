@@ -11,12 +11,14 @@ export async function createSession(
   config: ApiRuntimeConfig,
   title: string,
   workingDirectory?: string,
+  backend?: string,
 ): Promise<SessionSummary> {
   return requestJson<SessionSummary>(config, "/sessions", {
     method: "POST",
     body: JSON.stringify({
       title,
       working_directory: workingDirectory?.trim() || undefined,
+      backend: backend?.trim() || undefined,
     }),
   });
 }

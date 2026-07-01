@@ -1,4 +1,4 @@
-import { Check, FolderGit2, FolderOpen, GitBranch, Pencil, Trash2, X } from "lucide-react";
+import { Check, FolderGit2, FolderOpen, GitBranch, Pencil, ServerCog, Trash2, X } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import type { SessionSummary } from "../../types/session";
 import { formatDirectoryName } from "../../utils/format";
@@ -65,6 +65,10 @@ export function SessionListItem({
         <small>
           <GitBranch size={13} />
           {session.message_count} messages
+        </small>
+        <small>
+          <ServerCog size={13} />
+          {session.backend}
         </small>
         <small className="session-directory" title={session.working_directory}>
           <FolderOpen size={13} />

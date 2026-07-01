@@ -1,11 +1,19 @@
-from typing import Iterable
+from typing import Any, Iterable
 
+from automata_api.agent.backends.base import Backend
+
+from ._core import ToolResult, json_response, parse_tool_arguments
 from .base import AgentTool
-from .bash import run_bash_tool
-from .exec_command import exec_command_tool
-from .files import read_file_tool, write_file_tool
-from .patch import apply_patch_preview_tool, apply_patch_tool
-from .search import grep_tool, rg_tool
+from .bash import RunBashTool, run_bash_tool
+from .exec_command import ExecCommandTool, exec_command_tool
+from .files import ReadFileTool, WriteFileTool, read_file_tool, write_file_tool
+from .patch import (
+    ApplyPatchPreviewTool,
+    ApplyPatchTool,
+    apply_patch_preview_tool,
+    apply_patch_tool,
+)
+from .search import GrepTool, RgTool, grep_tool, rg_tool
 
 
 REGISTERED_TOOLS: tuple[AgentTool, ...] = (
@@ -18,6 +26,76 @@ REGISTERED_TOOLS: tuple[AgentTool, ...] = (
     apply_patch_tool,
     apply_patch_preview_tool,
 )
+
+
+class ToolRegistry:
+    def __init__(self, tools: Iterable[AgentTool]) -> None:
+        self._tools = tuple(tools)
+        self._tools_by_name = build_tool_index(self._tools)
+
+    def specs(self, *, read_only_only: bool = False) -> list[dict[str, Any]]:
+        return [
+            tool.spec()
+            for tool in self._tools
+            if not read_only_only or tool.read_only
+        ]
+
+    def allowed_names(self, *, read_only_only: bool = False) -> set[str]:
+        return {
+            tool.name
+            for tool in self._tools
+            if not read_only_only or tool.read_only
+        }
+
+    async def run(
+        self, name: str, raw_arguments: str | dict[str, Any] | None
+    ) -> ToolResult:
+        arguments, parse_error = parse_tool_arguments(raw_arguments)
+        if parse_error:
+            return ToolResult(
+                name=name,
+                arguments={},
+                content=json_response(
+                    {
+                        "simulated": False,
+                        "tool": name,
+                        "ok": False,
+                        "error": parse_error,
+                    }
+                ),
+                success=False,
+            )
+
+        tool = self._tools_by_name.get(name)
+        if tool is None:
+            return ToolResult(
+                name=name,
+                arguments=arguments,
+                content=json_response(
+                    {
+                        "simulated": False,
+                        "tool": name,
+                        "ok": False,
+                        "error": f"Unknown tool: {name}",
+                    }
+                ),
+                success=False,
+            )
+
+        return await tool.run(arguments)
+
+
+def default_tools(backend: Backend) -> tuple[AgentTool, ...]:
+    return (
+        RgTool(backend),
+        GrepTool(backend),
+        ExecCommandTool(backend),
+        RunBashTool(backend),
+        ReadFileTool(backend),
+        WriteFileTool(backend),
+        ApplyPatchTool(backend),
+        ApplyPatchPreviewTool(backend),
+    )
 
 
 def registered_tools() -> tuple[AgentTool, ...]:

@@ -223,6 +223,93 @@ def test_chat_websocket_runs_agent_loop_with_read_file_tool(client, monkeypatch,
     assert len(calls) == 2
 
 
+def test_chat_websocket_keeps_agent_text_before_and_after_tool_separate(
+    client, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
+    monkeypatch.setenv("AUTOMATA_WORKSPACE_DIR", str(tmp_path))
+    (tmp_path / "README.md").write_text("workspace details\n", encoding="utf-8")
+    session = client.post("/sessions", json={"title": "Segmented Agent"}).json()
+    calls = []
+
+    async def fake_stream_chat_completion(messages, tools=None):
+        calls.append({"messages": list(messages), "tools": tools})
+        if len(calls) == 1:
+            yield {"content": "I will inspect the file first."}
+            yield {
+                "tool_calls": [
+                    {
+                        "index": 0,
+                        "id": "call_readme",
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "arguments": '{"path": "README.md"}',
+                        },
+                    }
+                ]
+            }
+            return
+
+        assert messages[-2]["role"] == "assistant"
+        assert messages[-2]["content"] == "I will inspect the file first."
+        assert messages[-2]["tool_calls"][0]["id"] == "call_readme"
+        assert messages[-1]["role"] == "tool"
+        assert messages[-1]["tool_call_id"] == "call_readme"
+        yield {"content": "The file contains workspace details."}
+
+    monkeypatch.setattr(
+        "automata_api.agent.llm.stream_chat_completion",
+        fake_stream_chat_completion,
+    )
+
+    with client.websocket_connect("/ws/chat") as websocket:
+        websocket.receive_json()
+        websocket.send_json(
+            {
+                "type": "prompt",
+                "session_id": session["id"],
+                "prompt": "read the README",
+            }
+        )
+
+        events = []
+        while True:
+            event = websocket.receive_json()
+            events.append(event)
+            if event["type"] in {"done", "error"}:
+                break
+
+    assert compact_event_types(events) == [
+        "started",
+        "agent_step",
+        "token",
+        "tool_call",
+        "tool_result",
+        "agent_step",
+        "token",
+        "done",
+    ]
+
+    messages = client.get(f"/sessions/{session['id']}/messages").json()
+    assert [message["role"] for message in messages] == [
+        "user",
+        "agent",
+        "tool",
+        "agent",
+    ]
+    assert messages[1]["content"] == "I will inspect the file first."
+    assert_tool_run_message(
+        messages[2],
+        tool_call_id="call_readme",
+        tool="read_file",
+        arguments_contains="README.md",
+        result_contains="workspace details",
+    )
+    assert messages[3]["content"] == "The file contains workspace details."
+    assert len(calls) == 2
+
+
 def test_chat_websocket_restores_persisted_tool_protocol_context(
     client, monkeypatch, tmp_path
 ):

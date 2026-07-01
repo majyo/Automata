@@ -65,13 +65,17 @@ def test_env_file_candidates_honors_explicit_env_file_first(tmp_path, monkeypatc
 
 def test_context_compression_config_defaults(monkeypatch):
     monkeypatch.delenv("AUTOMATA_CONTEXT_COMPRESSION_ENABLED", raising=False)
+    monkeypatch.delenv("AUTOMATA_CONTEXT_MAX_TOKENS", raising=False)
+    monkeypatch.delenv("AUTOMATA_CONTEXT_COMPRESSION_TRIGGER_RATIO", raising=False)
     monkeypatch.delenv("AUTOMATA_CONTEXT_COMPRESSION_THRESHOLD_CHARS", raising=False)
     monkeypatch.delenv("AUTOMATA_CONTEXT_COMPRESSION_TARGET_CHARS", raising=False)
 
     compression = config.get_context_compression_config()
 
     assert compression.enabled is True
-    assert compression.threshold_chars == 60_000
+    assert compression.max_context_tokens == 1_000_000
+    assert compression.trigger_ratio == 0.8
+    assert compression.threshold_chars == 3_200_000
     assert compression.target_chars == 20_000
 
 
@@ -87,9 +91,38 @@ def test_context_compression_config_honors_env(monkeypatch):
     assert compression.target_chars == 456
 
 
+def test_context_compression_config_derives_threshold_from_context_limit(monkeypatch):
+    monkeypatch.delenv("AUTOMATA_CONTEXT_COMPRESSION_THRESHOLD_CHARS", raising=False)
+    monkeypatch.setenv("AUTOMATA_CONTEXT_MAX_TOKENS", "100000")
+    monkeypatch.setenv("AUTOMATA_CONTEXT_COMPRESSION_TRIGGER_RATIO", "0.5")
+
+    compression = config.get_context_compression_config()
+
+    assert compression.max_context_tokens == 100_000
+    assert compression.trigger_ratio == 0.5
+    assert compression.threshold_chars == 200_000
+
+
 @pytest.mark.parametrize(
     ("name", "value", "message"),
     [
+        (
+            "AUTOMATA_CONTEXT_MAX_TOKENS",
+            "0",
+            "AUTOMATA_CONTEXT_MAX_TOKENS must be greater than 0.",
+        ),
+        (
+            "AUTOMATA_CONTEXT_COMPRESSION_TRIGGER_RATIO",
+            "0",
+            "AUTOMATA_CONTEXT_COMPRESSION_TRIGGER_RATIO must be greater than 0 "
+            "and at most 1.",
+        ),
+        (
+            "AUTOMATA_CONTEXT_COMPRESSION_TRIGGER_RATIO",
+            "1.1",
+            "AUTOMATA_CONTEXT_COMPRESSION_TRIGGER_RATIO must be greater than 0 "
+            "and at most 1.",
+        ),
         (
             "AUTOMATA_CONTEXT_COMPRESSION_THRESHOLD_CHARS",
             "0",
@@ -111,6 +144,8 @@ def test_context_compression_config_rejects_invalid_env(
     monkeypatch, name, value, message
 ):
     monkeypatch.delenv("AUTOMATA_CONTEXT_COMPRESSION_ENABLED", raising=False)
+    monkeypatch.delenv("AUTOMATA_CONTEXT_MAX_TOKENS", raising=False)
+    monkeypatch.delenv("AUTOMATA_CONTEXT_COMPRESSION_TRIGGER_RATIO", raising=False)
     monkeypatch.delenv("AUTOMATA_CONTEXT_COMPRESSION_THRESHOLD_CHARS", raising=False)
     monkeypatch.delenv("AUTOMATA_CONTEXT_COMPRESSION_TARGET_CHARS", raising=False)
     monkeypatch.setenv(name, value)

@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
     working_directory TEXT NOT NULL,
+    backend TEXT NOT NULL DEFAULT 'local',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -97,6 +98,7 @@ def init_db() -> None:
             reset_app_tables(db)
         db.executescript(SCHEMA_SQL)
         migrate_sessions_working_directory(db)
+        migrate_sessions_backend(db)
         db.commit()
 
 
@@ -152,6 +154,41 @@ def migrate_sessions_working_directory(db) -> None:
         WHERE working_directory IS NULL OR TRIM(working_directory) = ''
         """,
         (agent_workspace(),),
+    )
+
+
+def migrate_sessions_backend(db) -> None:
+    row = db.execute(
+        """
+        SELECT 1
+        FROM sqlite_schema
+        WHERE type = 'table' AND name = 'sessions'
+        """
+    ).fetchone()
+    if row is None:
+        return
+
+    columns = {
+        str(column["name"])
+        for column in db.execute("PRAGMA table_info(sessions)").fetchall()
+    }
+    if "backend" in columns:
+        db.execute(
+            """
+            UPDATE sessions
+            SET backend = 'local'
+            WHERE backend IS NULL OR TRIM(backend) = ''
+            """
+        )
+        return
+
+    db.execute("ALTER TABLE sessions ADD COLUMN backend TEXT NOT NULL DEFAULT 'local'")
+    db.execute(
+        """
+        UPDATE sessions
+        SET backend = 'local'
+        WHERE backend IS NULL OR TRIM(backend) = ''
+        """
     )
 
 

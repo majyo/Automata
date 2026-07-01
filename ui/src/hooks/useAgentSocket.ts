@@ -29,6 +29,7 @@ export function useAgentSocket({
   const streamingMessageIdRef = useRef<string | null>(null);
   const streamingSessionIdRef = useRef<string | null>(null);
   const executingPlanIdRef = useRef<string | null>(null);
+  const nextTokenStartsNewAgentMessageRef = useRef(false);
   const toolRunMessageIdsRef = useRef<Record<string, string>>({});
   const reconnectTimerRef = useRef<number | null>(null);
   const reconnectAttemptRef = useRef(0);
@@ -65,6 +66,7 @@ export function useAgentSocket({
       streamingMessageIdRef.current = null;
       streamingSessionIdRef.current = null;
       executingPlanIdRef.current = null;
+      nextTokenStartsNewAgentMessageRef.current = false;
 
       if (planId) {
         chatDispatch({ type: "planStatusChanged", planId, status: "error" });
@@ -101,6 +103,7 @@ export function useAgentSocket({
       if (payload.type === "started") {
         setSocketStatus("Streaming");
         setIsStreaming(true);
+        nextTokenStartsNewAgentMessageRef.current = false;
         return;
       }
 
@@ -124,6 +127,7 @@ export function useAgentSocket({
         const toolCallId = payload.tool_call_id || crypto.randomUUID();
         const messageId = crypto.randomUUID();
         toolRunMessageIdsRef.current[toolCallId] = messageId;
+        nextTokenStartsNewAgentMessageRef.current = true;
         setSocketStatus(payload.tool ? `Tool: ${payload.tool}` : "Calling tool");
         chatDispatch({
           type: "toolCallStarted",
@@ -141,6 +145,7 @@ export function useAgentSocket({
         if (!toolRunMessageIdsRef.current[toolCallId]) {
           toolRunMessageIdsRef.current[toolCallId] = messageId;
         }
+        nextTokenStartsNewAgentMessageRef.current = true;
         setSocketStatus(payload.tool ? `Tool complete: ${payload.tool}` : "Tool complete");
         chatDispatch({
           type: "toolCallCompleted",
@@ -153,8 +158,12 @@ export function useAgentSocket({
       }
 
       if (payload.type === "plan_ready") {
-        const messageId = streamingMessageIdRef.current ?? crypto.randomUUID();
+        const messageId =
+          nextTokenStartsNewAgentMessageRef.current || !streamingMessageIdRef.current
+            ? crypto.randomUUID()
+            : streamingMessageIdRef.current;
         streamingMessageIdRef.current = messageId;
+        nextTokenStartsNewAgentMessageRef.current = false;
         streamingSessionIdRef.current = payload.session_id;
         setSocketStatus("Plan ready");
         chatDispatch({ type: "planReady", messageId, payload });
@@ -176,7 +185,12 @@ export function useAgentSocket({
         return;
       }
 
-      if (payload.type === "token" && streamingMessageIdRef.current) {
+      if (payload.type === "token") {
+        if (nextTokenStartsNewAgentMessageRef.current || !streamingMessageIdRef.current) {
+          streamingMessageIdRef.current = crypto.randomUUID();
+          nextTokenStartsNewAgentMessageRef.current = false;
+        }
+
         chatDispatch({
           type: "tokenReceived",
           messageId: streamingMessageIdRef.current,
@@ -194,6 +208,7 @@ export function useAgentSocket({
           executingPlanIdRef.current = null;
         }
         streamingMessageIdRef.current = null;
+        nextTokenStartsNewAgentMessageRef.current = false;
         toolRunMessageIdsRef.current = {};
         const sessionId = streamingSessionIdRef.current;
         streamingSessionIdRef.current = null;
@@ -293,6 +308,7 @@ export function useAgentSocket({
 
       chatDispatch({ type: "userMessageQueued", message: userMessage });
       streamingMessageIdRef.current = agentMessage.id;
+      nextTokenStartsNewAgentMessageRef.current = false;
       streamingSessionIdRef.current = sessionId;
 
       if (socket?.readyState === WebSocket.OPEN) {
@@ -316,6 +332,7 @@ export function useAgentSocket({
       setIsStreaming(false);
       streamingMessageIdRef.current = null;
       streamingSessionIdRef.current = null;
+      nextTokenStartsNewAgentMessageRef.current = false;
       return true;
     },
     [chatDispatch, ensureActiveSession, scheduleReconnect],
@@ -341,8 +358,8 @@ export function useAgentSocket({
       streamingMessageIdRef.current = agentMessage.id;
       streamingSessionIdRef.current = sessionId;
       executingPlanIdRef.current = planId;
+      nextTokenStartsNewAgentMessageRef.current = false;
       setIsStreaming(true);
-      chatDispatch({ type: "agentMessageQueued", message: agentMessage });
 
       if (socket?.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ type: "approve_plan", session_id: sessionId, plan_id: planId }));
@@ -362,6 +379,7 @@ export function useAgentSocket({
       streamingMessageIdRef.current = null;
       streamingSessionIdRef.current = null;
       executingPlanIdRef.current = null;
+      nextTokenStartsNewAgentMessageRef.current = false;
       toolRunMessageIdsRef.current = {};
     },
     [activeSessionIdRef, chatDispatch, scheduleReconnect],

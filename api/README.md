@@ -35,7 +35,10 @@ AUTOMATA_LLM_MODEL=deepseek-v4-pro
 AUTOMATA_LLM_TIMEOUT_SECONDS=120
 AUTOMATA_LLM_TEMPERATURE=0.2
 AUTOMATA_CONTEXT_COMPRESSION_ENABLED=true
-AUTOMATA_CONTEXT_COMPRESSION_THRESHOLD_CHARS=60000
+AUTOMATA_CONTEXT_MAX_TOKENS=1000000
+AUTOMATA_CONTEXT_COMPRESSION_TRIGGER_RATIO=0.8
+# Optional exact override; defaults to max tokens * trigger ratio * 4 chars/token.
+# AUTOMATA_CONTEXT_COMPRESSION_THRESHOLD_CHARS=3200000
 AUTOMATA_CONTEXT_COMPRESSION_TARGET_CHARS=20000
 ```
 
@@ -43,9 +46,14 @@ AUTOMATA_CONTEXT_COMPRESSION_TARGET_CHARS=20000
 settings above. When running as a desktop sidecar, the API also searches upward
 from the sidecar executable for `.env` and `api/.env`.
 
-Context compression is enabled by default. When the provider request context
-exceeds `AUTOMATA_CONTEXT_COMPRESSION_THRESHOLD_CHARS`, the same configured LLM
-creates a hidden session summary targeting
+Context compression is enabled by default. The default compression trigger is
+derived from a 1,000,000-token model context limit, a trigger ratio of `0.8`,
+and an estimate of 4 characters per token, resulting in a default threshold of
+3,200,000 characters. Override `AUTOMATA_CONTEXT_MAX_TOKENS` or
+`AUTOMATA_CONTEXT_COMPRESSION_TRIGGER_RATIO` to tune that derived threshold, or
+set `AUTOMATA_CONTEXT_COMPRESSION_THRESHOLD_CHARS` for an exact character
+limit. When the provider request context exceeds the resolved threshold, the
+same configured LLM creates a hidden session summary targeting
 `AUTOMATA_CONTEXT_COMPRESSION_TARGET_CHARS`. Visible chat messages remain
 unchanged; summaries are stored separately in SQLite and are only injected into
 future provider requests.
