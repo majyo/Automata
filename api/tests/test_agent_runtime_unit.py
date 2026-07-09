@@ -6,6 +6,10 @@ import pytest
 
 from automata_api.agent import llm, runtime
 from automata_api.agent.tools import ToolResult
+from automata_api.agent.tools.base import AgentTool
+from automata_api.agent.tools.model import ToolExposure
+from automata_api.agent.tools.providers import descriptor_for_tool
+from automata_api.agent.tools.router import ToolRouter
 from automata_api.config import AgentConfig, ContextCompressionConfig
 
 
@@ -80,6 +84,33 @@ def configure_runtime(monkeypatch):
 
 async def collect_events(events):
     return [event async for event in events]
+
+
+class RuntimeEchoTool(AgentTool):
+    name = "calendar_lookup"
+    read_only = True
+
+    def spec(self):
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": "Lookup calendar events and meetings.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"value": {"type": "string"}},
+                    "required": ["value"],
+                },
+            },
+        }
+
+    async def run(self, arguments):
+        return ToolResult(
+            name=self.name,
+            arguments=arguments,
+            content=json.dumps({"ok": True, "value": arguments.get("value")}),
+            success=True,
+        )
 
 
 def test_stream_agent_loop_yields_tokens_final_and_injects_approved_plan(monkeypatch):
@@ -276,6 +307,94 @@ def test_stream_model_loop_accumulates_split_tool_call_then_streams_final(monkey
     }
     assert events[-1] == {"type": "final", "content": "after tool", "mode": "act"}
     assert len(calls) == 2
+
+
+def test_stream_model_loop_refreshes_tools_after_tool_search(monkeypatch):
+    calls = []
+    router = ToolRouter(
+        [
+            descriptor_for_tool(
+                RuntimeEchoTool(),
+                exposure=ToolExposure.DEFERRED,
+                source="unit-test",
+            )
+        ]
+    )
+
+    async def fake_stream_chat_completion(messages, tools=None):
+        tool_names = {tool["function"]["name"] for tool in tools or []}
+        calls.append(tool_names)
+        if len(calls) == 1:
+            assert tool_names == {"tool_search"}
+            yield {
+                "tool_calls": [
+                    {
+                        "index": 0,
+                        "id": "call_search",
+                        "type": "function",
+                        "function": {
+                            "name": "tool_search",
+                            "arguments": '{"query": "calendar meeting"}',
+                        },
+                    }
+                ]
+            }
+            return
+
+        if len(calls) == 2:
+            assert tool_names == {"calendar_lookup"}
+            yield {
+                "tool_calls": [
+                    {
+                        "index": 0,
+                        "id": "call_calendar",
+                        "type": "function",
+                        "function": {
+                            "name": "calendar_lookup",
+                            "arguments": '{"value": "today"}',
+                        },
+                    }
+                ]
+            }
+            return
+
+        assert tool_names == {"calendar_lookup"}
+        assert messages[-1]["role"] == "tool"
+        assert messages[-1]["tool_call_id"] == "call_calendar"
+        yield {"content": "calendar done"}
+
+    monkeypatch.setattr(llm, "stream_chat_completion", fake_stream_chat_completion)
+
+    events = asyncio.run(
+        collect_events(
+            runtime.stream_model_loop(
+                messages=[{"role": "user", "content": "inspect calendar"}],
+                router=router,
+                compression_config=ContextCompressionConfig(False, 1_000, 100),
+                model="unit-model",
+                mode="act",
+                allowed_tool_names=None,
+                workspace="workspace",
+            )
+        )
+    )
+
+    assert [event["type"] for event in events] == [
+        "agent_step",
+        "tool_call",
+        "tool_result",
+        "agent_step",
+        "tool_call",
+        "tool_result",
+        "agent_step",
+        "token",
+        "final",
+    ]
+    assert events[1]["tool"] == "tool_search"
+    assert json.loads(events[2]["content"])["activated_tools"] == ["calendar_lookup"]
+    assert events[4]["tool"] == "calendar_lookup"
+    assert events[-1] == {"type": "final", "content": "calendar done", "mode": "act"}
+    assert calls == [{"tool_search"}, {"calendar_lookup"}, {"calendar_lookup"}]
 
 
 def test_stream_model_loop_does_not_emit_tool_turn_content_as_token(monkeypatch):

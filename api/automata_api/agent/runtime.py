@@ -15,6 +15,7 @@ from automata_api.agent.prompts import (
 )
 from automata_api.agent.tools import ToolResult, run_tool, tool_specs
 from automata_api.agent.tools.registry import ToolRegistry, registered_tools
+from automata_api.agent.tools.router import ToolRouter
 from automata_api.agent.types import AgentContextStore, AgentLoopEvent
 from automata_api.config import (
     ContextCompressionConfig,
@@ -41,6 +42,7 @@ async def stream_agent_loop(
     store: AgentContextStore,
     workspace: str | None = None,
     workspace_label: str | None = None,
+    router: ToolRouter | None = None,
     registry: ToolRegistry | None = None,
     tool_notes: str | None = None,
     approved_plan_content: str | None = None,
@@ -60,17 +62,17 @@ async def stream_agent_loop(
 
     if approved_plan_content:
         messages.insert(1, approved_plan_message(approved_plan_content))
-    tools = registry.specs() if registry is not None else tool_specs()
+    tools = router.model_visible_specs(mode="act") if router is not None else tool_specs()
 
     async for event in stream_model_loop(
         messages=messages,
+        router=router,
         tools=tools,
         compression_config=compression_config,
         model=config.model,
         mode="act",
         allowed_tool_names=None,
         workspace=workspace,
-        registry=registry,
         session_id=session_id,
         store=store,
     ):
@@ -83,6 +85,7 @@ async def stream_plan_loop(
     store: AgentContextStore,
     workspace: str | None = None,
     workspace_label: str | None = None,
+    router: ToolRouter | None = None,
     registry: ToolRegistry | None = None,
     tool_notes: str | None = None,
 ) -> AsyncIterator[AgentLoopEvent]:
@@ -90,9 +93,13 @@ async def stream_plan_loop(
     compression_config = get_context_compression_config()
     collector = EventCollector()
     allowed_tool_names = (
-        registry.allowed_names(read_only_only=True)
-        if registry is not None
-        else PLAN_TOOL_NAMES
+        router.allowed_names(mode="plan")
+        if router is not None
+        else (
+            registry.allowed_names(read_only_only=True)
+            if registry is not None
+            else PLAN_TOOL_NAMES
+        )
     )
     messages = await fetch_agent_context(
         emit_event=collector.emit,
@@ -108,20 +115,24 @@ async def stream_plan_loop(
     for event in collector.events:
         yield event
     tools = (
-        registry.specs(read_only_only=True)
-        if registry is not None
-        else tool_specs_for_names(tool_specs(), PLAN_TOOL_NAMES)
+        router.model_visible_specs(mode="plan")
+        if router is not None
+        else (
+            registry.specs(read_only_only=True)
+            if registry is not None
+            else tool_specs_for_names(tool_specs(), PLAN_TOOL_NAMES)
+        )
     )
 
     async for event in stream_model_loop(
         messages=messages,
+        router=router,
         tools=tools,
         compression_config=compression_config,
         model=config.model,
         mode="plan",
         allowed_tool_names=allowed_tool_names,
         workspace=workspace,
-        registry=registry,
         session_id=session_id,
         store=store,
     ):
@@ -130,11 +141,12 @@ async def stream_plan_loop(
 async def stream_model_loop(
     *,
     messages: list[dict[str, Any]],
-    tools: list[dict[str, Any]],
     compression_config: ContextCompressionConfig,
     model: str,
     mode: str,
     allowed_tool_names: set[str] | None,
+    router: ToolRouter | None = None,
+    tools: list[dict[str, Any]] | None = None,
     workspace: str | None = None,
     registry: ToolRegistry | None = None,
     session_id: str | None = None,
@@ -147,10 +159,15 @@ async def stream_model_loop(
             "mode": mode,
             "message": f"Calling model {model}",
         }
+        current_tools = (
+            router.model_visible_specs(mode=mode)
+            if router is not None
+            else (tools or [])
+        )
         accumulator = llm.AssistantStreamAccumulator()
         tool_call_started = False
         emitted_text = False
-        async for delta in llm.stream_chat_completion(messages, tools=tools):
+        async for delta in llm.stream_chat_completion(messages, tools=current_tools):
             accumulator.add(delta)
             if delta.get("tool_calls"):
                 tool_call_started = True
@@ -178,6 +195,7 @@ async def stream_model_loop(
                     mode=mode,
                     allowed_tool_names=allowed_tool_names,
                     workspace=workspace,
+                    router=router,
                     registry=registry,
                     session_id=session_id,
                     store=store,
@@ -214,6 +232,7 @@ async def stream_execute_tool_call(
     messages: list[dict[str, Any]],
     tool_call: dict[str, Any],
     workspace: str | None = None,
+    router: ToolRouter | None = None,
     registry: ToolRegistry | None = None,
     mode: str = "act",
     allowed_tool_names: set[str] | None = None,
@@ -238,7 +257,9 @@ async def stream_execute_tool_call(
         "tool": name,
         "arguments": arguments if isinstance(arguments, str) else "{}",
     }
-    if allowed_tool_names is not None and name not in allowed_tool_names:
+    if router is not None:
+        result = await router.dispatch(name, arguments, mode=mode)
+    elif allowed_tool_names is not None and name not in allowed_tool_names:
         result = blocked_tool_result(name, arguments, mode, allowed_tool_names)
     elif registry is not None:
         result = await registry.run(name, arguments)

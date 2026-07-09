@@ -12,7 +12,7 @@ from automata_api.agent.backends.factory import (
 )
 from automata_api.agent.llm import AgentProviderError
 from automata_api.agent.runtime import stream_agent_loop, stream_plan_loop
-from automata_api.agent.tools.registry import ToolRegistry
+from automata_api.agent.tools.router import ToolRouter
 from automata_api.config import AgentConfigurationError
 from automata_api.repositories.agent_store import SessionAgentContextStore
 from automata_api.repositories.sessions import (
@@ -59,7 +59,12 @@ async def stream_agent_reply(
             workspace=session_config["working_directory"],
         )
         async with backend:
-            registry = ToolRegistry(backend.tools())
+            router = ToolRouter.from_backend(
+                backend,
+                session_id=session_id,
+                workspace=session_config["working_directory"],
+                mode="act",
+            )
             response = await forward_agent_events(
                 session_id=session_id,
                 websocket=websocket,
@@ -68,7 +73,7 @@ async def stream_agent_reply(
                     store=SessionAgentContextStore(),
                     workspace=session_config["working_directory"],
                     workspace_label=backend.workspace_label,
-                    registry=registry,
+                    router=router,
                     tool_notes=backend.prompt_notes(),
                     approved_plan_content=approved_plan_content,
                 ),
@@ -117,7 +122,12 @@ async def stream_plan_reply(
             workspace=session_config["working_directory"],
         )
         async with backend:
-            registry = ToolRegistry(backend.tools())
+            router = ToolRouter.from_backend(
+                backend,
+                session_id=session_id,
+                workspace=session_config["working_directory"],
+                mode="plan",
+            )
             response = await forward_agent_events(
                 session_id=session_id,
                 websocket=websocket,
@@ -126,7 +136,7 @@ async def stream_plan_reply(
                     store=SessionAgentContextStore(),
                     workspace=session_config["working_directory"],
                     workspace_label=backend.workspace_label,
-                    registry=registry,
+                    router=router,
                     tool_notes=backend.prompt_notes(),
                 ),
             )

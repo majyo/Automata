@@ -84,6 +84,11 @@ class ToolRegistry:
 
         return await tool.run(arguments)
 
+    async def dispatch(
+        self, name: str, raw_arguments: str | dict[str, Any] | None
+    ) -> ToolResult:
+        return await self.run(name, raw_arguments)
+
 
 def default_tools(backend: Backend) -> tuple[AgentTool, ...]:
     return (
