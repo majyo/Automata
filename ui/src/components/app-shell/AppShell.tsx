@@ -80,9 +80,6 @@ export function AppShell({
         activeSessionId={activeSessionId}
         editingSessionId={editingSessionId}
         editingTitle={editingTitle}
-        displayedWorkingDirectory={displayedWorkingDirectory}
-        defaultWorkingDirectory={defaultWorkingDirectory}
-        isNewSessionDraft={isNewSessionDraft}
         isStreaming={isStreaming}
         onCreateSession={onCreateSession}
         onSelectSession={onSelectSession}
@@ -91,8 +88,6 @@ export function AppShell({
         onCommitRename={onCommitRename}
         onCancelRename={onCancelRename}
         onDeleteSession={onDeleteSession}
-        onChooseDirectory={onChooseDirectory}
-        onWorkingDirectoryChange={onWorkingDirectoryChange}
       />
 
       <section className="workspace">
@@ -110,10 +105,14 @@ export function AppShell({
             messages={messages}
             messagesRef={messagesRef}
             socketStatus={socketStatus}
+            displayedWorkingDirectory={displayedWorkingDirectory}
+            defaultWorkingDirectory={defaultWorkingDirectory}
             prompt={prompt}
             sendMode={sendMode}
             isStreaming={isStreaming}
             canSend={canSend}
+            onChooseDirectory={onChooseDirectory}
+            onWorkingDirectoryChange={onWorkingDirectoryChange}
             onSubmit={onSubmit}
             onPromptChange={onPromptChange}
             onSendModeChange={onSendModeChange}

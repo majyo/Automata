@@ -236,27 +236,19 @@ class LocalBackend(Backend):
                 shell=shell,
             ) from error
 
-        timed_out = False
-        try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                process.communicate(), timeout=timeout_seconds
-            )
-            exit_code = process.returncode
-        except TimeoutError:
-            timed_out = True
-            process.kill()
-            stdout_bytes, stderr_bytes = await process.communicate()
-            exit_code = None
-
-        stdout, stdout_truncated = core.truncate_output(core.decode_output(stdout_bytes))
-        stderr, stderr_truncated = core.truncate_output(core.decode_output(stderr_bytes))
+        output = await core.capture_process_output(
+            process,
+            timeout_seconds,
+            stdout_limit=core.OUTPUT_LIMIT,
+            stderr_limit=core.OUTPUT_LIMIT,
+        )
         return ExecResult(
-            exit_code=exit_code,
-            timed_out=timed_out,
-            stdout=stdout,
-            stderr=stderr,
-            stdout_truncated=stdout_truncated,
-            stderr_truncated=stderr_truncated,
+            exit_code=output.exit_code,
+            timed_out=output.timed_out,
+            stdout=output.stdout.text,
+            stderr=output.stderr.text,
+            stdout_truncated=output.stdout.truncated,
+            stderr_truncated=output.stderr.truncated,
             cwd=str(cwd_path),
             shell=shell,
         )

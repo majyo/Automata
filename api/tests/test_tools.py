@@ -1,5 +1,8 @@
 import asyncio
 import json
+import shlex
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -8,6 +11,10 @@ from automata_api.agent import tools
 
 def patch_text(*lines):
     return "\n".join(lines) + "\n"
+
+
+def python_shell_command(script: str) -> str:
+    return f"{shlex.quote(Path(sys.executable).as_posix())} -c {shlex.quote(script)}"
 
 
 def test_exec_command_executes_bash_command_in_workspace(tmp_path):
@@ -127,6 +134,25 @@ def test_exec_command_times_out(tmp_path):
     assert payload["timed_out"] is True
 
 
+def test_exec_command_timeout_keeps_captured_prefix(tmp_path):
+    if tools.resolve_bash_executable() is None:
+        pytest.skip("bash is not available")
+
+    result = asyncio.run(
+        tools.run_tool(
+            "exec_command",
+            {"cmd": "printf before; sleep 2", "timeout_seconds": 0.2},
+            str(tmp_path),
+        )
+    )
+    payload = json.loads(result.content)
+
+    assert result.success is False
+    assert payload["timed_out"] is True
+    assert payload["stdout"] == "before"
+    assert payload["stdout_truncated"] is False
+
+
 def test_exec_command_respects_max_output_chars(tmp_path):
     if tools.resolve_bash_executable() is None:
         pytest.skip("bash is not available")
@@ -145,6 +171,36 @@ def test_exec_command_respects_max_output_chars(tmp_path):
     assert payload["output"] == "1234"
     assert payload["stdout_truncated"] is True
     assert payload["stderr_truncated"] is False
+    assert payload["output_truncated"] is True
+
+
+def test_exec_command_streams_large_stdout_and_stderr_with_limit(tmp_path):
+    if tools.resolve_bash_executable() is None:
+        pytest.skip("bash is not available")
+
+    result = asyncio.run(
+        tools.run_tool(
+            "exec_command",
+            {
+                "cmd": python_shell_command(
+                    "import sys; "
+                    "sys.stdout.write('o' * 50000); "
+                    "sys.stderr.write('e' * 50000)"
+                ),
+                "max_output_chars": 1024,
+                "timeout_seconds": 5,
+            },
+            str(tmp_path),
+        )
+    )
+    payload = json.loads(result.content)
+
+    assert result.success is True
+    assert payload["stdout"] == "o" * 1024
+    assert payload["stderr"] == "e" * 1024
+    assert payload["output"] == "o" * 1024
+    assert payload["stdout_truncated"] is True
+    assert payload["stderr_truncated"] is True
     assert payload["output_truncated"] is True
 
 

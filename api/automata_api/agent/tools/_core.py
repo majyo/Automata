@@ -1,4 +1,5 @@
 import asyncio
+import codecs
 import json
 import os
 import re
@@ -23,6 +24,7 @@ SEARCH_TIMEOUT_SECONDS = 30.0
 FILE_READ_LIMIT = 120_000
 DEFAULT_EXEC_OUTPUT_CHARS = OUTPUT_LIMIT
 MAX_EXEC_OUTPUT_CHARS = 60_000
+PROCESS_OUTPUT_CHUNK_BYTES = 8192
 SUPPORTED_EXEC_SHELLS = ("bash", "powershell")
 
 
@@ -32,6 +34,21 @@ class ToolResult:
     arguments: dict[str, Any]
     content: str
     success: bool
+
+
+@dataclass(frozen=True)
+class CapturedStream:
+    text: str
+    truncated: bool
+    bytes_seen: int
+
+
+@dataclass(frozen=True)
+class CapturedProcessOutput:
+    stdout: CapturedStream
+    stderr: CapturedStream
+    exit_code: int | None
+    timed_out: bool
 
 
 @dataclass(frozen=True)
@@ -100,6 +117,103 @@ def parse_tool_arguments(
         return {}, "Tool arguments must be a JSON object."
 
     return parsed, None
+
+
+async def capture_process_output(
+    process: Any,
+    timeout_seconds: float,
+    *,
+    stdout_limit: int,
+    stderr_limit: int,
+) -> CapturedProcessOutput:
+    stdout_task = asyncio.create_task(
+        read_limited_stream(process.stdout, stdout_limit)
+    )
+    stderr_task = asyncio.create_task(
+        read_limited_stream(process.stderr, stderr_limit)
+    )
+    wait_task = asyncio.create_task(process.wait())
+    timed_out = False
+
+    try:
+        exit_code = await asyncio.wait_for(
+            asyncio.shield(wait_task), timeout=timeout_seconds
+        )
+    except TimeoutError:
+        timed_out = True
+        if process.returncode is None:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+        await wait_task
+        exit_code = None
+
+    stdout, stderr = await asyncio.gather(stdout_task, stderr_task)
+    return CapturedProcessOutput(
+        stdout=stdout,
+        stderr=stderr,
+        exit_code=exit_code,
+        timed_out=timed_out,
+    )
+
+
+async def read_limited_stream(
+    reader: asyncio.StreamReader | None,
+    max_chars: int,
+    *,
+    chunk_size: int = PROCESS_OUTPUT_CHUNK_BYTES,
+) -> CapturedStream:
+    if reader is None:
+        return CapturedStream(text="", truncated=False, bytes_seen=0)
+
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    parts: list[str] = []
+    chars_kept = 0
+    bytes_seen = 0
+    truncated = False
+
+    while True:
+        chunk = await reader.read(chunk_size)
+        if not chunk:
+            break
+
+        bytes_seen += len(chunk)
+        text = decoder.decode(chunk)
+        chars_kept, chunk_truncated = append_limited_text(
+            parts, text, max_chars, chars_kept
+        )
+        truncated = truncated or chunk_truncated
+
+    tail = decoder.decode(b"", final=True)
+    chars_kept, tail_truncated = append_limited_text(
+        parts, tail, max_chars, chars_kept
+    )
+    truncated = truncated or tail_truncated
+
+    return CapturedStream(
+        text="".join(parts),
+        truncated=truncated,
+        bytes_seen=bytes_seen,
+    )
+
+
+def append_limited_text(
+    parts: list[str], text: str, max_chars: int, chars_kept: int
+) -> tuple[int, bool]:
+    if not text:
+        return chars_kept, False
+
+    remaining = max_chars - chars_kept
+    if remaining <= 0:
+        return chars_kept, True
+
+    if len(text) <= remaining:
+        parts.append(text)
+        return chars_kept + len(text), False
+
+    parts.append(text[:remaining])
+    return max_chars, True
 
 
 async def run_rg(arguments: dict[str, Any], workspace: str) -> ToolResult:
@@ -337,27 +451,19 @@ async def run_process(
             "stderr_truncated": False,
         }
 
-    timed_out = False
-    try:
-        stdout_bytes, stderr_bytes = await asyncio.wait_for(
-            process.communicate(), timeout=timeout_seconds
-        )
-        exit_code = process.returncode
-    except TimeoutError:
-        timed_out = True
-        process.kill()
-        stdout_bytes, stderr_bytes = await process.communicate()
-        exit_code = None
-
-    stdout, stdout_truncated = truncate_output(decode_output(stdout_bytes))
-    stderr, stderr_truncated = truncate_output(decode_output(stderr_bytes))
+    output = await capture_process_output(
+        process,
+        timeout_seconds,
+        stdout_limit=OUTPUT_LIMIT,
+        stderr_limit=OUTPUT_LIMIT,
+    )
     return {
-        "exit_code": exit_code,
-        "timed_out": timed_out,
-        "stdout": stdout,
-        "stderr": stderr,
-        "stdout_truncated": stdout_truncated,
-        "stderr_truncated": stderr_truncated,
+        "exit_code": output.exit_code,
+        "timed_out": output.timed_out,
+        "stdout": output.stdout.text,
+        "stderr": output.stderr.text,
+        "stdout_truncated": output.stdout.truncated,
+        "stderr_truncated": output.stderr.truncated,
     }
 
 
@@ -1447,29 +1553,22 @@ async def run_exec_command(arguments: dict[str, Any], workspace: str) -> ToolRes
             duration_seconds=duration_seconds,
         )
 
-    timed_out = False
-    try:
-        stdout_bytes, stderr_bytes = await asyncio.wait_for(
-            process.communicate(), timeout=timeout_seconds
-        )
-        exit_code = process.returncode
-    except TimeoutError:
-        timed_out = True
-        process.kill()
-        stdout_bytes, stderr_bytes = await process.communicate()
-        exit_code = None
-
+    output = await capture_process_output(
+        process,
+        timeout_seconds,
+        stdout_limit=max_output_chars,
+        stderr_limit=max_output_chars,
+    )
     duration_seconds = round(time.monotonic() - started_at, 3)
-    raw_stdout = decode_output(stdout_bytes)
-    raw_stderr = decode_output(stderr_bytes)
-    stdout, stdout_truncated = truncate_content(raw_stdout, max_output_chars)
-    stderr, stderr_truncated = truncate_content(raw_stderr, max_output_chars)
-    output, output_truncated = truncate_content(
-        build_exec_output(raw_stdout, raw_stderr), max_output_chars
+    combined_output, combined_output_truncated = truncate_content(
+        build_exec_output(output.stdout.text, output.stderr.text), max_output_chars
+    )
+    output_truncated = (
+        combined_output_truncated or output.stdout.truncated or output.stderr.truncated
     )
     payload = {
         "simulated": False,
-        "ok": exit_code == 0 and not timed_out,
+        "ok": output.exit_code == 0 and not output.timed_out,
         "tool": "exec_command",
         "cmd": cmd,
         "shell": shell_name,
@@ -1478,13 +1577,13 @@ async def run_exec_command(arguments: dict[str, Any], workspace: str) -> ToolRes
         "shell_path": shell_resolution.path,
         "timeout_seconds": timeout_seconds,
         "duration_seconds": duration_seconds,
-        "exit_code": exit_code,
-        "timed_out": timed_out,
-        "stdout": stdout,
-        "stderr": stderr,
-        "output": output,
-        "stdout_truncated": stdout_truncated,
-        "stderr_truncated": stderr_truncated,
+        "exit_code": output.exit_code,
+        "timed_out": output.timed_out,
+        "stdout": output.stdout.text,
+        "stderr": output.stderr.text,
+        "output": combined_output,
+        "stdout_truncated": output.stdout.truncated,
+        "stderr_truncated": output.stderr.truncated,
         "output_truncated": output_truncated,
     }
     return ToolResult(
@@ -1602,33 +1701,25 @@ async def run_bash(arguments: dict[str, Any], workspace: str) -> ToolResult:
             shell=bash_path,
         )
 
-    timed_out = False
-    try:
-        stdout_bytes, stderr_bytes = await asyncio.wait_for(
-            process.communicate(), timeout=timeout_seconds
-        )
-        exit_code = process.returncode
-    except TimeoutError:
-        timed_out = True
-        process.kill()
-        stdout_bytes, stderr_bytes = await process.communicate()
-        exit_code = None
-
-    stdout, stdout_truncated = truncate_output(decode_output(stdout_bytes))
-    stderr, stderr_truncated = truncate_output(decode_output(stderr_bytes))
+    output = await capture_process_output(
+        process,
+        timeout_seconds,
+        stdout_limit=OUTPUT_LIMIT,
+        stderr_limit=OUTPUT_LIMIT,
+    )
     payload = {
         "simulated": False,
-        "ok": exit_code == 0,
+        "ok": output.exit_code == 0,
         "command": command,
         "cwd": str(cwd_result),
         "shell": bash_path,
         "timeout_seconds": timeout_seconds,
-        "exit_code": exit_code,
-        "timed_out": timed_out,
-        "stdout": stdout,
-        "stderr": stderr,
-        "stdout_truncated": stdout_truncated,
-        "stderr_truncated": stderr_truncated,
+        "exit_code": output.exit_code,
+        "timed_out": output.timed_out,
+        "stdout": output.stdout.text,
+        "stderr": output.stderr.text,
+        "stdout_truncated": output.stdout.truncated,
+        "stderr_truncated": output.stderr.truncated,
     }
     return ToolResult(
         name="run_bash",

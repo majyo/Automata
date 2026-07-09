@@ -1,6 +1,5 @@
 import { Plus, Sparkles, TerminalSquare } from "lucide-react";
 import { SessionList } from "../sessions/SessionList";
-import { WorkspacePicker } from "../sessions/WorkspacePicker";
 import type { SessionSummary } from "../../types/session";
 
 type SidebarProps = {
@@ -8,9 +7,6 @@ type SidebarProps = {
   activeSessionId: string | null;
   editingSessionId: string | null;
   editingTitle: string;
-  displayedWorkingDirectory: string;
-  defaultWorkingDirectory: string;
-  isNewSessionDraft: boolean;
   isStreaming: boolean;
   onCreateSession(): void;
   onSelectSession(sessionId: string): void;
@@ -19,8 +15,6 @@ type SidebarProps = {
   onCommitRename(sessionId: string): void;
   onCancelRename(): void;
   onDeleteSession(sessionId: string): void;
-  onChooseDirectory(): void;
-  onWorkingDirectoryChange(workingDirectory: string): void;
 };
 
 export function Sidebar({
@@ -28,9 +22,6 @@ export function Sidebar({
   activeSessionId,
   editingSessionId,
   editingTitle,
-  displayedWorkingDirectory,
-  defaultWorkingDirectory,
-  isNewSessionDraft,
   isStreaming,
   onCreateSession,
   onSelectSession,
@@ -39,8 +30,6 @@ export function Sidebar({
   onCommitRename,
   onCancelRename,
   onDeleteSession,
-  onChooseDirectory,
-  onWorkingDirectoryChange,
 }: SidebarProps) {
   return (
     <aside className="sidebar">
@@ -76,15 +65,6 @@ export function Sidebar({
       />
 
       <div className="sidebar-footer">
-        <WorkspacePicker
-          displayedWorkingDirectory={displayedWorkingDirectory}
-          defaultWorkingDirectory={defaultWorkingDirectory}
-          isNewSessionDraft={isNewSessionDraft}
-          isStreaming={isStreaming}
-          onChooseDirectory={onChooseDirectory}
-          onWorkingDirectoryChange={onWorkingDirectoryChange}
-        />
-
         <div className="sidebar-footer-actions">
           <button className="icon-button" onClick={onCreateSession} aria-label="New session">
             <Plus size={18} />

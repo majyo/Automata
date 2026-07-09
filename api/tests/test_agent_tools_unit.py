@@ -1,4 +1,6 @@
+import asyncio
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -149,6 +151,54 @@ def test_line_bool_positive_and_truncation_helpers():
     assert tools.bool_argument({"flag": "true"}, "flag", False) is False
     assert tools.truncate_content("abcdef", 3) == ("abc", True)
     assert tools.truncate_content("abc", 3) == ("abc", False)
+
+
+def test_read_limited_stream_handles_split_utf8_sequence():
+    async def run():
+        reader = asyncio.StreamReader()
+        encoded = "éabc".encode("utf-8")
+        reader.feed_data(encoded[:1])
+        reader.feed_data(encoded[1:])
+        reader.feed_eof()
+        return await tools.read_limited_stream(reader, 2, chunk_size=1)
+
+    result = asyncio.run(run())
+
+    assert result.text == "éa"
+    assert result.truncated is True
+    assert result.bytes_seen == len("éabc".encode("utf-8"))
+
+
+def test_capture_process_output_limits_stdout_and_stderr():
+    async def run():
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-c",
+            (
+                "import sys; "
+                "sys.stdout.write('o' * 50000); "
+                "sys.stderr.write('e' * 50000)"
+            ),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        return await tools.capture_process_output(
+            process,
+            timeout_seconds=5,
+            stdout_limit=17,
+            stderr_limit=19,
+        )
+
+    result = asyncio.run(run())
+
+    assert result.exit_code == 0
+    assert result.timed_out is False
+    assert result.stdout.text == "o" * 17
+    assert result.stderr.text == "e" * 19
+    assert result.stdout.truncated is True
+    assert result.stderr.truncated is True
+    assert result.stdout.bytes_seen == 50000
+    assert result.stderr.bytes_seen == 50000
 
 
 def test_unified_patch_parser_parses_add_modify_delete_and_rejects_binary():
