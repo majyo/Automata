@@ -1,172 +1,231 @@
 # Automata MCP 调用能力设计
 
+## Status
+
+- 文档状态：Current Scope Implemented
+- 目标协议：MCP `2025-11-25`
+- 当前范围：MCP tools over stdio and Streamable HTTP
+- 依赖前提：现有 `ToolRouter`、deferred exposure 和 `tool_search`
+- 实现基线：官方 Python SDK `mcp<2`，当前 lock 为 `1.28.1`
+
 ## Summary
 
-本方案在已经落地的运行期工具发现与注册框架之上，为 Automata 增加 MCP server 工具调用能力。核心原则是不让 MCP 协议细节进入 agent runtime 主循环，而是把 MCP 当成一种新的工具来源：
+本方案在 Automata 已有运行期工具发现与注册框架之上增加 MCP tool 调用能力。MCP 不进入 agent runtime 主循环，而是作为一种异步工具来源接入现有工具路由：
 
-- `McpToolProvider` 从配置的 MCP servers 执行 `tools/list`，把 MCP tools 转换成 `ToolDescriptor`。
-- `McpAgentTool` 作为 `AgentTool` 适配器，在被 `ToolRouter.dispatch()` 调用时执行 MCP `tools/call`。
-- `McpConnectionManager` 负责 MCP client 生命周期、连接复用、工具列表缓存、超时和关闭。
-- `ToolRouter` 继续负责 direct/deferred/hidden、plan mode read-only 过滤、`tool_search` 激活和统一 dispatch。
+- `McpToolProvider` 通过 MCP `tools/list` 发现工具，并转换成 `ToolDescriptor`。
+- `McpAgentTool` 把一次 Automata tool dispatch 适配成 MCP `tools/call`。
+- `McpConnectionManager` 管理 MCP client、连接、发现缓存和关闭。
+- `McpPolicyEngine` 在调用前根据 server 信任、调用目标和工具风险做 allow/deny/prompt 决策。
+- `ToolRouter` 继续负责 direct/deferred/hidden、`tool_search`、plan mode 过滤和统一 dispatch。
 
-首阶段只支持 MCP 的 tools 能力，不实现 resources、prompts、sampling、elicitation 和 MCP Apps UI。这样可以先把“外部 MCP 工具能被发现、搜索、路由、调用，并以稳定 `ToolResult` 返回给模型”打通。
+当前只实现 tools，不实现 resources、prompts、sampling、elicitation、tasks 和 MCP Apps UI。协议实现优先复用官方 Python SDK，Automata 只维护 adapter、策略和工具路由，不自行维护完整 JSON-RPC/transport 状态机。
+
+### Implementation Map
+
+| 责任 | 当前实现 |
+| --- | --- |
+| 配置、definition/grant 分离 | `agent/mcp/config.py`、`agent/mcp/trust.py` |
+| SDK adapter 与连接生命周期 | `agent/mcp/client.py`、`agent/mcp/manager.py` |
+| 策略、schema 与结果边界 | `agent/mcp/policy.py`、`agent/mcp/result.py` |
+| 工具发现与 MCP executor | `agent/tools/mcp_provider.py`、`agent/tools/mcp_tool.py` |
+| reply-scoped runtime 装配 | `agent/mcp/runtime.py`、`services/chat.py` |
+| 用户授权 API | `routers/mcp.py` |
+
+每次 agent reply 重新执行 discovery；同一 reply 内复用 stdio process 或 Streamable HTTP session。当前不规划 `list_changed` 动态刷新和交互式 approval。
+
+## Key Decisions
+
+| 主题 | 决策 |
+| --- | --- |
+| MCP 在系统中的位置 | ToolProvider，不进入 `runtime.py` 的协议分支 |
+| 协议版本 | 首版固定 MCP `2025-11-25`，draft 由后续 adapter 支持 |
+| SDK | 使用经过锁定和验证的官方 Python MCP SDK v1.x |
+| transport | stdio、Streamable HTTP |
+| MCP 工具默认 exposure | deferred |
+| workspace 配置 | 只能声明候选 server，不能自行授予执行权限 |
+| 工具名称 | 生成不超过模型 provider 限制的稳定 alias |
+| `tools/call` 重试 | 默认不重试；只对明确安全的幂等调用开放 |
+| plan mode | read-only 是必要条件，但不是唯一安全条件 |
+| 工具列表更新 | 每个 agent reply 重新 discovery，不订阅 `list_changed` |
+| 连接生命周期 | 与单次 agent reply/loop 同生命周期 |
 
 ## Current Baseline
 
-当前 Automata 已经具备以下基础：
+当前 Automata 已经具备：
 
 - `Backend` 提供 local/windows 执行原语。
 - `ToolProvider.discover(context)` 贡献 `ToolDescriptor`。
 - `ToolDescriptor` 包含 `name`、`spec`、`executor`、`read_only`、`exposure`、`source`、`search_text`。
-- `ToolRouter` 生成每次模型调用的可见工具列表，并通过 `dispatch()` 执行工具。
-- `tool_search` 能发现 deferred 工具，并让命中的工具在下一次模型调用中可见。
+- `ToolRouter` 在每次模型调用前生成当前可见 tools。
+- `tool_search` 能发现并激活 deferred tools。
+- `ToolRouter.dispatch()` 在执行前检查 plan mode、hidden 和 deferred 状态。
 
-MCP 设计应复用这条路径：MCP server 不直接改 `runtime.py`，而是通过 provider 注册成工具。
-
-## Protocol Baseline
-
-Automata 首版 MCP client 以 MCP `2025-11-25` 稳定规范为目标：
-
-- 协议层使用 JSON-RPC。
-- 工具发现使用 `tools/list`，工具执行使用 `tools/call`。
-- 传输层首选支持 stdio，随后支持 Streamable HTTP。
-- 连接生命周期包含 `initialize`、`notifications/initialized`、正常操作和 transport-level shutdown。
-
-截至 2026-07-09，MCP draft 中已经提出 2026-07-28 方向的 breaking changes，包括 stateless core、移除 protocol-level session 和移除 initialize handshake 等变化。Automata 不应在首版绑定 draft-only 形态，而应把协议版本和传输实现封装在 `McpClient` 内，后续用 adapter 扩展。
+MCP 必须复用这条路径。`runtime.py` 不识别 server、transport、MCP tool name 或 MCP result。
 
 ## Goals
 
 1. 支持配置多个 MCP servers。
-2. 支持从 MCP server 动态发现 tools，并注册为 Automata tools。
-3. 支持通过 `tool_search` 延迟加载 MCP tools，避免上下文中塞入大量外部工具。
-4. 支持调用 MCP tools，并把 MCP result 转成稳定的 Automata `ToolResult`。
-5. 支持 plan mode read-only 过滤。
-6. MCP server 失败不影响 backend 核心工具可用性。
-7. 不新增 DB migration；连接、工具列表缓存和激活状态都属于 runtime state。
+2. 支持异步 `tools/list` 和 `tools/call`。
+3. MCP tools 默认通过 `tool_search` 延迟激活。
+4. MCP server 失败不影响 backend 核心工具。
+5. 不可信 workspace 不能通过 MCP 配置静默执行本地进程。
+6. 调用策略能够区分 read-only、mutating、destructive、local 和 remote 风险。
+7. 工具名称、数量和 schema 满足当前模型 provider 限制。
+8. discovery、调用和结果转换都有明确资源上限。
+9. stdio 与 Streamable HTTP 使用相同的 discovery、routing、policy 和 result 路径。
+10. 未配置 MCP 时，现有行为完全不变。
 
 ## Non-Goals
 
 - 不实现 MCP server。
-- 不实现 MCP resources/prompts 进入上下文。
-- 不实现 MCP sampling/elicitation。
-- 不实现 MCP Apps UI 或 connector 市场。
-- 不在首阶段实现完整 OAuth 授权流。
-- 不改变现有 Chat Completions function tool wire shape。
+- 不把 MCP resources/prompts 自动注入模型上下文。
+- 不实现 sampling、elicitation、tasks 或 MCP Apps UI。
+- 不实现 OAuth browser flow。
+- 不改变当前 Chat Completions function tool wire shape。
+- 不实现跨进程共享连接池。
+- 不订阅 `notifications/tools/list_changed`，不在同一 reply 内动态替换工具快照。
+- 不实现 WebSocket 交互式 approval；`prompt` 策略返回稳定错误且不发送 MCP request。
+- 不信任 MCP annotations 提供安全保证。
+
+## Safety Invariants
+
+以下约束属于实现验收条件，不是可选优化：
+
+1. 读取 workspace MCP 配置本身不得启动进程或发起网络连接。
+2. workspace 配置中的 `enabled=true`、`approval=allow` 和 `trusted=true` 不具有授权效力。
+3. stdio command 只能来自配置，不能由模型参数拼接。
+4. 未受信任 remote server 的调用默认不得静默执行。
+5. `readOnlyHint` 只能参与风险分类，不能单独绕过 plan mode 或 approval。
+6. 不能因为连接中断自动重复执行可能产生副作用的 `tools/call`。
+7. server 返回的 tool schema、description、result 和 URI 都是不可信输入。
+8. MCP 失败不能移除或阻塞 backend 核心工具。
+9. 任何 tool alias 都必须可逆地映射到原始 server/tool identity。
 
 ## Architecture
 
 ```mermaid
 flowchart LR
     Chat["services/chat.py"]
-    Backend["Backend"]
+    Builder["ToolRouterBuilder"]
     Router["ToolRouter"]
-    Runtime["runtime.stream_model_loop"]
     Search["tool_search"]
     Provider["McpToolProvider"]
     Manager["McpConnectionManager"]
-    Client["McpClient"]
-    Server["MCP Server"]
+    Policy["McpPolicyEngine"]
+    Adapter["McpSdkClientAdapter"]
+    Stdio["MCP stdio Server"]
+    HTTP["MCP Streamable HTTP Server"]
 
-    Chat --> Backend
-    Chat --> Router
-    Router --> Runtime
-    Runtime --> Router
-    Router --> Search
-    Router --> Provider
+    Chat --> Builder
+    Builder --> Provider
     Provider --> Manager
-    Manager --> Client
-    Client --> Server
-    Router -->|"dispatch mcp__server__tool"| Manager
+    Builder --> Router
+    Router --> Search
+    Router --> Policy
+    Policy --> Manager
+    Manager --> Adapter
+    Adapter --> Stdio
+    Adapter --> HTTP
 ```
 
-核心调用流：
+正常调用流：
 
-1. WebSocket session 创建 backend。
-2. `services/chat.py` 构建 `ToolDiscoveryContext`。
-3. `ToolRouter` 从 `BackendToolProvider` 和 `McpToolProvider` 收集 descriptors。
-4. MCP tools 按配置注册为 direct/deferred/hidden。
-5. 模型调用 `tool_search` 后，deferred MCP tools 被激活。
-6. 下一次模型调用前，`runtime` 重新读取 `router.model_visible_specs()`。
-7. 模型调用 `mcp__server__tool`。
-8. `McpAgentTool.run()` 经 `McpConnectionManager` 执行 MCP `tools/call`。
-9. MCP result 转换成 `ToolResult.content` JSON 字符串并回传给模型。
+1. `services/chat.py` 创建 backend，并读取 MCP definitions 和独立 grants。
+2. 未授权的 server 只形成 disabled candidate，不建立连接。
+3. `McpConnectionManager` 在 agent reply 生命周期内创建。
+4. `ToolRouterBuilder` 收集 backend descriptors 和已授权 MCP descriptors。
+5. MCP tools 默认以 deferred 方式注册。
+6. 模型调用 `tool_search`，匹配工具被激活。
+7. 下一次模型调用前，runtime 重新读取 `router.model_visible_specs()`。
+8. 模型调用 MCP tool alias。
+9. `McpPolicyEngine` 根据 server grant、tool metadata、mode 和 arguments 决定是否允许。
+10. `McpAgentTool` 通过 manager 执行原始 `tools/call`。
+11. MCP result 经验证、限长和标准化后转换成 `ToolResult`。
 
-## Public Interfaces
+## Trust And Configuration
 
-建议新增文件：
+### 配置与授权分离
+
+MCP server definition 描述“如何连接”，MCP server grant 描述“用户是否允许连接和调用”。二者必须分开存储。
+
+Definition 可来自：
+
+1. `AUTOMATA_MCP_CONFIG` 指向的用户显式配置。
+2. Automata 用户数据目录下的 `mcp.json`。
+3. workspace 下 `.automata/mcp.json`。
+4. 应用随包提供的只读默认配置。
+
+Grant 只能来自 workspace 外的用户状态，例如：
 
 ```text
-api/automata_api/agent/mcp/config.py
-api/automata_api/agent/mcp/client.py
-api/automata_api/agent/mcp/transport.py
-api/automata_api/agent/mcp/manager.py
-api/automata_api/agent/mcp/schema.py
-api/automata_api/agent/tools/mcp_provider.py
-api/automata_api/agent/tools/mcp_tool.py
+{AUTOMATA_DATA_DIR}/mcp-grants.json
 ```
 
-建议新增或调整接口：
+workspace 配置只能声明 candidate。即使其中包含 `enabled=true`、`approval=allow` 或 `trusted=true`，loader 也必须忽略这些授权字段并记录 warning。
+
+### Grant Workflow
+
+当前没有交互式 approval UI，因此只执行已经存在于用户 trust store 中的 grant：
+
+1. loader 读取 definitions，但不连接 candidate。
+2. trust service 计算 server fingerprint。
+3. 已有匹配 grant 的 server 可以进入 discovery。
+4. 没有 grant 的 workspace server 只产生 `mcp_server_candidate` 状态。
+5. 本地 settings/config service 写入 grant；不得要求用户手工计算 fingerprint。
+
+`McpTrustStore` 是唯一允许写入 grant 的组件。普通 MCP config loader、provider 和模型 tool call 都没有写 grant 的权限。
+
+### Server Fingerprint
+
+授权不能只绑定 server name。grant key 至少包含：
+
+```text
+canonical_workspace_path
+transport_type
+normalized_command_or_url
+normalized_args
+config_hash
+```
+
+配置发生变化后，旧 grant 自动失效，必须重新确认。secret 的实际值不写入 fingerprint，但 secret 引用名称应参与 fingerprint。
+
+### Configuration Model
 
 ```python
 @dataclass(frozen=True)
-class McpServerConfig:
+class McpServerDefinition:
     name: str
-    enabled: bool
-    transport: McpTransportConfig
-    exposure: ToolExposure
-    tools: dict[str, McpToolConfig]
-    list_timeout_seconds: float
-    call_timeout_seconds: float
+    transport: McpTransportDefinition
+    default_exposure: ToolExposure = ToolExposure.DEFERRED
+    tool_overrides: Mapping[str, McpToolOverride] = field(default_factory=dict)
+    list_timeout_seconds: float = 10.0
+    call_timeout_seconds: float = 60.0
 
-class McpClient(Protocol):
-    async def initialize(self) -> McpInitializeResult: ...
-    async def list_tools(self) -> McpListToolsResult: ...
-    async def call_tool(self, name: str, arguments: dict[str, Any]) -> McpCallToolResult: ...
-    async def close(self) -> None: ...
-
-class McpConnectionManager:
-    async def list_tools(self, server_name: str) -> tuple[McpToolInfo, ...]: ...
-    async def call_tool(self, server_name: str, tool_name: str, arguments: dict[str, Any]) -> McpCallToolResult: ...
-    async def close_all(self) -> None: ...
+@dataclass(frozen=True)
+class McpServerGrant:
+    server_fingerprint: str
+    connection: Literal["allow", "deny"]
+    trust: Literal["untrusted", "trusted"]
+    default_call_policy: Literal["allow", "deny", "prompt"]
+    tool_call_policies: Mapping[str, Literal["allow", "deny", "prompt"]]
 ```
 
-`ToolProvider.discover()` 当前是同步接口，但 MCP discovery 需要 I/O。实现时建议把工具发现升级为 async：
-
-```python
-class ToolProvider(Protocol):
-    async def discover(self, context: ToolDiscoveryContext) -> tuple[ToolDescriptor, ...]:
-        ...
-```
-
-`BackendToolProvider` 可以直接返回 tuple，不引入实际等待；`ToolRouter.from_backend()` 增加 async 版本供正式 WebSocket 路径使用。低层测试如需保留同步构造，可提供 `ToolRouter.from_static_descriptors()`。
-
-## Configuration
-
-首版不把 MCP 配置放进 SQLite。建议读取顺序：
-
-1. `AUTOMATA_MCP_CONFIG` 指定的 JSON 文件。
-2. workspace 下 `.automata/mcp.json`。
-3. `api/mcp.json`。
-
-示例：
+Definition 示例：
 
 ```json
 {
   "servers": {
     "filesystem": {
-      "enabled": true,
       "transport": {
         "type": "stdio",
         "command": "npx",
         "args": ["-y", "@modelcontextprotocol/server-filesystem", "${workspace}"],
+        "cwd": "${workspace}",
         "env": {
           "NODE_OPTIONS": "--no-warnings"
-        },
-        "cwd": "${workspace}"
+        }
       },
       "exposure": "deferred",
-      "list_timeout_seconds": 10,
-      "call_timeout_seconds": 60,
       "tools": {
         "read_file": {
           "read_only": true,
@@ -177,16 +236,23 @@ class ToolProvider(Protocol):
           "exposure": "hidden"
         }
       }
-    },
-    "sentry": {
-      "enabled": false,
+    }
+  }
+}
+```
+
+Streamable HTTP definition 示例：
+
+```json
+{
+  "servers": {
+    "remote-search": {
       "transport": {
         "type": "streamable_http",
-        "url": "https://example.com/mcp",
+        "url": "https://mcp.example.com/mcp",
         "headers": {
-          "Authorization": "Bearer ${SENTRY_TOKEN}"
-        },
-        "allow_remote": true
+          "Authorization": "Bearer ${MCP_REMOTE_TOKEN}"
+        }
       },
       "exposure": "deferred"
     }
@@ -196,226 +262,383 @@ class ToolProvider(Protocol):
 
 配置规则：
 
-- secrets 只允许通过环境变量插值，不建议明文写入配置文件。
-- stdio command 必须是显式配置，不从模型输入中拼接。
-- Streamable HTTP 默认只允许 localhost；远程 URL 必须显式 `allow_remote=true`。
-- server name 和 tool name 转成模型可见函数名时必须做规范化与冲突检测。
-- server 级 `exposure` 是默认值，tool 级配置可以覆盖。
-- 未配置 `read_only` 时，优先使用 MCP tool annotations 的 `readOnlyHint`；没有 hint 时按 mutating 处理。
+- secret 只通过环境变量或后续 secret store 引用，不写入日志和错误 payload。
+- `${workspace}` 只允许出现在受支持字段中，并替换为规范化 workspace path。
+- `command`、`args`、`cwd` 和 `env` 不接受模型输入。
+- stdio env 使用经过筛选的父进程环境与显式 override 合并，不能用一小段 config env 完全替换父环境。
+- remote URL 必须使用 HTTPS；localhost 可使用 HTTP。
+- HTTP redirect 默认关闭，避免 authorization header 被转发到其他 origin。
+- server/tool override 不能提升 workspace 自身的 grant 权限。
+- 每个 definition 保留 `user | workspace | packaged` provenance。
+- workspace definition 不能按同名覆盖 user 或 packaged definition；冲突时拒绝并要求显式重命名。
+- grant 可以有 global 或 workspace scope；workspace scope 必须绑定 canonical workspace path。
 
-## Tool Naming
+## Public Interfaces
 
-Automata 当前使用 Chat Completions function tool，不支持 Codex Responses API 的 namespace tool shape。因此 MCP 工具需要被压平成单个 function name。
-
-命名规则：
-
-```text
-mcp__{server_name}__{tool_name}
-```
-
-示例：
+建议新增文件：
 
 ```text
-mcp__filesystem__read_file
-mcp__sentry__search_issues
+api/automata_api/agent/mcp/config.py
+api/automata_api/agent/mcp/trust.py
+api/automata_api/agent/mcp/policy.py
+api/automata_api/agent/mcp/client.py
+api/automata_api/agent/mcp/manager.py
+api/automata_api/agent/mcp/schema.py
+api/automata_api/agent/mcp/result.py
+api/automata_api/agent/tools/mcp_provider.py
+api/automata_api/agent/tools/mcp_tool.py
 ```
 
-规范化要求：
+### SDK Adapter
 
-- 只保留 provider 支持的 function name 字符集，例如字母、数字、`_`、`-`。
-- 空白、点号、斜杠等替换为 `_`。
-- 多个 `_` 合并。
-- 保留原始 `server_name` 和原始 MCP `tool.name` 在 `McpAgentTool` 内部，用于 `tools/call`。
-- 如果规范化后冲突，provider 应拒绝该 server 的冲突工具并记录 warning，不能静默覆盖。
+`McpClient` 是 Automata 内部接口，首版实现由官方 Python MCP SDK 提供：
 
-`ToolDescriptor.source` 使用：
+```python
+class McpClient(Protocol):
+    async def list_tools(self) -> McpListToolsResult: ...
+    async def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+    ) -> McpCallToolResult: ...
+    async def aclose(self) -> None: ...
 
-```text
-mcp:{server_name}
+class McpSdkClientAdapter(McpClient):
+    """Wrap the pinned official SDK ClientSession and transport."""
 ```
 
-`search_text` 应包含：
+Automata 不直接向 runtime 暴露 SDK types。协议版本变化只修改 adapter 和 schema conversion。
 
-- flattened tool name
-- original server name
-- original tool name
-- tool title
-- tool description
-- input schema property names
-- input schema property descriptions
+### Async Discovery
 
-## Exposure Policy
+现有 backend provider 是同步的，而 MCP discovery 是 I/O。为避免一次性破坏现有 provider，新增异步 provider 接口和 builder：
 
-推荐默认策略：
+```python
+class AsyncToolProvider(Protocol):
+    async def discover(
+        self,
+        context: ToolDiscoveryContext,
+    ) -> tuple[ToolDescriptor, ...]: ...
 
-- backend 核心工具继续 direct。
-- MCP tools 默认 deferred。
-- 少量、可信、稳定的 MCP tools 可通过配置显式 direct。
-- 高风险或内部工具配置为 hidden。
-
-原因：
-
-- MCP server 可能贡献大量工具，全部 direct 会增加上下文成本。
-- MCP tools 可能来自外部系统，deferred 默认更符合 least exposure。
-- `tool_search` 已经能让模型按需加载外部工具。
-
-示例：
-
-```json
-{
-  "servers": {
-    "calendar": {
-      "exposure": "deferred",
-      "tools": {
-        "list_events": { "read_only": true, "exposure": "direct" },
-        "create_event": { "read_only": false, "exposure": "deferred" },
-        "delete_event": { "read_only": false, "exposure": "hidden" }
-      }
-    }
-  }
-}
+class ToolRouterBuilder:
+    async def build(
+        self,
+        context: ToolDiscoveryContext,
+        sync_providers: Iterable[ToolProvider],
+        async_providers: Iterable[AsyncToolProvider],
+    ) -> ToolRouter: ...
 ```
 
-## Read-Only And Plan Mode
+同步 provider 直接执行；异步 providers 并发发现，但每个 provider/server 必须有独立错误隔离。后续如果所有 provider 都迁移为 async，再统一接口。
 
-MCP annotations 是 hint，不应盲目信任。Automata 的策略：
+### Connection Manager
 
-- `readOnlyHint == true` 可以把工具标为 `read_only=True`。
-- `readOnlyHint == false` 或缺失时，默认 `read_only=False`。
-- 用户配置可以把工具降级为 mutating。
-- 用户配置只有在明确可信 server 时才允许把工具升级为 read-only。
-- plan mode 下 `ToolRouter` 继续只暴露 read-only direct/activated tools。
-- plan mode 下 `tool_search` 只搜索 read-only deferred tools。
-
-对于 read-only 缺失但实际安全的工具，应通过配置显式声明：
-
-```json
-{
-  "tools": {
-    "lookup_issue": {
-      "read_only": true
-    }
-  }
-}
+```python
+class McpConnectionManager:
+    async def __aenter__(self) -> "McpConnectionManager": ...
+    async def __aexit__(self, exc_type, exc, tb) -> None: ...
+    async def list_tools(self, server_id: str) -> McpListToolsResult: ...
+    async def call_tool(
+        self,
+        server_id: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> McpCallToolResult: ...
 ```
 
-## MCP Client Lifecycle
+manager 与一次 agent reply/loop 同生命周期，连接只在该 loop 内复用。
 
-`McpConnectionManager` 管理 client 生命周期：
+### Dynamic MCP Tool
 
-- 按 server name 和配置 fingerprint 缓存 client。
-- 第一次 `list_tools()` 或 `call_tool()` 时懒初始化。
-- stdio server 启动后执行 `initialize`，成功后发送 `notifications/initialized`。
-- Streamable HTTP 后续请求携带协议版本 header。
-- `tools/list` 支持 pagination，直到没有 cursor。
-- `notifications/tools/list_changed` 到来时标记工具列表缓存失效。
-- 每个 JSON-RPC request 有独立 timeout。
-- session 结束或 API 关闭时调用 `close_all()`。
-
-stdio shutdown：
-
-1. 关闭 stdin。
-2. 等待进程退出。
-3. 超时后 terminate。
-4. 再超时后 kill。
-
-首阶段可以不做长期 background 监听，只在请求期间读取响应；但如果要支持 `listChanged` 和 progress/logging，manager 需要有 per-client reader task，把 response、notification 和 stderr 分流。
-
-## Transports
-
-### stdio
-
-首阶段优先实现 stdio，因为它适合本地桌面工具和本地开发：
-
-- 使用 `asyncio.create_subprocess_exec`。
-- stdout 只接受 newline-delimited JSON-RPC message。
-- stderr 作为日志，做 bounded capture。
-- 进程 stdout 写入非 JSON 内容时视为 protocol error。
-- command、args、cwd、env 只来自配置。
-- 默认 cwd 是 workspace。
-
-### Streamable HTTP
-
-第二阶段实现 Streamable HTTP：
-
-- HTTP POST 发送 JSON-RPC request。
-- `Accept` 包含 `application/json` 和 `text/event-stream`。
-- 支持 JSON response 和 SSE response。
-- 默认拒绝非 localhost URL。
-- 远程 URL 需要显式 allow。
-- 认证先支持静态 headers 和 env var token。
-- OAuth 授权流作为后续阶段。
-
-## Tool Execution
-
-`McpAgentTool` 实现现有 `AgentTool`：
+`McpAgentTool` 的 `name` 和 `read_only` 必须是实例属性，因为同一个 adapter class 会表示多个 MCP tools。不能沿用静态 `ClassVar` 作为实现模型：
 
 ```python
 class McpAgentTool(AgentTool):
-    name: ClassVar[str]
-    read_only: ClassVar[bool]
+    def __init__(
+        self,
+        *,
+        alias: str,
+        server_id: str,
+        original_name: str,
+        read_only: bool,
+        spec: dict[str, Any],
+        metadata: McpToolMetadata,
+        manager: McpConnectionManager,
+        policy: McpPolicyEngine,
+    ) -> None: ...
 
-    def spec(self) -> dict[str, Any]:
-        ...
+    @property
+    def name(self) -> str: ...
 
-    async def run(self, arguments: dict[str, Any]) -> ToolResult:
-        result = await manager.call_tool(server_name, original_tool_name, arguments)
-        return mcp_result_to_tool_result(self.name, arguments, result)
+    async def run(self, arguments: dict[str, Any]) -> ToolResult: ...
 ```
 
-MCP `tools/call` request：
+这要求把 `AgentTool.name/read_only` 从纯 `ClassVar` 约定放宽为“类属性或只读实例属性”。现有 backend tools 不需要改写。
 
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 12,
-  "method": "tools/call",
-  "params": {
-    "name": "read_file",
-    "arguments": {
-      "path": "README.md"
-    }
-  }
-}
+## Tool Identity And Naming
+
+内部身份与模型可见名称分离：
+
+```text
+canonical identity = (source="mcp", server_id, original_tool_name)
+model alias        = provider-compatible function name
 ```
 
-稳定错误：
+当前默认模型 provider 的 function name 最长 64 字符，只允许字母、数字、`_` 和 `-`。MCP tool name 最长可到 128 字符且允许点号，因此不能直接拼接原始名称。
 
-```json
-{
-  "simulated": false,
-  "ok": false,
-  "tool": "mcp__filesystem__read_file",
-  "source": "mcp:filesystem",
-  "server": "filesystem",
-  "mcp_tool": "read_file",
-  "error": "mcp_server_unavailable",
-  "message": "MCP server failed to start within 10 seconds."
-}
+推荐 alias：
+
+```text
+mcp__{server_slug[:12]}__{tool_slug[:32]}__{hash8}
 ```
 
-错误分类：
+该格式最长 61 字符。`hash8` 从 canonical identity 生成，保证截断后仍稳定区分。示例：
+
+```text
+mcp__filesystem__read_file__8ab91f2c
+```
+
+规则：
+
+- alias 生成规则必须确定性且有版本号。
+- manager/router 保留 alias 到 canonical identity 的映射。
+- 不把 alias 反向解析成原始名称；只能查询映射。
+- alias 冲突时扩展 hash；仍冲突则拒绝该 descriptor。
+- `ToolDescriptor.source` 使用 `mcp:{server_id}`。
+- search result 同时展示 alias、server display name 和原始 tool title。
+- 每轮模型可见工具数不得超过 provider limit；默认保留 backend core tools 和 `tool_search`，再按激活顺序加入 MCP tools。
+- 超过上限时 `tool_search` 返回 `tool_activation_limit_reached`，不能生成会被 provider 拒绝的请求。
+
+## Discovery And Resource Limits
+
+MCP `tools/list` pagination 同时适用于 stdio 与 Streamable HTTP。每个 server 的完整发现过程必须有总预算：
+
+```python
+@dataclass(frozen=True)
+class McpDiscoveryLimits:
+    total_timeout_seconds: float = 15.0
+    max_pages: int = 32
+    max_tools: int = 256
+    max_tool_schema_bytes: int = 256_000
+    max_description_chars: int = 8_000
+    max_search_text_chars: int = 16_000
+```
+
+发现规则：
+
+- 迭代 `nextCursor` 直到为空。
+- 检测重复 cursor，并返回 `mcp_pagination_cycle`。
+- 总 timeout 覆盖所有分页请求，不是每页重新获得完整预算。
+- 超过 page/tool/schema 限制时停止该 server 的发现并返回明确诊断。
+- `inputSchema` 必须是合法 JSON Schema object；无法映射到当前 provider function schema 的工具应跳过。
+- description 和 property description 在进入 `search_text` 前限长。
+- 单个 server 失败时，其他 MCP servers 和 backend tools 继续可用。
+- discovery warning 不包含 secret、完整 environment 或 authorization header。
+
+## Exposure And Search
+
+默认策略：
+
+- backend 核心工具：direct。
+- MCP tools：deferred。
+- 少量可信、稳定且高频的 MCP tools：用户配置可设 direct。
+- 明确禁止模型调用的工具：hidden。
+
+`search_text` 可包含：
+
+- alias
+- server display name
+- original tool name
+- title 和 description
+- 限长后的 input schema property names/descriptions
+
+MCP 提供的 description 属于不可信内容。它可以帮助模型选工具，但不能改变 exposure、approval、plan mode 或 server grant。
+
+## Read-Only, Risk And Call Policy
+
+### Read-Only Classification
+
+MCP annotations 是 hint：
+
+- 缺失 `readOnlyHint` 时按 mutating 处理。
+- untrusted server 的 `readOnlyHint=true` 不能自动提升为 Automata `read_only=True`。
+- trusted server 可使用 annotation 作为默认值。
+- 用户 grant/config 可以把工具降级为 mutating。
+- 只有 workspace 外的可信用户配置可以把工具显式升级为 read-only。
+
+### Risk Model
+
+`read_only` 只描述是否修改环境，不表示调用安全。策略至少考虑：
+
+```python
+@dataclass(frozen=True)
+class McpToolRisk:
+    read_only: bool
+    destructive: bool
+    idempotent: bool
+    open_world: bool
+    remote: bool
+    credentialed: bool
+    trusted_server: bool
+```
+
+默认决策：
+
+| 条件 | 默认策略 |
+| --- | --- |
+| 未授权 server | deny |
+| untrusted remote server | prompt |
+| mutating 或 destructive | prompt |
+| trusted local read-only | allow |
+| hidden tool | deny |
+| plan mode 且非 read-only | deny |
+| plan mode 且调用策略为 prompt | deny |
+
+remote read-only 工具仍可能通过 arguments 泄露本地数据，因此不能仅凭 read-only 自动 allow。
+
+### Prompt Policy Without Interaction
+
+```python
+class McpPolicyEngine(Protocol):
+    def evaluate(
+        self,
+        *,
+        server: McpServerIdentity,
+        tool: McpToolMetadata,
+        arguments: dict[str, Any],
+        mode: str,
+    ) -> McpPolicyDecision: ...
+```
+
+`McpPolicyDecision` 为 `allow | deny | prompt`。当前不实现交互式 approval：
+
+- `allow` 执行。
+- `deny` 返回 `mcp_call_rejected`。
+- `prompt` 返回 `mcp_approval_required`，不发送 MCP request。
+
+因此需要执行的 server/tool 必须提前写入明确的 `allow` grant 或 tool policy。日志默认不记录完整 arguments。
+
+## MCP Client And Transports
+
+### SDK Strategy
+
+首版选用经过兼容性测试并写入 `uv.lock` 的官方 Python MCP SDK v1.x，以支持 MCP `2025-11-25`。Automata 不直接依赖 SDK 内部类型，所有调用经过 `McpSdkClientAdapter`。
+
+升级到后续 2026 protocol 时：
+
+1. 新增或替换 adapter。
+2. 保持 manager/provider/router 接口不变。
+3. 通过 contract tests 同时验证旧 server 和新 server。
+
+### stdio
+
+当前支持 stdio：
+
+- 由 SDK transport 负责 framing、request correlation 和 lifecycle。
+- command、args、cwd、env 只来自已授权 definition。
+- stdout 只用于 MCP protocol。
+- stderr 做 bounded capture，不能因 server 不读取 stderr 而阻塞。
+- shutdown 依次关闭 session/transport，并由 SDK 或 adapter 处理 terminate/kill fallback。
+- manager `__aexit__` 必须在 WebSocket disconnect、LLM error 和 tool error 时都执行。
+
+### Streamable HTTP
+
+当前支持 Streamable HTTP：
+
+- 使用 SDK Streamable HTTP client。
+- 支持 JSON 和 SSE response。
+- 支持 negotiated protocol version header。
+- 由 SDK 管理 `MCP-Session-Id`，同一 agent reply 内复用 session，并在关闭时发送 session DELETE。
+- session 失效或 404 不自动重试 `tools/call`；下一次 agent reply 创建新 session。
+- localhost 默认允许 HTTP；remote 必须 HTTPS 和显式 grant。
+- 默认关闭跨 origin redirect。
+- 静态 token 只通过 secret reference 注入。
+- OAuth 不在当前范围内，也不在静态 header 逻辑中模拟。
+
+## Client Lifecycle And Ownership
+
+连接生命周期与当前 `services/chat.py` 一致：backend 和 router 都在单次 agent reply 内创建。因此 manager 也必须在同一作用域内关闭：
+
+```python
+async with create_backend(...) as backend:
+    async with McpConnectionManager(...) as mcp_manager:
+        router = await ToolRouterBuilder(...).build(
+            context=discovery_context,
+            sync_providers=[BackendToolProvider()],
+            async_providers=[McpToolProvider(mcp_manager, definitions, grants)],
+        )
+        response = await forward_agent_events(
+            events=stream_agent_loop(..., router=router),
+        )
+```
+
+这样可以保证：
+
+- 同一个 agent loop 的多次 MCP 调用复用连接。
+- loop 完成、异常或 WebSocket 断开时连接被关闭。
+- 不把 manager 泄漏到无法管理的全局状态。
+- deferred activated set 继续保持 turn/reply scoped。
+
+## Tool Execution
+
+执行顺序：
+
+1. Router 确认 alias 已注册、可见且已激活。
+2. 解析并验证 JSON arguments。
+3. 使用 tool `inputSchema` 做客户端侧 validation。
+4. Policy engine 做最终 allow/deny/prompt 决策。
+5. manager 确认 client 已初始化。
+6. 发送一次 `tools/call`。
+7. 验证并转换 result。
+
+### Retry Semantics
+
+当前 `tools/call` 一律不自动重试：
+
+- request 已发送但未收到 response：返回 `mcp_call_outcome_unknown`，不重试。
+- initialize、`tools/list` 也暂不自动重试，只受 timeout 和 discovery 总预算约束。
+
+后续如增加 retry，只有在 request 明确尚未写入 transport，或 trusted server、`idempotentHint=true` 且 policy 明确允许时，才可以发送第二次；同时必须记录 original attempt id 和 retry reason。
+
+这避免在网络断开时重复创建日程、发送消息、写文件或执行交易。
+
+### Stable Errors
+
+稳定错误类型：
 
 - `mcp_config_error`
+- `mcp_server_not_granted`
 - `mcp_server_unavailable`
-- `mcp_protocol_error`
-- `mcp_tool_not_found`
 - `mcp_tool_timeout`
-- `mcp_auth_required`
 - `mcp_call_rejected`
-- `mcp_result_too_large`
+- `mcp_approval_required`
+- `mcp_approval_required_in_plan`
+- `mcp_call_outcome_unknown`
+- `mcp_input_schema_error`
+- `mcp_output_schema_error`
+- `mcp_discovery_limit_exceeded`
+- `mcp_pagination_cycle`
 
-## Result Conversion
+Router 自身继续使用 `tool_not_loaded`、`tool_not_available` 和 `blocked_by_plan_mode`。结果过长时返回 bounded preview 和 `truncated=true`，不把完整 payload 放入模型上下文。
 
-Automata `ToolResult.content` 当前是字符串，MCP result 需要序列化为 JSON 字符串。
+## Result Validation And Conversion
 
-建议 payload：
+MCP result 是不可信输入。转换前执行：
+
+1. 验证 MCP `CallToolResult` 结构。
+2. 如果 tool 声明 `outputSchema`，验证 `structuredContent`。
+3. 检查 content block type、URI scheme、MIME type 和字段大小。
+4. 对 text、JSON 和 diagnostics 应用独立限长。
+5. 去除 image/audio base64，只保留 bounded metadata；后续可存入 artifact store。
+6. 不自动读取 resource link 指向的内容。
+
+标准 payload：
 
 ```json
 {
   "simulated": false,
   "ok": true,
-  "tool": "mcp__filesystem__read_file",
+  "tool": "mcp__filesystem__read_file__8ab91f2c",
   "source": "mcp:filesystem",
   "server": "filesystem",
   "mcp_tool": "read_file",
@@ -437,234 +660,213 @@ Automata `ToolResult.content` 当前是字符串，MCP result 需要序列化为
 
 转换规则：
 
-- text content 合并进顶层 `text`，便于模型阅读。
-- structuredContent 原样进入 `structured_content`。
-- resource links 保留 `uri`、`name`、`mimeType`、`description`。
-- image/audio 等二进制内容首阶段只返回 metadata，默认不把大段 base64 塞入模型上下文。
-- 所有 text 和 JSON serialization 都走 bounded truncation。
-- `isError=true` 时 `success=False`，但仍把 server 返回内容放进 payload。
+- text blocks 合并到顶层 `text`，同时保留限长后的 block 列表。
+- `structuredContent` 通过验证后进入 `structured_content`。
+- `isError=true` 映射为 `ToolResult.success=False`，并保留 bounded actionable content。
+- protocol error 和 tool execution error 使用不同 error code。
+- resource link 只保留经过 URI validation 的 metadata。
+- tool result 不能修改 exposure、grant、approval 或 router state。
 
-## Approval And Safety
+## Runtime And Plan Mode Integration
 
-首阶段安全策略：
+`runtime.py` 继续只使用 Router：
 
-- MCP servers 默认 disabled，必须显式启用。
-- remote Streamable HTTP 默认禁用。
-- plan mode 阻止所有 mutating MCP tools。
-- mutating 工具只有在配置允许时才执行。
-- 未明确允许的 mutating 工具返回 `mcp_call_rejected`。
+- 每个模型 step 调用 `router.model_visible_specs(mode=...)`。
+- 工具执行走 `router.dispatch(name, args, mode=...)`。
+- `tool_search` 激活走 Router。
 
-建议配置：
-
-```json
-{
-  "tools": {
-    "create_event": {
-      "read_only": false,
-      "approval": "allow"
-    },
-    "delete_event": {
-      "read_only": false,
-      "approval": "deny"
-    }
-  }
-}
-```
-
-`approval` 取值：
-
-- `allow`：允许执行。
-- `deny`：稳定拒绝。
-- `prompt`：需要用户确认。
-
-Automata 当前 WebSocket 工具事件没有完整 approval round-trip。首阶段可以把 `prompt` 视为拒绝并返回 `mcp_approval_required`；后续增加 `mcp_approval_requested` / `mcp_approval_response` 后再真正阻塞等待用户选择。
-
-后续 approval event：
-
-```json
-{
-  "type": "mcp_approval_requested",
-  "tool_call_id": "call_123",
-  "server": "calendar",
-  "tool": "create_event",
-  "arguments": {
-    "title": "Demo"
-  },
-  "options": ["allow_once", "allow_session", "deny"]
-}
-```
-
-## Runtime Integration
-
-正式路径：
+Plan mode 需要修正当前静态 allowed tool names 提示。现在 `allowed_tool_names` 在 loop 开始前计算，deferred tool 激活后 system prompt 会过期。建议把 plan prompt 改成策略描述：
 
 ```text
-services/chat.py
-  -> create_backend(...)
-  -> load_mcp_config(...)
-  -> McpConnectionManager(...)
-  -> await ToolRouter.from_backend_async(
-         backend,
-         providers=[
-           BackendToolProvider(),
-           McpToolProvider(manager, mcp_config),
-         ],
-       )
-  -> stream_agent_loop(..., router=router)
+Only call tools present in the current model-visible tool list. Runtime policy
+will reject mutating or unapproved tools in plan mode.
 ```
 
-`runtime.py` 不需要知道 MCP：
+最终授权由 Router 和 policy engine 执行，而不是依赖一份写入 system prompt 的固定工具名单。
 
-- 模型可见工具仍来自 `router.model_visible_specs(mode=...)`。
-- 工具执行仍走 `router.dispatch(name, args, mode=...)`。
-- plan mode read-only 过滤仍由 `ToolRouter` 完成。
-- `tool_search` 激活仍由 `ToolRouter` 完成。
+Plan mode 规则：
+
+- 只搜索和暴露 `read_only=True` 的 deferred tools。
+- mutating/destructive tools 始终拒绝。
+- read-only remote tool 仍受 server grant 和 call policy 控制。
+- `prompt` 在 plan mode 中按 deny 处理，不阻塞 plan loop。
 
 ## WebSocket Events
 
-MVP 可以不新增事件，继续使用已有：
+当前使用：
 
 - `tool_call`
 - `tool_result`
-
-建议后续增加调试事件：
-
+- `mcp_server_candidate`
 - `mcp_server_status`
-- `mcp_tools_discovered`
-- `mcp_tool_list_changed`
-- `mcp_tool_call_progress`
-- `mcp_approval_requested`
 
-调试事件不应作为首阶段验收条件；否则前端协议会成为 MCP 工具调用的阻塞项。
+`mcp_server_candidate` 用于提示用户 workspace 声明了尚未授权的 server，但不得因为发送该事件而自动连接。
 
 ## Failure Behavior
 
 发现阶段：
 
-- 单个 MCP server 失败时跳过该 server，并记录 warning。
-- 后端核心工具仍必须可用。
-- `tool_search` 不展示失败 server 的工具。
-- 如果 server 曾经可用但本轮不可用，工具应从本轮 router descriptors 移除。
+- 未授权 server 跳过连接并产生 candidate status。
+- 单个 server startup/list/schema 失败时跳过该 server。
+- backend tools 始终继续注册。
+- grant 移除后，下一次 agent reply 不再发现对应 descriptors。
 
 调用阶段：
 
-- server disconnected 时尝试一次 reconnect。
-- reconnect 失败返回 `mcp_server_unavailable`。
-- request timeout 返回 `mcp_tool_timeout`。
-- protocol error 返回 `mcp_protocol_error`，并关闭对应 client。
-- JSON schema 不可转换时跳过对应工具并记录 warning。
+- timeout 返回 `mcp_tool_timeout`。
+- initialize/discovery 阶段的 HTTP、authorization 或 protocol 失败返回 `mcp_server_unavailable` 并跳过该 server。
+- request 已发送后的断线、HTTP 或 protocol 失败返回 `mcp_call_outcome_unknown`，不自动重试。
+- authorization header 不写入日志和错误 payload。
+- result validation 失败返回 `mcp_output_schema_error`。
 
 ## Observability
 
-每次 MCP 调用记录：
+记录：
 
-- server name
-- original MCP tool name
-- flattened Automata tool name
+- server id 和 config fingerprint 的短 hash
+- original tool name 和 alias
 - transport type
-- duration
-- success/failure
-- error class
+- discovery/call duration
+- policy decision 和 reason code
+- success/failure/error class
+- retry count 和 outcome certainty
 
-`ToolResult.content` 中保留 `duration_seconds`、`server`、`mcp_tool`，便于前端和测试断言。
+默认不记录：
 
-## Implementation Phases
+- 完整 tool arguments
+- tool result 正文
+- environment values
+- authorization headers、tokens 和 secret values
 
-### Phase 1: stdio tools MVP
+需要 debug payload 时必须经过显式 debug 配置和 redaction。
 
-- MCP config loader。
-- stdio transport。
-- `McpClient.initialize()`、`tools/list`、`tools/call`。
-- `McpConnectionManager` 懒连接和关闭。
-- `McpToolProvider` 转换 MCP tools 为 deferred descriptors。
-- `McpAgentTool` 调用 `tools/call`。
-- result conversion。
-- plan mode read-only 过滤。
-- stable error payloads。
+## Current Implementation Scope
 
-### Phase 2: HTTP and cache invalidation
+- definition/grant 分离和 server fingerprint。
+- `McpTrustStore` 与本地 settings/config service。
+- 使用锁定版本的官方 Python MCP SDK v1.x。
+- stdio 与 Streamable HTTP client adapter，共用 async manager context。
+- remote HTTPS 强制、loopback HTTP 例外、redirect 禁止和 static header secret reference。
+- Streamable HTTP session/protocol headers、JSON/SSE response 和 DELETE shutdown。
+- `initialize`、完整 paginated `tools/list`、`tools/call`。
+- discovery 总预算和 schema/description/tool count 限制。
+- provider-compatible alias 和最大可见工具数。
+- deferred exposure 和 `tool_search`。
+- policy engine 的 allow/deny/prompt 结果；prompt 返回错误且不发送 request。
+- input/output schema validation。
+- 默认不重试 `tools/call`。
+- plan mode 动态工具提示修正。
+- 每个 agent reply 开始重新发现工具。
 
-- Streamable HTTP transport。
-- env var token/header 支持。
-- `tools/list` pagination。
-- `listChanged` notification cache invalidation。
-- server status/debug events。
+### Protocol Compatibility
 
-### Phase 3: approvals and richer content
-
-- WebSocket approval round-trip。
-- session-level remembered approvals。
-- image/audio/resource richer rendering。
-- OAuth flow。
-- resources/prompts/provider 扩展。
-
-### Phase 4: Protocol evolution
-
-- 增加 2026 draft/final protocol adapter。
-- 支持 stateless request metadata。
-- 支持 `server/discover`。
-- 使用 list result cache hints。
+- 评估并适配 MCP 2026 protocol final。
+- 保持 Router/Provider/Policy public interfaces 稳定。
+- 增加新旧协议 contract test matrix。
+- 仅在协议稳定后再评估 stateless metadata、`server/discover` 和 cache hints。
 
 ## Test Plan
 
-单元测试：
+### Configuration And Trust
 
-- MCP config loader 支持 stdio 和 Streamable HTTP 配置。
-- secret 插值只从环境变量读取。
-- invalid server/tool name 被规范化或拒绝。
-- duplicate flattened tool names 被拒绝并记录 warning。
-- MCP `tools/list` schema 转换成 Chat Completions function spec。
-- `readOnlyHint` 正确映射到 `read_only`。
-- 缺失 `readOnlyHint` 默认 mutating。
-- tool 级 exposure 覆盖 server 级 exposure。
-- deferred MCP tool 初始不可见，`tool_search` 命中后可见。
-- plan mode 只暴露 read-only MCP tools。
-- MCP `isError=true` 转成 `ToolResult.success=False`。
-- text/structured/resource result 正确转换。
-- image/audio result 不把大段 base64 放入模型上下文。
-- timeout/protocol error/startup failure 返回稳定错误。
+- workspace definition 不能自行授予 connection/call 权限。
+- workspace config 中 `enabled=true` 不启动进程。
+- config 改变后 fingerprint 变化并使旧 grant 失效。
+- secret 不进入 fingerprint 明文、日志和错误结果。
+- stdio env 正确合并受控父环境。
+- remote Streamable HTTP 拒绝明文 HTTP，loopback 允许 HTTP。
+- 静态 headers 解析 secret reference，拒绝 CRLF 和受保护协议 headers。
+- settings API 正确报告 `stdio | streamable_http`。
 
-Runtime 测试：
+### Discovery
 
-- 第一轮只看到 backend direct tools 和 `tool_search`。
-- 模型调用 `tool_search` 后，第二轮看到 MCP tool。
-- 模型调用 MCP tool 后，fake MCP server 收到 `tools/call`。
-- MCP server 失败不影响 backend core tools。
-- plan mode 搜索不到 mutating MCP deferred tool。
+- `tools/list` 所有分页被读取。
+- 重复 cursor 被拒绝。
+- total timeout、max pages、max tools 和 max schema 生效。
+- 单 server 失败不影响 backend tools 和其他 MCP servers。
+- invalid schema 被跳过并记录 bounded warning。
+- descriptions/search text 被限长。
+
+### Naming And Routing
+
+- alias 只包含 provider 支持字符且不超过 64 字符。
+- 长 server/tool name 生成稳定 alias。
+- 截断后 collision 通过 hash 区分。
+- alias 正确映射到原始 server/tool name。
+- visible tools 不超过 provider limit。
+- deferred tool 初始不可见，搜索后可见。
+- hidden tool 不可见且不可直接 dispatch。
+
+### Policy And Plan Mode
+
+- untrusted remote read-only tool 默认不是自动 allow。
+- missing `readOnlyHint` 默认 mutating。
+- untrusted annotation 不能提升 read-only 权限。
+- plan mode 拒绝 mutating tools。
+- plan mode 只搜索 read-only deferred tools。
+- plan prompt 不持有会过期的静态 deferred tool 名单。
+- prompt policy 在无 approval UI 时不发送 MCP request。
+
+### Execution And Results
+
+- fake stdio server 收到原始 tool name 和 arguments。
+- fake Streamable HTTP server 完成 initialize、`tools/list` 和 `tools/call`。
+- Streamable HTTP 复用 session id、发送 negotiated protocol header，并在关闭时 DELETE session。
+- HTTP redirect 不自动跟随。
+- request 已发送后断线不会自动重试。
+- 当前即使 trusted/idempotent 也不自动重试。
+- input schema validation 在发送前执行。
+- output schema validation 在返回模型前执行。
+- `isError=true` 映射为 `ToolResult.success=False`。
+- image/audio base64 不进入模型上下文。
+- resource links 不被自动读取。
+- timeout、discovery failure、outcome unknown 和 result truncation 具有稳定结果语义。
+
+### Lifecycle
+
+- normal completion、LLM error、tool error、WebSocket disconnect 都关闭 manager。
+- 同一 agent loop 内连接复用。
+
+### Runtime Regression
+
+- 未配置 MCP 时，第一轮 tools 与现状一致。
+- 存在未激活的已授权 deferred tools 时，第一轮只看到 backend direct tools 和 `tool_search`。
+- 搜索后第二轮看到已激活 MCP alias。
 - context compression 不破坏 MCP tool call/result message。
+- MCP server failure 不导致 agent loop 崩溃。
 
-集成测试：
-
-- fake stdio MCP server：支持 `initialize`、`tools/list`、`tools/call`。
-- fake HTTP MCP server：返回 JSON response。
-- fake HTTP MCP server：返回 SSE response。
-- list pagination。
-- reconnect after stdio crash。
-
-推荐回归命令：
+推荐命令：
 
 ```powershell
-uv run --directory api --group dev --locked pytest tests/test_agent_mcp_config_unit.py tests/test_agent_mcp_client_unit.py tests/test_agent_mcp_provider_unit.py tests/test_agent_runtime_unit.py tests/test_agent_plan_mode_unit.py
+uv run --directory api --group dev --locked pytest tests/test_agent_mcp_config_unit.py tests/test_agent_mcp_client_unit.py tests/test_agent_mcp_provider_unit.py tests/test_agent_mcp_result_unit.py tests/test_agent_mcp_runtime_unit.py tests/test_agent_mcp_stdio_integration.py tests/test_agent_mcp_http_integration.py tests/test_agent_tool_router_unit.py tests/test_agent_runtime_unit.py tests/test_agent_plan_mode_unit.py
 uv run --directory api --group dev --locked pytest
 ```
 
 ## Acceptance Criteria
 
-首阶段完成后应满足：
+当前实现完成必须满足：
 
-- 未配置 MCP 时，现有工具和测试行为不变。
-- 配置一个 fake stdio MCP server 后，其工具能通过 `tool_search` 被发现。
-- 被激活的 MCP tool 能在下一次模型调用中出现。
-- 调用 MCP tool 会执行 server 的 `tools/call` 并返回稳定 `ToolResult`。
-- plan mode 不允许 mutating MCP tool。
-- MCP server 启动失败、超时或协议错误不会导致整个 agent loop 崩溃。
+- 打开包含 `.automata/mcp.json` 的未受信任 workspace 不会启动任何 MCP process。
+- 用户 grant 一个 fake stdio server 后，其全部分页工具能被发现。
+- 用户 grant 一个 Streamable HTTP server 后，可以发现和调用其工具。
+- remote URL 仅允许 HTTPS；loopback HTTP、静态 secret headers、session 复用和 DELETE shutdown 行为经过验证。
+- MCP aliases 满足当前模型 provider 的名称和数量限制。
+- deferred tool 能通过 `tool_search` 激活并在下一模型 step 可见。
+- 调用 alias 会执行原始 MCP `tools/call` 并返回验证后的 `ToolResult`。
+- plan mode 和 policy engine 都不能被 MCP annotations 单独绕过。
+- 非幂等调用在结果未知时不会自动重试。
+- manager 在成功、异常和 WebSocket 断开路径都被关闭。
+- MCP server 启动失败、超时、超限或协议错误不影响 backend tools。
+- 未配置 MCP 时，现有测试和用户行为不变。
 
 ## References
 
-- Official MCP tools spec: https://modelcontextprotocol.io/specification/2025-11-25/server/tools
-- Official MCP transports spec: https://modelcontextprotocol.io/specification/2025-11-25/basic/transports
-- Official MCP lifecycle spec: https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle
-- MCP draft changelog for future compatibility: https://modelcontextprotocol.io/specification/draft/changelog
+- Official MCP tools specification: https://modelcontextprotocol.io/specification/2025-11-25/server/tools
+- Official MCP transports specification: https://modelcontextprotocol.io/specification/2025-11-25/basic/transports
+- Official MCP lifecycle specification: https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle
+- Official MCP Python SDK: https://github.com/modelcontextprotocol/python-sdk
+- MCP draft changelog: https://modelcontextprotocol.io/specification/draft/changelog
+- DeepSeek Chat Completions function constraints: https://api-docs.deepseek.com/api/create-chat-completion
 - Codex local reference: `D:\workspace\projects\codex\codex-rs\core\src\mcp_tool_exposure.rs`
 - Codex local reference: `D:\workspace\projects\codex\codex-rs\core\src\tools\handlers\mcp.rs`
 - Codex local reference: `D:\workspace\projects\codex\codex-rs\core\src\mcp_tool_call.rs`

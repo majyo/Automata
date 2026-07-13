@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from collections.abc import Iterable
 from typing import Any
 
@@ -10,6 +12,7 @@ from automata_api.agent.tools.model import (
     ToolDescriptor,
     ToolDiscoveryContext,
     ToolExposure,
+    AsyncToolProvider,
     ToolProvider,
 )
 from automata_api.agent.tools.providers import BackendToolProvider
@@ -21,14 +24,22 @@ from automata_api.agent.tools.tool_search import (
 )
 
 
+logger = logging.getLogger(__name__)
+DEFAULT_MAX_MODEL_TOOLS = 128
+
+
 class ToolRouter:
-    def __init__(self, descriptors: Iterable[ToolDescriptor]) -> None:
-        self._descriptors = tuple(descriptors)
-        self._descriptors_by_name = build_descriptor_index(self._descriptors)
-        self._activated_deferred: set[str] = set()
-        self._registry = ToolRegistry(
-            descriptor.executor for descriptor in self._descriptors
-        )
+    def __init__(
+        self,
+        descriptors: Iterable[ToolDescriptor],
+        *,
+        max_model_tools: int = DEFAULT_MAX_MODEL_TOOLS,
+    ) -> None:
+        if max_model_tools <= 0:
+            raise ValueError("max_model_tools must be greater than zero")
+        self._max_model_tools = max_model_tools
+        self._activated_deferred: dict[str, None] = {}
+        self._install_descriptors(tuple(descriptors))
 
     @classmethod
     def from_backend(
@@ -68,22 +79,23 @@ class ToolRouter:
         return cls.from_backend(backend, workspace=workspace)
 
     def model_visible_specs(self, *, mode: str = "act") -> list[dict[str, Any]]:
-        specs = [
-            descriptor.spec
-            for descriptor in self._descriptors
-            if self._is_model_visible(descriptor, mode=mode)
-        ]
-        if self._search_candidates(mode=mode):
+        visible = self._visible_descriptors(mode=mode)
+        specs = [descriptor.spec for descriptor in visible]
+        if (
+            len(specs) < self._max_model_tools
+            and self._search_candidates(mode=mode)
+        ):
             specs.append(tool_search_spec())
         return specs
 
     def allowed_names(self, *, mode: str = "act") -> set[str]:
         names = {
-            descriptor.name
-            for descriptor in self._descriptors
-            if self._is_model_visible(descriptor, mode=mode)
+            descriptor.name for descriptor in self._visible_descriptors(mode=mode)
         }
-        if self._search_candidates(mode=mode):
+        if (
+            len(names) < self._max_model_tools
+            and self._search_candidates(mode=mode)
+        ):
             names.add(TOOL_SEARCH_NAME)
         return names
 
@@ -99,14 +111,14 @@ class ToolRouter:
                 raw_arguments,
                 candidates=self._search_candidates(mode=mode),
                 mode=mode,
-                activate=self.activate_deferred,
+                activate=lambda names: self.activate_deferred(names, mode=mode),
             )
 
         descriptor = self._descriptors_by_name.get(name)
         if descriptor is None:
             if mode == "plan":
                 return blocked_by_plan_mode(name, raw_arguments, mode, self.allowed_names(mode=mode))
-            return await self._registry.dispatch(name, raw_arguments)
+            return await self._registry.dispatch(name, raw_arguments, mode=mode)
 
         if mode == "plan" and not descriptor.read_only:
             return blocked_by_plan_mode(name, raw_arguments, mode, self.allowed_names(mode=mode))
@@ -125,16 +137,70 @@ class ToolRouter:
                 hint=f"Use {TOOL_SEARCH_NAME} before calling deferred tool: {name}",
             )
 
-        return await self._registry.dispatch(name, raw_arguments)
+        return await self._registry.dispatch(name, raw_arguments, mode=mode)
 
-    def activate_deferred(self, names: Iterable[str]) -> None:
+    def activate_deferred(
+        self, names: Iterable[str], *, mode: str = "act"
+    ) -> list[str]:
+        activated: list[str] = []
         for name in names:
+            if len(self._visible_descriptors(mode=mode)) >= self._max_model_tools:
+                break
             descriptor = self._descriptors_by_name.get(name)
-            if descriptor is not None and descriptor.exposure == ToolExposure.DEFERRED:
-                self._activated_deferred.add(name)
+            if (
+                descriptor is not None
+                and descriptor.exposure == ToolExposure.DEFERRED
+                and (mode != "plan" or descriptor.read_only)
+            ):
+                self._activated_deferred[name] = None
+                activated.append(name)
+        return activated
 
     def registered_names(self) -> set[str]:
         return set(self._descriptors_by_name)
+
+    def replace_source_descriptors(
+        self,
+        source: str,
+        descriptors: Iterable[ToolDescriptor],
+    ) -> None:
+        replacements = tuple(descriptors)
+        if any(descriptor.source != source for descriptor in replacements):
+            raise ValueError(f"Replacement descriptor source must be {source!r}")
+
+        existing = list(self._descriptors)
+        first_source_index = next(
+            (
+                index
+                for index, descriptor in enumerate(existing)
+                if descriptor.source == source
+            ),
+            len(existing),
+        )
+        remaining = [
+            descriptor for descriptor in existing if descriptor.source != source
+        ]
+        candidate = (
+            remaining[:first_source_index]
+            + list(replacements)
+            + remaining[first_source_index:]
+        )
+        build_descriptor_index(candidate)
+        ToolRegistry(descriptor.executor for descriptor in candidate)
+
+        activated_identities = {
+            self._descriptor_identity(self._descriptors_by_name[name])
+            for name in self._activated_deferred
+            if name in self._descriptors_by_name
+        }
+        self._activated_deferred = {}
+        self._install_descriptors(tuple(candidate))
+        for descriptor in self._descriptors:
+            if (
+                descriptor.exposure == ToolExposure.DEFERRED
+                and self._descriptor_identity(descriptor) in activated_identities
+            ):
+                self._activated_deferred[descriptor.name] = None
 
     def _is_model_visible(self, descriptor: ToolDescriptor, *, mode: str) -> bool:
         if mode == "plan" and not descriptor.read_only:
@@ -146,6 +212,13 @@ class ToolRouter:
             and descriptor.name in self._activated_deferred
         )
 
+    def _visible_descriptors(self, *, mode: str) -> list[ToolDescriptor]:
+        return [
+            descriptor
+            for descriptor in self._descriptors
+            if self._is_model_visible(descriptor, mode=mode)
+        ][: self._max_model_tools]
+
     def _search_candidates(self, *, mode: str) -> list[ToolDescriptor]:
         return [
             descriptor
@@ -154,6 +227,56 @@ class ToolRouter:
             and descriptor.name not in self._activated_deferred
             and (mode != "plan" or descriptor.read_only)
         ]
+
+    def _install_descriptors(
+        self, descriptors: tuple[ToolDescriptor, ...]
+    ) -> None:
+        self._descriptors = descriptors
+        self._descriptors_by_name = build_descriptor_index(descriptors)
+        self._registry = ToolRegistry(
+            descriptor.executor for descriptor in descriptors
+        )
+        self._activated_deferred = {
+            name: None
+            for name in self._activated_deferred
+            if name in self._descriptors_by_name
+        }
+
+    @staticmethod
+    def _descriptor_identity(descriptor: ToolDescriptor) -> str:
+        return descriptor.identity or f"{descriptor.source}:{descriptor.name}"
+
+
+class ToolRouterBuilder:
+    async def build(
+        self,
+        *,
+        context: ToolDiscoveryContext,
+        sync_providers: Iterable[ToolProvider] = (),
+        async_providers: Iterable[AsyncToolProvider] = (),
+        max_model_tools: int = DEFAULT_MAX_MODEL_TOOLS,
+    ) -> ToolRouter:
+        descriptors: list[ToolDescriptor] = []
+        for provider in sync_providers:
+            descriptors.extend(provider.discover(context))
+
+        providers = tuple(async_providers)
+        if providers:
+            results = await asyncio.gather(
+                *(provider.discover(context) for provider in providers),
+                return_exceptions=True,
+            )
+            for provider, result in zip(providers, results, strict=True):
+                if isinstance(result, BaseException):
+                    logger.warning(
+                        "Async tool provider %s failed: %s",
+                        provider.__class__.__name__,
+                        result,
+                    )
+                    continue
+                descriptors.extend(result)
+
+        return ToolRouter(descriptors, max_model_tools=max_model_tools)
 
 
 def build_descriptor_index(

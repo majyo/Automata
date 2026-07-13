@@ -11,8 +11,8 @@ from automata_api.agent.backends.factory import (
     create_backend,
 )
 from automata_api.agent.llm import AgentProviderError
+from automata_api.agent.mcp.runtime import create_mcp_tool_runtime
 from automata_api.agent.runtime import stream_agent_loop, stream_plan_loop
-from automata_api.agent.tools.router import ToolRouter
 from automata_api.config import AgentConfigurationError
 from automata_api.repositories.agent_store import SessionAgentContextStore
 from automata_api.repositories.sessions import (
@@ -59,25 +59,26 @@ async def stream_agent_reply(
             workspace=session_config["working_directory"],
         )
         async with backend:
-            router = ToolRouter.from_backend(
-                backend,
+            async with create_mcp_tool_runtime(
+                backend=backend,
                 session_id=session_id,
                 workspace=session_config["working_directory"],
                 mode="act",
-            )
-            response = await forward_agent_events(
-                session_id=session_id,
-                websocket=websocket,
-                events=stream_agent_loop(
+            ) as mcp_runtime:
+                await send_mcp_runtime_events(websocket, mcp_runtime)
+                response = await forward_agent_events(
                     session_id=session_id,
-                    store=SessionAgentContextStore(),
-                    workspace=session_config["working_directory"],
-                    workspace_label=backend.workspace_label,
-                    router=router,
-                    tool_notes=backend.prompt_notes(),
-                    approved_plan_content=approved_plan_content,
-                ),
-            )
+                    websocket=websocket,
+                    events=stream_agent_loop(
+                        session_id=session_id,
+                        store=SessionAgentContextStore(),
+                        workspace=session_config["working_directory"],
+                        workspace_label=backend.workspace_label,
+                        router=mcp_runtime.router,
+                        tool_notes=backend.prompt_notes(),
+                        approved_plan_content=approved_plan_content,
+                    ),
+                )
     except SessionNotFoundError as error:
         await websocket.send_json({"type": "error", "message": str(error)})
         return
@@ -122,24 +123,25 @@ async def stream_plan_reply(
             workspace=session_config["working_directory"],
         )
         async with backend:
-            router = ToolRouter.from_backend(
-                backend,
+            async with create_mcp_tool_runtime(
+                backend=backend,
                 session_id=session_id,
                 workspace=session_config["working_directory"],
                 mode="plan",
-            )
-            response = await forward_agent_events(
-                session_id=session_id,
-                websocket=websocket,
-                events=stream_plan_loop(
+            ) as mcp_runtime:
+                await send_mcp_runtime_events(websocket, mcp_runtime)
+                response = await forward_agent_events(
                     session_id=session_id,
-                    store=SessionAgentContextStore(),
-                    workspace=session_config["working_directory"],
-                    workspace_label=backend.workspace_label,
-                    router=router,
-                    tool_notes=backend.prompt_notes(),
-                ),
-            )
+                    websocket=websocket,
+                    events=stream_plan_loop(
+                        session_id=session_id,
+                        store=SessionAgentContextStore(),
+                        workspace=session_config["working_directory"],
+                        workspace_label=backend.workspace_label,
+                        router=mcp_runtime.router,
+                        tool_notes=backend.prompt_notes(),
+                    ),
+                )
     except SessionNotFoundError as error:
         await websocket.send_json({"type": "error", "message": str(error)})
         return
@@ -197,6 +199,26 @@ async def stream_approved_plan_reply(
         approved_plan_content=str(plan["content"]),
         approved_plan_id=plan_id,
     )
+
+
+async def send_mcp_runtime_events(websocket: WebSocket, runtime) -> None:
+    for warning in runtime.warnings:
+        await websocket.send_json(
+            {
+                "type": "mcp_server_status",
+                "status": "warning",
+                "message": warning,
+            }
+        )
+    for candidate in runtime.candidates:
+        await websocket.send_json(
+            {
+                "type": "mcp_server_candidate",
+                "server": candidate.name,
+                "provenance": candidate.provenance,
+                "fingerprint": candidate.fingerprint,
+            }
+        )
 
 
 async def forward_agent_events(

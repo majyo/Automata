@@ -1,6 +1,6 @@
 from typing import Any, Literal, NotRequired, TypedDict
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class CreateSessionRequest(BaseModel):
@@ -11,6 +11,28 @@ class CreateSessionRequest(BaseModel):
 
 class UpdateSessionRequest(BaseModel):
     title: str
+
+
+class McpGrantRequest(BaseModel):
+    workspace: str
+    connection: Literal["allow", "deny"] = "allow"
+    trust: Literal["trusted", "untrusted"] = "untrusted"
+    default_call_policy: Literal["allow", "deny", "prompt"] = "prompt"
+    scope: Literal["global", "workspace"] = "workspace"
+    tool_call_policies: dict[str, Literal["allow", "deny", "prompt"]] = Field(
+        default_factory=dict
+    )
+
+
+class McpServerStatus(BaseModel):
+    name: str
+    provenance: Literal["explicit", "user", "workspace", "packaged"]
+    fingerprint: str
+    transport: Literal["stdio", "streamable_http"]
+    granted: bool
+    connection: Literal["allow", "deny"]
+    trust: Literal["trusted", "untrusted"]
+    default_call_policy: Literal["allow", "deny", "prompt"]
 
 
 class SessionSummary(BaseModel):

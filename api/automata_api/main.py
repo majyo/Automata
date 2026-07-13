@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from automata_api.config import get_api_config, load_local_env
 from automata_api.db.schema import init_db
-from automata_api.routers import chat, health, sessions
+from automata_api.routers import chat, health, mcp, sessions
 
 
 load_local_env()
@@ -32,6 +32,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health.router)
     app.include_router(sessions.router)
+    app.include_router(mcp.router)
     app.include_router(chat.router)
     return app
 

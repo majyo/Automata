@@ -89,8 +89,34 @@ def run_tool_search(
 
     limit = normalized_limit(arguments.get("limit"))
     matches = search_tool_descriptors(query, candidates, limit)
-    activated_names = [descriptor.name for descriptor in matches]
-    activate(activated_names)
+    requested_names = [descriptor.name for descriptor in matches]
+    activation_result = activate(requested_names)
+    activated_names = (
+        list(activation_result)
+        if activation_result is not None
+        else requested_names
+    )
+    activated_set = set(activated_names)
+    activated_matches = [
+        descriptor for descriptor in matches if descriptor.name in activated_set
+    ]
+
+    if matches and not activated_names:
+        return ToolResult(
+            name=TOOL_SEARCH_NAME,
+            arguments=arguments,
+            content=json_response(
+                {
+                    "simulated": False,
+                    "tool": TOOL_SEARCH_NAME,
+                    "ok": False,
+                    "mode": mode,
+                    "query": query,
+                    "error": "tool_activation_limit_reached",
+                }
+            ),
+            success=False,
+        )
 
     return ToolResult(
         name=TOOL_SEARCH_NAME,
@@ -103,7 +129,10 @@ def run_tool_search(
                 "mode": mode,
                 "query": query,
                 "activated_tools": activated_names,
-                "tools": [search_result_payload(descriptor) for descriptor in matches],
+                "tools": [
+                    search_result_payload(descriptor)
+                    for descriptor in activated_matches
+                ],
             },
             ensure_ascii=True,
         ),

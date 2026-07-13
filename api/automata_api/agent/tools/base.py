@@ -1,12 +1,12 @@
 from abc import ABC, abstractmethod
-from typing import Any, ClassVar
+from typing import Any
 
 from ._core import ToolResult
 
 
 class AgentTool(ABC):
-    name: ClassVar[str]
-    read_only: ClassVar[bool] = False
+    name: str
+    read_only: bool = False
 
     @abstractmethod
     def spec(self) -> dict[str, Any]:
@@ -15,3 +15,9 @@ class AgentTool(ABC):
     @abstractmethod
     async def run(self, arguments: dict[str, Any]) -> ToolResult:
         """Execute this tool."""
+
+    async def run_in_mode(
+        self, arguments: dict[str, Any], *, mode: str
+    ) -> ToolResult:
+        del mode
+        return await self.run(arguments)

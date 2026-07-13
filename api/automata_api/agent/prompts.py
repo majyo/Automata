@@ -58,8 +58,7 @@ def plan_system_prompt(
     tool_notes: str | None = None,
 ) -> str:
     current_workspace = workspace or agent_workspace()
-    allowed_names = tuple(sorted(allowed_tool_names)) if allowed_tool_names else DEFAULT_PLAN_TOOL_NAMES
-    allowed_text = ", ".join(allowed_names)
+    del allowed_tool_names
     notes = tool_notes or DEFAULT_TOOL_NOTES
     return (
         f"{get_system_prompt()}\n\n"
@@ -68,8 +67,9 @@ def plan_system_prompt(
         "implementation-ready Markdown plan for the user's request. Inspect "
         "the workspace with read-only tools as needed, but do not execute the "
         "implementation.\n\n"
-        f"Allowed tools in Plan mode are {allowed_text}. Do not call tools "
-        "outside this read-only list in Plan mode. Do not call exec_command, "
+        "Only call tools present in the current model-visible tool list. "
+        "Runtime policy rejects mutating or unapproved tools in Plan mode. "
+        "Do not call exec_command, "
         "run_bash, write_file, or apply_patch in Plan mode.\n\n"
         f"{notes}\n\n"
         "Return only the plan content. Include enough detail that a later "

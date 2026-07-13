@@ -25,6 +25,7 @@ class ToolDescriptor:
     exposure: ToolExposure = ToolExposure.DIRECT
     source: str = "backend"
     search_text: str | None = None
+    identity: str | None = None
 
 
 @dataclass(frozen=True)
@@ -39,3 +40,10 @@ class ToolDiscoveryContext:
 class ToolProvider(Protocol):
     def discover(self, context: ToolDiscoveryContext) -> tuple[ToolDescriptor, ...]:
         """Return tool descriptors available for this discovery context."""
+
+
+class AsyncToolProvider(Protocol):
+    async def discover(
+        self, context: ToolDiscoveryContext
+    ) -> tuple[ToolDescriptor, ...]:
+        """Asynchronously return descriptors for this discovery context."""

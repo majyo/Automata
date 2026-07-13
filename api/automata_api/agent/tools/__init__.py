@@ -9,9 +9,15 @@ from .registry import (
     registered_tools,
     tool_for_name,
 )
-from .model import ToolDescriptor, ToolDiscoveryContext, ToolExposure, ToolProvider
+from .model import (
+    AsyncToolProvider,
+    ToolDescriptor,
+    ToolDiscoveryContext,
+    ToolExposure,
+    ToolProvider,
+)
 from .providers import BackendToolProvider, StaticToolProvider, descriptor_for_tool
-from .router import ToolRouter
+from .router import ToolRouter, ToolRouterBuilder
 from .tool_search import TOOL_SEARCH_NAME
 
 

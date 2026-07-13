@@ -42,7 +42,8 @@ def test_plan_system_prompt_includes_allowed_and_blocked_tools(monkeypatch, tmp_
     assert "Base system prompt" in prompt
     assert f"Current workspace: {tmp_path}" in prompt
     assert "backend Plan mode" in prompt
-    assert "Allowed tools in Plan mode are read_file, rg, grep" in prompt
+    assert "Only call tools present in the current model-visible tool list" in prompt
+    assert "Runtime policy rejects mutating or unapproved tools" in prompt
     assert "Do not call exec_command, run_bash, write_file" in prompt
     assert "Codex-style patches" in prompt
 

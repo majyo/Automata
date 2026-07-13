@@ -179,3 +179,43 @@ def test_plan_mode_filters_mutating_tools_and_searches_only_read_only_deferred()
         "read_deferred",
     }
     assert "write_deferred" not in router.allowed_names(mode="plan")
+
+
+def test_model_visible_tool_limit_is_preserved_during_activation():
+    router = ToolRouter(
+        [
+            descriptor("read_direct", read_only=True),
+            descriptor(
+                "remote_one",
+                exposure=ToolExposure.DEFERRED,
+                read_only=True,
+                description="Remote records first lookup",
+            ),
+            descriptor(
+                "remote_two",
+                exposure=ToolExposure.DEFERRED,
+                read_only=True,
+                description="Remote records second lookup",
+            ),
+        ],
+        max_model_tools=2,
+    )
+
+    assert tool_names(router.model_visible_specs()) == {
+        "read_direct",
+        TOOL_SEARCH_NAME,
+    }
+    result = asyncio.run(
+        router.dispatch(
+            TOOL_SEARCH_NAME,
+            {"query": "remote records", "limit": 2},
+        )
+    )
+    activated = json.loads(result.content)["activated_tools"]
+
+    assert len(activated) == 1
+    assert len(router.model_visible_specs()) == 2
+    assert tool_names(router.model_visible_specs()) == {
+        "read_direct",
+        activated[0],
+    }

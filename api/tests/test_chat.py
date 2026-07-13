@@ -1,4 +1,6 @@
 import json
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -113,6 +115,143 @@ def test_chat_websocket_reports_missing_llm_config(client):
     assert len(messages) == 1
     assert messages[0]["role"] == "user"
     assert messages[0]["content"] == "hello"
+
+
+def test_chat_websocket_discovers_activates_and_calls_stdio_mcp_tool(
+    client, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    closed_marker = tmp_path / "mcp-closed.txt"
+    call_log = tmp_path / "mcp-call.json"
+    fixture = Path(__file__).parent / "fixtures" / "fake_mcp_server.py"
+    (tmp_path / "mcp.json").write_text(
+        json.dumps(
+            {
+                "servers": {
+                    "fake-stdio": {
+                        "transport": {
+                            "type": "stdio",
+                            "command": sys.executable,
+                            "args": [str(fixture)],
+                            "cwd": "${workspace}",
+                            "env": {
+                                "FAKE_MCP_CLOSED_MARKER": str(closed_marker),
+                                "FAKE_MCP_CALL_LOG": str(call_log),
+                            },
+                        },
+                        "exposure": "deferred",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    grant = client.put(
+        "/mcp/grants/fake-stdio",
+        json={
+            "workspace": str(workspace),
+            "connection": "allow",
+            "trust": "trusted",
+            "default_call_policy": "allow",
+        },
+    )
+    assert grant.status_code == 200
+    session = client.post(
+        "/sessions",
+        json={"title": "MCP Agent", "working_directory": str(workspace)},
+    ).json()
+    calls = []
+    alias = None
+
+    async def fake_create_llm_response(messages, tools=None):
+        nonlocal alias
+        calls.append({"messages": list(messages), "tools": tools})
+        tool_names = {tool["function"]["name"] for tool in tools or []}
+        if len(calls) == 1:
+            assert "tool_search" in tool_names
+            assert not any(name.startswith("mcp__") for name in tool_names)
+            return {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_search_mcp",
+                        "type": "function",
+                        "function": {
+                            "name": "tool_search",
+                            "arguments": json.dumps(
+                                {"query": "remote records echo", "limit": 1}
+                            ),
+                        },
+                    }
+                ],
+            }
+        if len(calls) == 2:
+            aliases = [name for name in tool_names if name.startswith("mcp__")]
+            assert len(aliases) == 1
+            alias = aliases[0]
+            search_result = json.loads(messages[-1]["content"])
+            assert search_result["activated_tools"] == [alias]
+            return {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_mcp_echo",
+                        "type": "function",
+                        "function": {
+                            "name": alias,
+                            "arguments": json.dumps({"value": "from-agent"}),
+                        },
+                    }
+                ],
+            }
+
+        tool_result = json.loads(messages[-1]["content"])
+        assert tool_result["ok"] is True
+        assert tool_result["mcp_tool"] == "records.echo"
+        assert tool_result["structured_content"] == {"echo": "from-agent"}
+        return {
+            "role": "assistant",
+            "content": "MCP call finished.",
+            "tool_calls": [],
+        }
+
+    monkeypatch.setattr(
+        "automata_api.agent.llm.stream_chat_completion",
+        stream_from_completion(fake_create_llm_response),
+    )
+
+    with client.websocket_connect("/ws/chat") as websocket:
+        websocket.receive_json()
+        websocket.send_json(
+            {
+                "type": "prompt",
+                "session_id": session["id"],
+                "prompt": "echo a remote record",
+            }
+        )
+        events = []
+        while True:
+            event = websocket.receive_json()
+            events.append(event)
+            if event["type"] in {"done", "error"}:
+                break
+
+    assert events[-1]["type"] == "done"
+    assert [event["tool"] for event in events if event["type"] == "tool_call"] == [
+        "tool_search",
+        alias,
+    ]
+    assert token_content(events) == "MCP call finished."
+    assert len(calls) == 3
+    assert json.loads(call_log.read_text(encoding="utf-8")) == {
+        "name": "records.echo",
+        "arguments": {"value": "from-agent"},
+    }
+    assert closed_marker.read_text(encoding="utf-8") == "closed\n"
 
 
 def test_chat_websocket_runs_agent_loop_with_read_file_tool(client, monkeypatch, tmp_path):

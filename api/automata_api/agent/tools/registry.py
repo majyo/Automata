@@ -48,7 +48,11 @@ class ToolRegistry:
         }
 
     async def run(
-        self, name: str, raw_arguments: str | dict[str, Any] | None
+        self,
+        name: str,
+        raw_arguments: str | dict[str, Any] | None,
+        *,
+        mode: str = "act",
     ) -> ToolResult:
         arguments, parse_error = parse_tool_arguments(raw_arguments)
         if parse_error:
@@ -82,12 +86,16 @@ class ToolRegistry:
                 success=False,
             )
 
-        return await tool.run(arguments)
+        return await tool.run_in_mode(arguments, mode=mode)
 
     async def dispatch(
-        self, name: str, raw_arguments: str | dict[str, Any] | None
+        self,
+        name: str,
+        raw_arguments: str | dict[str, Any] | None,
+        *,
+        mode: str = "act",
     ) -> ToolResult:
-        return await self.run(name, raw_arguments)
+        return await self.run(name, raw_arguments, mode=mode)
 
 
 def default_tools(backend: Backend) -> tuple[AgentTool, ...]:

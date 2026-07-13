@@ -105,8 +105,8 @@ def test_plan_tool_allowlist_matches_registered_tools_and_prompt():
         "grep",
         "apply_patch_preview",
     }
-    for tool_name in runtime.PLAN_TOOL_NAMES:
-        assert tool_name in prompt
+    assert "current model-visible tool list" in prompt
+    assert "Runtime policy rejects mutating or unapproved tools" in prompt
     for blocked_tool in {"exec_command", "run_bash", "write_file", "apply_patch"}:
         assert blocked_tool in registered_names
         assert blocked_tool not in runtime.PLAN_TOOL_NAMES
