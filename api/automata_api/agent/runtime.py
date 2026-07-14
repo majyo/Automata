@@ -13,6 +13,7 @@ from automata_api.agent.prompts import (
     approved_plan_message,
     plan_system_prompt,
 )
+from automata_api.agent.skills.model import SkillTurnContext
 from automata_api.agent.tools import ToolResult, run_tool, tool_specs
 from automata_api.agent.tools.registry import ToolRegistry, registered_tools
 from automata_api.agent.tools.router import ToolRouter
@@ -45,6 +46,7 @@ async def stream_agent_loop(
     router: ToolRouter | None = None,
     registry: ToolRegistry | None = None,
     tool_notes: str | None = None,
+    skill_context: SkillTurnContext | None = None,
     approved_plan_content: str | None = None,
 ) -> AsyncIterator[AgentLoopEvent]:
     config = get_agent_config()
@@ -55,13 +57,22 @@ async def stream_agent_loop(
         session_id=session_id,
         store=store,
         compression_config=compression_config,
-        system_prompt=agent_system_prompt(workspace_label or workspace, tool_notes=tool_notes),
+        system_prompt=agent_system_prompt(
+            workspace_label or workspace,
+            tool_notes=tool_notes,
+            skill_notes=skill_context.available_notes if skill_context else None,
+        ),
     )
     for event in collector.events:
         yield event
 
     if approved_plan_content:
         messages.insert(1, approved_plan_message(approved_plan_content))
+    insert_skill_messages(
+        messages,
+        skill_context,
+        index=2 if approved_plan_content else 1,
+    )
     tools = router.model_visible_specs(mode="act") if router is not None else tool_specs()
 
     async for event in stream_model_loop(
@@ -88,6 +99,7 @@ async def stream_plan_loop(
     router: ToolRouter | None = None,
     registry: ToolRegistry | None = None,
     tool_notes: str | None = None,
+    skill_context: SkillTurnContext | None = None,
 ) -> AsyncIterator[AgentLoopEvent]:
     config = get_agent_config()
     compression_config = get_context_compression_config()
@@ -110,10 +122,12 @@ async def stream_plan_loop(
             workspace_label or workspace,
             allowed_tool_names=allowed_tool_names,
             tool_notes=tool_notes,
+            skill_notes=skill_context.available_notes if skill_context else None,
         ),
     )
     for event in collector.events:
         yield event
+    insert_skill_messages(messages, skill_context, index=1)
     tools = (
         router.model_visible_specs(mode="plan")
         if router is not None
@@ -137,6 +151,7 @@ async def stream_plan_loop(
         store=store,
     ):
         yield event
+
 
 async def stream_model_loop(
     *,
@@ -227,6 +242,7 @@ async def stream_model_loop(
         f"Agent reached the maximum step limit ({MAX_AGENT_STEPS}) before finishing."
     )
 
+
 async def stream_execute_tool_call(
     *,
     messages: list[dict[str, Any]],
@@ -289,6 +305,22 @@ async def save_context_message_if_possible(
         return
 
     await asyncio.to_thread(store.save_context_message, session_id, message)
+
+
+def insert_skill_messages(
+    messages: list[dict[str, Any]],
+    skill_context: SkillTurnContext | None,
+    *,
+    index: int,
+) -> None:
+    if skill_context is None or not skill_context.injected_messages:
+        return
+
+    bounded_index = max(1, min(index, len(messages)))
+    messages[bounded_index:bounded_index] = [
+        dict(message) for message in skill_context.injected_messages
+    ]
+
 
 def tool_specs_for_names(
     tools: list[dict[str, Any]], allowed_names: set[str]

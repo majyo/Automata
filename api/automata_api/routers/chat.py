@@ -66,10 +66,19 @@ async def chat(websocket: WebSocket) -> None:
             )
             if str(payload.get("mode", "")).strip() == "plan":
                 await stream_plan_reply(
-                    websocket, session_id, prompt, user_message["id"]
+                    websocket,
+                    session_id,
+                    prompt,
+                    user_message["id"],
+                    payload.get("skills"),
                 )
             else:
-                await stream_agent_reply(websocket, session_id, prompt)
+                await stream_agent_reply(
+                    websocket,
+                    session_id,
+                    prompt,
+                    payload.get("skills"),
+                )
     except WebSocketDisconnect:
         return
 

@@ -13,6 +13,10 @@ from automata_api.agent.backends.factory import (
 from automata_api.agent.llm import AgentProviderError
 from automata_api.agent.mcp.runtime import create_mcp_tool_runtime
 from automata_api.agent.runtime import stream_agent_loop, stream_plan_loop
+from automata_api.agent.skills.runtime import (
+    create_skill_turn_context,
+    skill_selections_from_payload,
+)
 from automata_api.config import AgentConfigurationError
 from automata_api.repositories.agent_store import SessionAgentContextStore
 from automata_api.repositories.sessions import (
@@ -44,6 +48,7 @@ async def stream_agent_reply(
     websocket: WebSocket,
     session_id: str,
     prompt: str,
+    selected_skills: object = None,
     approved_plan_content: str | None = None,
     approved_plan_id: str | None = None,
 ) -> None:
@@ -66,6 +71,14 @@ async def stream_agent_reply(
                 mode="act",
             ) as mcp_runtime:
                 await send_mcp_runtime_events(websocket, mcp_runtime)
+                skill_context = await create_skill_turn_context(
+                    workspace=session_config["working_directory"],
+                    mode="act",
+                    prompt=prompt,
+                    selected_skills=skill_selections_from_payload(selected_skills),
+                    router=mcp_runtime.router,
+                )
+                await send_skill_runtime_events(websocket, skill_context)
                 response = await forward_agent_events(
                     session_id=session_id,
                     websocket=websocket,
@@ -76,6 +89,7 @@ async def stream_agent_reply(
                         workspace_label=backend.workspace_label,
                         router=mcp_runtime.router,
                         tool_notes=backend.prompt_notes(),
+                        skill_context=skill_context,
                         approved_plan_content=approved_plan_content,
                     ),
                 )
@@ -109,7 +123,11 @@ async def stream_agent_reply(
 
 
 async def stream_plan_reply(
-    websocket: WebSocket, session_id: str, prompt: str, prompt_message_id: str
+    websocket: WebSocket,
+    session_id: str,
+    prompt: str,
+    prompt_message_id: str,
+    selected_skills: object = None,
 ) -> None:
     await websocket.send_json(
         {"type": "started", "session_id": session_id, "prompt": prompt, "mode": "plan"}
@@ -130,6 +148,14 @@ async def stream_plan_reply(
                 mode="plan",
             ) as mcp_runtime:
                 await send_mcp_runtime_events(websocket, mcp_runtime)
+                skill_context = await create_skill_turn_context(
+                    workspace=session_config["working_directory"],
+                    mode="plan",
+                    prompt=prompt,
+                    selected_skills=skill_selections_from_payload(selected_skills),
+                    router=mcp_runtime.router,
+                )
+                await send_skill_runtime_events(websocket, skill_context)
                 response = await forward_agent_events(
                     session_id=session_id,
                     websocket=websocket,
@@ -140,6 +166,7 @@ async def stream_plan_reply(
                         workspace_label=backend.workspace_label,
                         router=mcp_runtime.router,
                         tool_notes=backend.prompt_notes(),
+                        skill_context=skill_context,
                     ),
                 )
     except SessionNotFoundError as error:
@@ -217,6 +244,27 @@ async def send_mcp_runtime_events(websocket: WebSocket, runtime) -> None:
                 "server": candidate.name,
                 "provenance": candidate.provenance,
                 "fingerprint": candidate.fingerprint,
+            }
+        )
+
+
+async def send_skill_runtime_events(websocket: WebSocket, skill_context) -> None:
+    if skill_context.loaded_count:
+        await websocket.send_json(
+            {
+                "type": "skills_loaded",
+                "count": skill_context.loaded_count,
+                "enabled_count": skill_context.enabled_count,
+            }
+        )
+    for warning in skill_context.warnings:
+        await websocket.send_json({"type": "skills_warning", "message": warning})
+    for skill in skill_context.selected:
+        await websocket.send_json(
+            {
+                "type": "skill_injected",
+                "name": skill.name,
+                "path": str(skill.path),
             }
         )
 

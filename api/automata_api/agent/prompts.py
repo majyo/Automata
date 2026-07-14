@@ -56,10 +56,12 @@ def plan_system_prompt(
     *,
     allowed_tool_names: set[str] | None = None,
     tool_notes: str | None = None,
+    skill_notes: str | None = None,
 ) -> str:
     current_workspace = workspace or agent_workspace()
     del allowed_tool_names
     notes = tool_notes or DEFAULT_TOOL_NOTES
+    skills = f"\n\n{skill_notes.strip()}" if skill_notes and skill_notes.strip() else ""
     return (
         f"{get_system_prompt()}\n\n"
         f"Current workspace: {current_workspace}\n\n"
@@ -71,7 +73,7 @@ def plan_system_prompt(
         "Runtime policy rejects mutating or unapproved tools in Plan mode. "
         "Do not call exec_command, "
         "run_bash, write_file, or apply_patch in Plan mode.\n\n"
-        f"{notes}\n\n"
+        f"{notes}{skills}\n\n"
         "Return only the plan content. Include enough detail that a later "
         "approved execution can follow it without asking the user to choose "
         "between implementation options."
@@ -79,12 +81,16 @@ def plan_system_prompt(
 
 
 def agent_system_prompt(
-    workspace: str | None = None, *, tool_notes: str | None = None
+    workspace: str | None = None,
+    *,
+    tool_notes: str | None = None,
+    skill_notes: str | None = None,
 ) -> str:
     current_workspace = workspace or agent_workspace()
     notes = tool_notes or DEFAULT_TOOL_NOTES
+    skills = f"\n\n{skill_notes.strip()}" if skill_notes and skill_notes.strip() else ""
     return (
         f"{get_system_prompt()}\n\n"
         f"Current workspace: {current_workspace}\n\n"
-        f"{notes}"
+        f"{notes}{skills}"
     )

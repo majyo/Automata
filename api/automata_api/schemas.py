@@ -58,6 +58,56 @@ class MessageRecord(BaseModel):
     plan_status: Literal["pending", "approved", "executed", "superseded"] | None = None
 
 
+class SkillSelectionPayload(TypedDict):
+    name: NotRequired[str]
+    path: NotRequired[str]
+
+
+class SkillInterfaceRecord(BaseModel):
+    display_name: str | None = None
+    short_description: str | None = None
+    icon_small: str | None = None
+    icon_large: str | None = None
+    brand_color: str | None = None
+    default_prompt: str | None = None
+
+
+class SkillToolDependencyRecord(BaseModel):
+    type: str
+    value: str | None = None
+    description: str | None = None
+    query: str | None = None
+    server: str | None = None
+    tool: str | None = None
+    read_only: bool | None = None
+
+
+class SkillDependenciesRecord(BaseModel):
+    tools: list[SkillToolDependencyRecord] = Field(default_factory=list)
+
+
+class SkillRecord(BaseModel):
+    name: str
+    description: str
+    short_description: str | None = None
+    path: str
+    scope: Literal["repo", "user", "packaged", "extra", "plugin"]
+    enabled: bool
+    interface: SkillInterfaceRecord | None = None
+    dependencies: SkillDependenciesRecord | None = None
+
+
+class SkillErrorRecord(BaseModel):
+    path: str
+    message: str
+
+
+class SkillsListResponse(BaseModel):
+    workspace: str
+    skills: list[SkillRecord]
+    errors: list[SkillErrorRecord] = Field(default_factory=list)
+
+
 class ChatPayload(TypedDict):
     type: str
     session_id: NotRequired[str]
@@ -66,3 +116,4 @@ class ChatPayload(TypedDict):
     mode: NotRequired[str]
     content: NotRequired[str]
     message: NotRequired[dict[str, Any] | str]
+    skills: NotRequired[list[SkillSelectionPayload]]
