@@ -178,6 +178,7 @@ class McpToolProvider:
             spec=spec,
             executor=executor,
             read_only=read_only,
+            risk="external",
             exposure=exposure,
             source=f"mcp:{definition.name}",
             search_text=search_text,

@@ -3,7 +3,8 @@ import { Activity } from "lucide-react";
 import { MessageList } from "./MessageList";
 import { PromptComposer } from "../composer/PromptComposer";
 import { WorkspacePicker } from "../sessions/WorkspacePicker";
-import type { ChatMessage, SendMode } from "../../types/chat";
+import { ToolApprovalCard } from "./ToolApprovalCard";
+import type { ApprovalDecision, ChatMessage, SendMode, ToolApprovalRequest } from "../../types/chat";
 import type { SessionSummary } from "../../types/session";
 
 type ConversationPanelProps = {
@@ -18,12 +19,15 @@ type ConversationPanelProps = {
   sendMode: SendMode;
   isStreaming: boolean;
   canSend: boolean;
+  approvals: ToolApprovalRequest[];
   onChooseDirectory(): void;
   onWorkingDirectoryChange(workingDirectory: string): void;
   onSubmit(event: FormEvent<HTMLFormElement>): void;
   onPromptChange(prompt: string): void;
   onSendModeChange(sendMode: SendMode): void;
   onApprovePlan(message: ChatMessage): void;
+  onRespondToApproval(approval: ToolApprovalRequest, decision: ApprovalDecision): void;
+  onCancelRun(): void;
 };
 
 export function ConversationPanel({
@@ -38,12 +42,15 @@ export function ConversationPanel({
   sendMode,
   isStreaming,
   canSend,
+  approvals,
   onChooseDirectory,
   onWorkingDirectoryChange,
   onSubmit,
   onPromptChange,
   onSendModeChange,
   onApprovePlan,
+  onRespondToApproval,
+  onCancelRun,
 }: ConversationPanelProps) {
   return (
     <section className="conversation-panel" aria-label="Agent conversation">
@@ -86,6 +93,7 @@ export function ConversationPanel({
               canSend={canSend}
               onPromptChange={onPromptChange}
               onSendModeChange={onSendModeChange}
+              onCancel={onCancelRun}
             />
           </form>
         </div>
@@ -99,6 +107,9 @@ export function ConversationPanel({
           />
 
           <form className="composer-form" onSubmit={onSubmit}>
+            {approvals[0] ? (
+              <ToolApprovalCard approval={approvals[0]} onRespond={onRespondToApproval} />
+            ) : null}
             <PromptComposer
               prompt={prompt}
               sendMode={sendMode}
@@ -106,6 +117,7 @@ export function ConversationPanel({
               canSend={canSend}
               onPromptChange={onPromptChange}
               onSendModeChange={onSendModeChange}
+              onCancel={onCancelRun}
             />
           </form>
         </>

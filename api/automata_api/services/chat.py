@@ -1,16 +1,18 @@
 import asyncio
 import json
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, Protocol
 
 import httpx
-from fastapi import WebSocket
 
 from automata_api.agent.backends.factory import (
     BackendConfigurationError,
     create_backend,
 )
 from automata_api.agent.llm import AgentProviderError
+from automata_api.agent.execution.approval import ApprovalBroker
+from automata_api.agent.execution.model import CancellationToken
+from automata_api.agent.execution.orchestrator import ToolExecutionOrchestrator
 from automata_api.agent.mcp.runtime import create_mcp_tool_runtime
 from automata_api.agent.runtime import stream_agent_loop, stream_plan_loop
 from automata_api.agent.skills.runtime import (
@@ -31,7 +33,11 @@ from automata_api.repositories.sessions import (
 from automata_api.schemas import ChatPayload
 
 
-async def receive_payload(websocket: WebSocket) -> ChatPayload:
+class JsonSender(Protocol):
+    async def send_json(self, data: Any) -> None: ...
+
+
+async def receive_payload(websocket) -> ChatPayload:
     message = await websocket.receive_text()
     try:
         payload = json.loads(message)
@@ -45,15 +51,23 @@ async def receive_payload(websocket: WebSocket) -> ChatPayload:
 
 
 async def stream_agent_reply(
-    websocket: WebSocket,
+    websocket: JsonSender,
     session_id: str,
     prompt: str,
+    run_id: str,
+    cancellation: CancellationToken,
+    approval_broker: ApprovalBroker,
     selected_skills: object = None,
     approved_plan_content: str | None = None,
     approved_plan_id: str | None = None,
 ) -> None:
     await websocket.send_json(
-        {"type": "started", "session_id": session_id, "prompt": prompt}
+        {
+            "type": "started",
+            "run_id": run_id,
+            "session_id": session_id,
+            "prompt": prompt,
+        }
     )
     response = ""
 
@@ -70,7 +84,7 @@ async def stream_agent_reply(
                 workspace=session_config["working_directory"],
                 mode="act",
             ) as mcp_runtime:
-                await send_mcp_runtime_events(websocket, mcp_runtime)
+                await send_mcp_runtime_events(websocket, mcp_runtime, run_id)
                 skill_context = await create_skill_turn_context(
                     workspace=session_config["working_directory"],
                     mode="act",
@@ -78,7 +92,7 @@ async def stream_agent_reply(
                     selected_skills=skill_selections_from_payload(selected_skills),
                     router=mcp_runtime.router,
                 )
-                await send_skill_runtime_events(websocket, skill_context)
+                await send_skill_runtime_events(websocket, skill_context, run_id)
                 response = await forward_agent_events(
                     session_id=session_id,
                     websocket=websocket,
@@ -91,46 +105,72 @@ async def stream_agent_reply(
                         tool_notes=backend.prompt_notes(),
                         skill_context=skill_context,
                         approved_plan_content=approved_plan_content,
+                        run_id=run_id,
+                        cancellation=cancellation,
+                        orchestrator=ToolExecutionOrchestrator(
+                            approval_broker=approval_broker
+                        ),
                     ),
+                    run_id=run_id,
                 )
     except SessionNotFoundError as error:
-        await websocket.send_json({"type": "error", "message": str(error)})
+        await websocket.send_json(
+            {"type": "error", "run_id": run_id, "message": str(error)}
+        )
         return
     except BackendConfigurationError as error:
-        await websocket.send_json({"type": "error", "message": str(error)})
+        await websocket.send_json(
+            {"type": "error", "run_id": run_id, "message": str(error)}
+        )
         return
     except AgentConfigurationError as error:
-        await websocket.send_json({"type": "error", "message": str(error)})
+        await websocket.send_json(
+            {"type": "error", "run_id": run_id, "message": str(error)}
+        )
         return
     except AgentProviderError as error:
-        await websocket.send_json({"type": "error", "message": str(error)})
+        await websocket.send_json(
+            {"type": "error", "run_id": run_id, "message": str(error)}
+        )
         return
     except httpx.RequestError as error:
         await websocket.send_json(
             {
                 "type": "error",
+                "run_id": run_id,
                 "message": f"LLM request failed: {error.__class__.__name__}",
             }
         )
         return
 
+    cancellation.raise_if_cancelled()
     message = await run_repository_call(
         save_message, session_id=session_id, role="agent", content=response
     )
     if approved_plan_id:
         await run_repository_call(mark_plan_executed, session_id, approved_plan_id)
-    await websocket.send_json({"type": "done", "message": message})
+    cancellation.raise_if_cancelled()
+    await websocket.send_json({"type": "done", "run_id": run_id, "message": message})
 
 
 async def stream_plan_reply(
-    websocket: WebSocket,
+    websocket: JsonSender,
     session_id: str,
     prompt: str,
     prompt_message_id: str,
+    run_id: str,
+    cancellation: CancellationToken,
+    approval_broker: ApprovalBroker,
     selected_skills: object = None,
 ) -> None:
     await websocket.send_json(
-        {"type": "started", "session_id": session_id, "prompt": prompt, "mode": "plan"}
+        {
+            "type": "started",
+            "run_id": run_id,
+            "session_id": session_id,
+            "prompt": prompt,
+            "mode": "plan",
+        }
     )
     response = ""
 
@@ -147,7 +187,7 @@ async def stream_plan_reply(
                 workspace=session_config["working_directory"],
                 mode="plan",
             ) as mcp_runtime:
-                await send_mcp_runtime_events(websocket, mcp_runtime)
+                await send_mcp_runtime_events(websocket, mcp_runtime, run_id)
                 skill_context = await create_skill_turn_context(
                     workspace=session_config["working_directory"],
                     mode="plan",
@@ -155,7 +195,7 @@ async def stream_plan_reply(
                     selected_skills=skill_selections_from_payload(selected_skills),
                     router=mcp_runtime.router,
                 )
-                await send_skill_runtime_events(websocket, skill_context)
+                await send_skill_runtime_events(websocket, skill_context, run_id)
                 response = await forward_agent_events(
                     session_id=session_id,
                     websocket=websocket,
@@ -167,29 +207,45 @@ async def stream_plan_reply(
                         router=mcp_runtime.router,
                         tool_notes=backend.prompt_notes(),
                         skill_context=skill_context,
+                        run_id=run_id,
+                        cancellation=cancellation,
+                        orchestrator=ToolExecutionOrchestrator(
+                            approval_broker=approval_broker
+                        ),
                     ),
+                    run_id=run_id,
                 )
     except SessionNotFoundError as error:
-        await websocket.send_json({"type": "error", "message": str(error)})
+        await websocket.send_json(
+            {"type": "error", "run_id": run_id, "message": str(error)}
+        )
         return
     except BackendConfigurationError as error:
-        await websocket.send_json({"type": "error", "message": str(error)})
+        await websocket.send_json(
+            {"type": "error", "run_id": run_id, "message": str(error)}
+        )
         return
     except AgentConfigurationError as error:
-        await websocket.send_json({"type": "error", "message": str(error)})
+        await websocket.send_json(
+            {"type": "error", "run_id": run_id, "message": str(error)}
+        )
         return
     except AgentProviderError as error:
-        await websocket.send_json({"type": "error", "message": str(error)})
+        await websocket.send_json(
+            {"type": "error", "run_id": run_id, "message": str(error)}
+        )
         return
     except httpx.RequestError as error:
         await websocket.send_json(
             {
                 "type": "error",
+                "run_id": run_id,
                 "message": f"LLM request failed: {error.__class__.__name__}",
             }
         )
         return
 
+    cancellation.raise_if_cancelled()
     message = await run_repository_call(
         save_message, session_id=session_id, role="agent", content=response
     )
@@ -203,36 +259,54 @@ async def stream_plan_reply(
     await websocket.send_json(
         {
             "type": "plan_ready",
+            "run_id": run_id,
             "session_id": session_id,
             "plan_id": plan["id"],
             "status": plan["status"],
             "content": response,
         }
     )
-    await websocket.send_json({"type": "done", "message": message})
+    cancellation.raise_if_cancelled()
+    await websocket.send_json({"type": "done", "run_id": run_id, "message": message})
 
 
 async def stream_approved_plan_reply(
-    websocket: WebSocket, session_id: str, plan: dict[str, Any]
+    websocket: JsonSender,
+    session_id: str,
+    plan: dict[str, Any],
+    run_id: str,
+    cancellation: CancellationToken,
+    approval_broker: ApprovalBroker,
 ) -> None:
     plan_id = str(plan["id"])
     await websocket.send_json(
-        {"type": "plan_approved", "session_id": session_id, "plan_id": plan_id}
+        {
+            "type": "plan_approved",
+            "run_id": run_id,
+            "session_id": session_id,
+            "plan_id": plan_id,
+        }
     )
     await stream_agent_reply(
         websocket=websocket,
         session_id=session_id,
         prompt=f"Approved plan {plan_id}",
+        run_id=run_id,
+        cancellation=cancellation,
+        approval_broker=approval_broker,
         approved_plan_content=str(plan["content"]),
         approved_plan_id=plan_id,
     )
 
 
-async def send_mcp_runtime_events(websocket: WebSocket, runtime) -> None:
+async def send_mcp_runtime_events(
+    websocket: JsonSender, runtime, run_id: str
+) -> None:
     for warning in runtime.warnings:
         await websocket.send_json(
             {
                 "type": "mcp_server_status",
+                "run_id": run_id,
                 "status": "warning",
                 "message": warning,
             }
@@ -241,6 +315,7 @@ async def send_mcp_runtime_events(websocket: WebSocket, runtime) -> None:
         await websocket.send_json(
             {
                 "type": "mcp_server_candidate",
+                "run_id": run_id,
                 "server": candidate.name,
                 "provenance": candidate.provenance,
                 "fingerprint": candidate.fingerprint,
@@ -248,21 +323,27 @@ async def send_mcp_runtime_events(websocket: WebSocket, runtime) -> None:
         )
 
 
-async def send_skill_runtime_events(websocket: WebSocket, skill_context) -> None:
+async def send_skill_runtime_events(
+    websocket: JsonSender, skill_context, run_id: str
+) -> None:
     if skill_context.loaded_count:
         await websocket.send_json(
             {
                 "type": "skills_loaded",
+                "run_id": run_id,
                 "count": skill_context.loaded_count,
                 "enabled_count": skill_context.enabled_count,
             }
         )
     for warning in skill_context.warnings:
-        await websocket.send_json({"type": "skills_warning", "message": warning})
+        await websocket.send_json(
+            {"type": "skills_warning", "run_id": run_id, "message": warning}
+        )
     for skill in skill_context.selected:
         await websocket.send_json(
             {
                 "type": "skill_injected",
+                "run_id": run_id,
                 "name": skill.name,
                 "path": str(skill.path),
             }
@@ -270,13 +351,17 @@ async def send_skill_runtime_events(websocket: WebSocket, skill_context) -> None
 
 
 async def forward_agent_events(
-    session_id: str, websocket: WebSocket, events: AsyncIterator[dict[str, Any]]
+    session_id: str,
+    websocket: JsonSender,
+    events: AsyncIterator[dict[str, Any]],
+    run_id: str,
 ) -> str:
     pending_agent_parts: list[str] = []
     final_content = ""
     tool_run_message_ids: dict[str, str] = {}
 
     async for event in events:
+        event = {**event, "run_id": run_id}
         event_type = event["type"]
         if event_type == "token":
             content = event.get("content")

@@ -36,6 +36,24 @@ def token_content(events):
     )
 
 
+def receive_agent_event(websocket):
+    while True:
+        event = websocket.receive_json()
+        if event["type"] == "tool_approval_required":
+            websocket.send_json(
+                {
+                    "type": "tool_approval_response",
+                    "run_id": event["run_id"],
+                    "approval_id": event["approval_id"],
+                    "decision": "allow_once",
+                }
+            )
+            continue
+        if event["type"] == "tool_approval_resolved":
+            continue
+        return event
+
+
 def assert_tool_run_message(
     message,
     *,
@@ -103,11 +121,10 @@ def test_chat_websocket_reports_missing_llm_config(client):
 
     assert ready["type"] == "ready"
     assert "Missing AUTOMATA_LLM_API_KEY" in ready["message"]
-    assert started == {
-        "type": "started",
-        "session_id": session["id"],
-        "prompt": "hello",
-    }
+    assert started["type"] == "started"
+    assert started["session_id"] == session["id"]
+    assert started["prompt"] == "hello"
+    assert started["run_id"]
     assert error["type"] == "error"
     assert "Missing AUTOMATA_LLM_API_KEY" in error["message"]
 
@@ -235,7 +252,7 @@ def test_chat_websocket_discovers_activates_and_calls_stdio_mcp_tool(
         )
         events = []
         while True:
-            event = websocket.receive_json()
+            event = receive_agent_event(websocket)
             events.append(event)
             if event["type"] in {"done", "error"}:
                 break
@@ -321,7 +338,7 @@ def test_chat_websocket_runs_agent_loop_with_read_file_tool(client, monkeypatch,
 
         events = []
         while True:
-            event = websocket.receive_json()
+            event = receive_agent_event(websocket)
             events.append(event)
             if event["type"] in {"done", "error"}:
                 break
@@ -414,7 +431,7 @@ def test_chat_websocket_keeps_agent_text_before_and_after_tool_separate(
 
         events = []
         while True:
-            event = websocket.receive_json()
+            event = receive_agent_event(websocket)
             events.append(event)
             if event["type"] in {"done", "error"}:
                 break
@@ -547,7 +564,7 @@ def test_chat_websocket_restores_persisted_tool_protocol_context(
         )
         first_events = []
         while True:
-            event = websocket.receive_json()
+            event = receive_agent_event(websocket)
             first_events.append(event)
             if event["type"] in {"done", "error"}:
                 break
@@ -561,7 +578,7 @@ def test_chat_websocket_restores_persisted_tool_protocol_context(
         )
         second_events = []
         while True:
-            event = websocket.receive_json()
+            event = receive_agent_event(websocket)
             second_events.append(event)
             if event["type"] in {"done", "error"}:
                 break
@@ -684,7 +701,7 @@ def test_chat_websocket_runs_agent_loop_with_real_bash_tool(client, monkeypatch)
 
         events = []
         while True:
-            event = websocket.receive_json()
+            event = receive_agent_event(websocket)
             events.append(event)
             if event["type"] in {"done", "error"}:
                 break
@@ -782,7 +799,7 @@ def test_chat_websocket_runs_agent_loop_with_exec_command_tool(client, monkeypat
 
         events = []
         while True:
-            event = websocket.receive_json()
+            event = receive_agent_event(websocket)
             events.append(event)
             if event["type"] in {"done", "error"}:
                 break
@@ -873,7 +890,7 @@ def test_chat_websocket_runs_agent_loop_with_rg_tool(client, monkeypatch):
 
         events = []
         while True:
-            event = websocket.receive_json()
+            event = receive_agent_event(websocket)
             events.append(event)
             if event["type"] in {"done", "error"}:
                 break
@@ -980,7 +997,7 @@ def test_chat_websocket_runs_agent_loop_with_file_tools(client, monkeypatch, tmp
 
         events = []
         while True:
-            event = websocket.receive_json()
+            event = receive_agent_event(websocket)
             events.append(event)
             if event["type"] in {"done", "error"}:
                 break
@@ -1100,7 +1117,7 @@ def test_chat_websocket_runs_agent_loop_with_apply_patch_tool(client, monkeypatc
 
         events = []
         while True:
-            event = websocket.receive_json()
+            event = receive_agent_event(websocket)
             events.append(event)
             if event["type"] in {"done", "error"}:
                 break
@@ -1176,7 +1193,7 @@ def test_chat_websocket_plan_mode_persists_pending_plan(client, monkeypatch):
 
         events = []
         while True:
-            event = websocket.receive_json()
+            event = receive_agent_event(websocket)
             events.append(event)
             if event["type"] == "done":
                 break
@@ -1258,7 +1275,7 @@ def test_chat_websocket_plan_mode_blocks_mutating_tools(client, monkeypatch, tmp
 
         events = []
         while True:
-            event = websocket.receive_json()
+            event = receive_agent_event(websocket)
             events.append(event)
             if event["type"] == "done":
                 break
@@ -1340,7 +1357,7 @@ def test_chat_websocket_approve_plan_executes_and_marks_executed(client, monkeyp
 
         plan_events = []
         while True:
-            event = websocket.receive_json()
+            event = receive_agent_event(websocket)
             plan_events.append(event)
             if event["type"] == "done":
                 break
@@ -1357,7 +1374,7 @@ def test_chat_websocket_approve_plan_executes_and_marks_executed(client, monkeyp
 
         approve_events = []
         while True:
-            event = websocket.receive_json()
+            event = receive_agent_event(websocket)
             approve_events.append(event)
             if event["type"] == "done":
                 break
@@ -1405,4 +1422,6 @@ def test_chat_websocket_approve_plan_rejects_invalid_plan(client):
         )
         event = websocket.receive_json()
 
-    assert event == {"type": "plan_error", "message": "Plan not found"}
+    assert event["type"] == "plan_error"
+    assert event["message"] == "Plan not found"
+    assert event["run_id"]

@@ -13,6 +13,8 @@ from automata_api.agent.prompts import (
     approved_plan_message,
     plan_system_prompt,
 )
+from automata_api.agent.execution.model import CancellationToken, ToolExecutionContext
+from automata_api.agent.execution.orchestrator import ToolExecutionOrchestrator
 from automata_api.agent.skills.model import SkillTurnContext
 from automata_api.agent.tools import ToolResult, run_tool, tool_specs
 from automata_api.agent.tools.registry import ToolRegistry, registered_tools
@@ -48,7 +50,12 @@ async def stream_agent_loop(
     tool_notes: str | None = None,
     skill_context: SkillTurnContext | None = None,
     approved_plan_content: str | None = None,
+    run_id: str | None = None,
+    cancellation: CancellationToken | None = None,
+    orchestrator: ToolExecutionOrchestrator | None = None,
 ) -> AsyncIterator[AgentLoopEvent]:
+    if cancellation is not None:
+        cancellation.raise_if_cancelled()
     config = get_agent_config()
     compression_config = get_context_compression_config()
     collector = EventCollector()
@@ -86,6 +93,9 @@ async def stream_agent_loop(
         workspace=workspace,
         session_id=session_id,
         store=store,
+        run_id=run_id,
+        cancellation=cancellation,
+        orchestrator=orchestrator,
     ):
         yield event
 
@@ -100,7 +110,12 @@ async def stream_plan_loop(
     registry: ToolRegistry | None = None,
     tool_notes: str | None = None,
     skill_context: SkillTurnContext | None = None,
+    run_id: str | None = None,
+    cancellation: CancellationToken | None = None,
+    orchestrator: ToolExecutionOrchestrator | None = None,
 ) -> AsyncIterator[AgentLoopEvent]:
+    if cancellation is not None:
+        cancellation.raise_if_cancelled()
     config = get_agent_config()
     compression_config = get_context_compression_config()
     collector = EventCollector()
@@ -149,6 +164,9 @@ async def stream_plan_loop(
         workspace=workspace,
         session_id=session_id,
         store=store,
+        run_id=run_id,
+        cancellation=cancellation,
+        orchestrator=orchestrator,
     ):
         yield event
 
@@ -166,8 +184,13 @@ async def stream_model_loop(
     registry: ToolRegistry | None = None,
     session_id: str | None = None,
     store: AgentContextStore | None = None,
+    run_id: str | None = None,
+    cancellation: CancellationToken | None = None,
+    orchestrator: ToolExecutionOrchestrator | None = None,
 ) -> AsyncIterator[AgentLoopEvent]:
     for step in range(1, MAX_AGENT_STEPS + 1):
+        if cancellation is not None:
+            cancellation.raise_if_cancelled()
         yield {
             "type": "agent_step",
             "step": step,
@@ -183,6 +206,8 @@ async def stream_model_loop(
         tool_call_started = False
         emitted_text = False
         async for delta in llm.stream_chat_completion(messages, tools=current_tools):
+            if cancellation is not None:
+                cancellation.raise_if_cancelled()
             accumulator.add(delta)
             if delta.get("tool_calls"):
                 tool_call_started = True
@@ -214,6 +239,9 @@ async def stream_model_loop(
                     registry=registry,
                     session_id=session_id,
                     store=store,
+                    run_id=run_id,
+                    cancellation=cancellation,
+                    orchestrator=orchestrator,
                 ):
                     yield event
             collector = EventCollector()
@@ -228,6 +256,8 @@ async def stream_model_loop(
 
         content = assistant_message.get("content")
         if isinstance(content, str) and content.strip():
+            if cancellation is not None:
+                cancellation.raise_if_cancelled()
             await save_context_message_if_possible(
                 store=store,
                 session_id=session_id,
@@ -254,7 +284,12 @@ async def stream_execute_tool_call(
     allowed_tool_names: set[str] | None = None,
     session_id: str | None = None,
     store: AgentContextStore | None = None,
+    run_id: str | None = None,
+    cancellation: CancellationToken | None = None,
+    orchestrator: ToolExecutionOrchestrator | None = None,
 ) -> AsyncIterator[AgentLoopEvent]:
+    if cancellation is not None:
+        cancellation.raise_if_cancelled()
     function = tool_call.get("function")
     if not isinstance(function, dict):
         raise llm.AgentProviderError("LLM provider returned an invalid tool call.")
@@ -273,7 +308,27 @@ async def stream_execute_tool_call(
         "tool": name,
         "arguments": arguments if isinstance(arguments, str) else "{}",
     }
-    if router is not None:
+    if (
+        router is not None
+        and orchestrator is not None
+        and run_id is not None
+        and session_id is not None
+        and cancellation is not None
+    ):
+        result = await orchestrator.execute(
+            router=router,
+            tool_name=name,
+            raw_arguments=arguments,
+            context=ToolExecutionContext(
+                run_id=run_id,
+                session_id=session_id,
+                tool_call_id=call_id,
+                workspace=workspace or "",
+                mode="plan" if mode == "plan" else "act",
+                cancellation=cancellation,
+            ),
+        )
+    elif router is not None:
         result = await router.dispatch(name, arguments, mode=mode)
     elif allowed_tool_names is not None and name not in allowed_tool_names:
         result = blocked_tool_result(name, arguments, mode, allowed_tool_names)
@@ -281,6 +336,8 @@ async def stream_execute_tool_call(
         result = await registry.run(name, arguments)
     else:
         result = await run_tool(name, arguments, workspace or "")
+    if cancellation is not None:
+        cancellation.raise_if_cancelled()
     yield {
         "type": "tool_result",
         "tool_call_id": call_id,

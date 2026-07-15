@@ -141,7 +141,7 @@ def test_exec_command_timeout_keeps_captured_prefix(tmp_path):
     result = asyncio.run(
         tools.run_tool(
             "exec_command",
-            {"cmd": "printf before; sleep 2", "timeout_seconds": 0.2},
+            {"cmd": "printf before; sleep 3", "timeout_seconds": 1.2},
             str(tmp_path),
         )
     )

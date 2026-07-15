@@ -14,6 +14,20 @@ export type PersistedPlanStatus = "pending" | "approved" | "executed" | "superse
 export type PlanStatus = PersistedPlanStatus | "approving" | "executing" | "error";
 export type SendMode = "execute" | "plan";
 export type ToolRunStatus = "running" | "completed" | "failed";
+export type RunStatus = "idle" | "running" | "waiting_approval" | "cancelling";
+export type ApprovalDecision = "allow_once" | "allow_for_run" | "deny";
+
+export type ToolApprovalRequest = {
+  approval_id: string;
+  run_id: string;
+  tool_call_id: string;
+  tool: string;
+  risk: "read" | "write" | "command" | "destructive" | "external";
+  reason: string;
+  summary: string;
+  preview: Record<string, unknown>;
+  options: ApprovalDecision[];
+};
 
 export type ChatMessage = {
   id: string;

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createAgentSocket } from "../api/websocket";
 import type { ChatAction } from "../state/chatReducer";
 import type { ApiRuntimeConfig } from "../types/api";
-import type { ChatMessage, SendMode } from "../types/chat";
+import type { ApprovalDecision, ChatMessage, SendMode, ToolApprovalRequest } from "../types/chat";
 import type { SocketPayload } from "../types/socket";
 import { formatContextCompressed } from "../utils/format";
 
@@ -35,6 +35,7 @@ export function useAgentSocket({
   const reconnectAttemptRef = useRef(0);
   const shouldReconnectRef = useRef(true);
   const isStreamingRef = useRef(false);
+  const activeRunIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     isStreamingRef.current = isStreaming;
@@ -54,6 +55,7 @@ export function useAgentSocket({
       const messageId = streamingMessageIdRef.current;
       const sessionId = streamingSessionIdRef.current;
       const planId = executingPlanIdRef.current;
+      const runId = activeRunIdRef.current;
 
       chatDispatch({
         type: "streamingFailed",
@@ -63,6 +65,9 @@ export function useAgentSocket({
       });
 
       setIsStreaming(false);
+      isStreamingRef.current = false;
+      chatDispatch({ type: "runFinished", runId: runId ?? undefined });
+      activeRunIdRef.current = null;
       streamingMessageIdRef.current = null;
       streamingSessionIdRef.current = null;
       executingPlanIdRef.current = null;
@@ -103,7 +108,51 @@ export function useAgentSocket({
       if (payload.type === "started") {
         setSocketStatus("Streaming");
         setIsStreaming(true);
+        isStreamingRef.current = true;
+        activeRunIdRef.current = payload.run_id;
+        chatDispatch({ type: "runStarted", runId: payload.run_id });
         nextTokenStartsNewAgentMessageRef.current = false;
+        return;
+      }
+
+      if (payload.type === "tool_approval_required") {
+        setSocketStatus(`Approval required: ${payload.tool}`);
+        chatDispatch({ type: "approvalRequired", approval: payload as ToolApprovalRequest });
+        return;
+      }
+
+      if (payload.type === "tool_approval_resolved") {
+        chatDispatch({ type: "approvalResolved", approvalId: payload.approval_id });
+        setSocketStatus("Streaming");
+        return;
+      }
+
+      if (payload.type === "run_cancel_requested") {
+        chatDispatch({ type: "runCancelRequested", runId: payload.run_id });
+        setSocketStatus("Cancelling");
+        return;
+      }
+
+      if (payload.type === "run_cancelled") {
+        chatDispatch({ type: "runFinished", runId: payload.run_id });
+        setSocketStatus("Ready");
+        setIsStreaming(false);
+        isStreamingRef.current = false;
+        activeRunIdRef.current = null;
+        streamingMessageIdRef.current = null;
+        streamingSessionIdRef.current = null;
+        executingPlanIdRef.current = null;
+        nextTokenStartsNewAgentMessageRef.current = false;
+        toolRunMessageIdsRef.current = {};
+        return;
+      }
+
+      if (payload.type === "approval_error" || payload.type === "run_error") {
+        const message = payload.message ?? payload.code ?? "Run request failed";
+        setSocketStatus(message);
+        if (payload.type === "run_error") {
+          finishStreamingWithError(message);
+        }
         return;
       }
 
@@ -203,6 +252,9 @@ export function useAgentSocket({
       if (payload.type === "done") {
         setSocketStatus("Ready");
         setIsStreaming(false);
+        isStreamingRef.current = false;
+        chatDispatch({ type: "runFinished", runId: payload.run_id });
+        activeRunIdRef.current = null;
         if (executingPlanIdRef.current) {
           chatDispatch({ type: "planStatusChanged", planId: executingPlanIdRef.current, status: "executed" });
           executingPlanIdRef.current = null;
@@ -232,7 +284,7 @@ export function useAgentSocket({
       clearReconnectTimer();
       setSocketStatus("Connecting");
 
-      const socket = createAgentSocket(config.wsChatUrl, {
+      const socket = createAgentSocket(config.wsChatUrl, config.apiToken, {
         onOpen: () => {
           reconnectAttemptRef.current = 0;
           setSocketStatus("Connected");
@@ -250,6 +302,7 @@ export function useAgentSocket({
             finishStreamingWithError("Backend connection closed before a response was received.");
           } else {
             setIsStreaming(false);
+            isStreamingRef.current = false;
           }
           scheduleReconnect();
         },
@@ -307,6 +360,9 @@ export function useAgentSocket({
       };
 
       chatDispatch({ type: "userMessageQueued", message: userMessage });
+      setIsStreaming(true);
+      isStreamingRef.current = true;
+      setSocketStatus("Starting");
       streamingMessageIdRef.current = agentMessage.id;
       nextTokenStartsNewAgentMessageRef.current = false;
       streamingSessionIdRef.current = sessionId;
@@ -330,6 +386,7 @@ export function useAgentSocket({
       setSocketStatus("Backend offline");
       scheduleReconnect();
       setIsStreaming(false);
+      isStreamingRef.current = false;
       streamingMessageIdRef.current = null;
       streamingSessionIdRef.current = null;
       nextTokenStartsNewAgentMessageRef.current = false;
@@ -360,6 +417,7 @@ export function useAgentSocket({
       executingPlanIdRef.current = planId;
       nextTokenStartsNewAgentMessageRef.current = false;
       setIsStreaming(true);
+      isStreamingRef.current = true;
 
       if (socket?.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ type: "approve_plan", session_id: sessionId, plan_id: planId }));
@@ -376,6 +434,7 @@ export function useAgentSocket({
       setSocketStatus("Backend offline");
       scheduleReconnect();
       setIsStreaming(false);
+      isStreamingRef.current = false;
       streamingMessageIdRef.current = null;
       streamingSessionIdRef.current = null;
       executingPlanIdRef.current = null;
@@ -385,6 +444,33 @@ export function useAgentSocket({
     [activeSessionIdRef, chatDispatch, scheduleReconnect],
   );
 
+  const respondToApproval = useCallback((approval: ToolApprovalRequest, decision: ApprovalDecision) => {
+    const socket = socketRef.current;
+    if (socket?.readyState !== WebSocket.OPEN) {
+      setSocketStatus("Backend offline");
+      return;
+    }
+    socket.send(
+      JSON.stringify({
+        type: "tool_approval_response",
+        run_id: approval.run_id,
+        approval_id: approval.approval_id,
+        decision,
+      }),
+    );
+  }, []);
+
+  const cancelRun = useCallback(() => {
+    const socket = socketRef.current;
+    const runId = activeRunIdRef.current;
+    if (!runId || socket?.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    setSocketStatus("Cancelling");
+    chatDispatch({ type: "runCancelRequested", runId });
+    socket.send(JSON.stringify({ type: "cancel_run", run_id: runId }));
+  }, [chatDispatch]);
+
   return {
     socketStatus,
     setSocketStatus,
@@ -393,5 +479,7 @@ export function useAgentSocket({
     connectSocket,
     sendPrompt,
     approvePlan,
+    respondToApproval,
+    cancelRun,
   };
 }

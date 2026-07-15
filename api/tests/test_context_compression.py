@@ -12,6 +12,24 @@ from automata_api.repositories.sessions import (
 )
 
 
+def receive_agent_event(websocket):
+    while True:
+        event = websocket.receive_json()
+        if event["type"] == "tool_approval_required":
+            websocket.send_json(
+                {
+                    "type": "tool_approval_response",
+                    "run_id": event["run_id"],
+                    "approval_id": event["approval_id"],
+                    "decision": "allow_once",
+                }
+            )
+            continue
+        if event["type"] == "tool_approval_resolved":
+            continue
+        return event
+
+
 def compact_event_types(events):
     compacted = []
     previous_was_token = False
@@ -259,7 +277,7 @@ def test_chat_websocket_emits_history_compression_event(client, monkeypatch):
 
         events = []
         while True:
-            event = websocket.receive_json()
+            event = receive_agent_event(websocket)
             events.append(event)
             if event["type"] in {"done", "error"}:
                 break
@@ -328,7 +346,7 @@ def test_chat_websocket_continues_when_history_compression_fails(client, monkeyp
 
         events = []
         while True:
-            event = websocket.receive_json()
+            event = receive_agent_event(websocket)
             events.append(event)
             if event["type"] in {"done", "error"}:
                 break
@@ -414,7 +432,7 @@ def test_chat_websocket_emits_loop_compression_event(client, monkeypatch):
 
         events = []
         while True:
-            event = websocket.receive_json()
+            event = receive_agent_event(websocket)
             events.append(event)
             if event["type"] in {"done", "error"}:
                 break

@@ -5,6 +5,7 @@ export async function requestJson<T>(config: ApiRuntimeConfig, path: string, ini
     ...init,
     headers: {
       "Content-Type": "application/json",
+      Authorization: `Bearer ${config.apiToken}`,
       ...init?.headers,
     },
   });

@@ -43,7 +43,16 @@ def descriptor_for_tool(
         spec=spec,
         executor=tool,
         read_only=tool.read_only,
+        risk=tool_risk(tool),
         exposure=exposure,
         source=source,
         search_text=search_text or tool_search_text_for_spec(tool.name, spec),
     )
+
+
+def tool_risk(tool: AgentTool):
+    if tool.read_only:
+        return "read"
+    if tool.name in {"exec_command", "run_bash", "run_powershell"}:
+        return "command"
+    return "write"

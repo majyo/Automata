@@ -4,6 +4,11 @@ use std::net::TcpListener;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+#[cfg(windows)]
+use std::process::Command as StdCommand;
+
 use serde::Serialize;
 use tauri::{Manager, WindowEvent};
 use tauri_plugin_shell::{
@@ -15,10 +20,10 @@ const DEFAULT_API_HOST: &str = "127.0.0.1";
 const DEFAULT_API_PORT: u16 = 8765;
 const API_SIDECAR: &str = "automata-api";
 
-#[derive(Default)]
 struct BackendState {
     child: Mutex<Option<CommandChild>>,
     status: Mutex<String>,
+    api_token: String,
 }
 
 #[derive(Clone)]
@@ -33,6 +38,7 @@ struct ApiConfigResponse {
     http_base_url: String,
     ws_chat_url: String,
     default_working_directory: String,
+    api_token: String,
 }
 
 #[tauri::command]
@@ -42,16 +48,18 @@ fn agent_status(workspace: &str, state: tauri::State<'_, BackendState>) -> Strin
 }
 
 #[tauri::command]
-fn api_config() -> ApiConfigResponse {
-    resolve_api_config().to_response()
+fn api_config(state: tauri::State<'_, BackendState>) -> ApiConfigResponse {
+    resolve_api_config().to_response(&state.api_token)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let api_token = generate_api_token();
     tauri::Builder::default()
         .manage(BackendState {
             child: Mutex::new(None),
             status: Mutex::new("Starting".to_string()),
+            api_token,
         })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -117,11 +125,13 @@ fn start_api_sidecar(app: &mut tauri::App) {
         }
     };
     let workspace_dir = resolve_workspace_dir();
+    let api_token = app.state::<BackendState>().api_token.clone();
 
     match sidecar
         .env("AUTOMATA_DATA_DIR", data_dir)
         .env("AUTOMATA_API_HOST", api_config.host)
         .env("AUTOMATA_API_PORT", api_config.port.to_string())
+        .env("AUTOMATA_API_TOKEN", api_token)
         .env(
             "AUTOMATA_WORKSPACE_DIR",
             workspace_dir.to_string_lossy().to_string(),
@@ -191,9 +201,28 @@ fn stop_api_sidecar(app_handle: &tauri::AppHandle) {
     };
 
     if let Some(child) = child {
-        let _ = child.kill();
+        kill_process_tree(child);
         set_backend_status(app_handle, "Stopped sidecar");
     }
+}
+
+#[cfg(windows)]
+fn kill_process_tree(child: CommandChild) {
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    let pid = child.pid().to_string();
+    let killed = StdCommand::new("taskkill")
+        .args(["/PID", &pid, "/T", "/F"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .is_ok_and(|status| status.success());
+    if !killed {
+        let _ = child.kill();
+    }
+}
+
+#[cfg(not(windows))]
+fn kill_process_tree(child: CommandChild) {
+    let _ = child.kill();
 }
 
 fn set_backend_status(app_handle: &tauri::AppHandle, status: impl Into<String>) {
@@ -218,14 +247,24 @@ fn resolve_api_config() -> ResolvedApiConfig {
 
 impl ResolvedApiConfig {
     fn address(&self) -> String {
+        if self.host.contains(':') && !self.host.starts_with('[') {
+            return format!("[{}]:{}", self.host, self.port);
+        }
         format!("{}:{}", self.host, self.port)
     }
 
-    fn to_response(&self) -> ApiConfigResponse {
+    fn to_response(&self, api_token: &str) -> ApiConfigResponse {
         ApiConfigResponse {
             http_base_url: format!("http://{}", self.address()),
             ws_chat_url: format!("ws://{}/ws/chat", self.address()),
             default_working_directory: resolve_workspace_dir().to_string_lossy().to_string(),
+            api_token: api_token.to_string(),
         }
     }
+}
+
+fn generate_api_token() -> String {
+    let mut bytes = [0_u8; 32];
+    getrandom::fill(&mut bytes).expect("operating system random source");
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }

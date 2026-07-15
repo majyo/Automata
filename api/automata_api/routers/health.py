@@ -10,4 +10,5 @@ router = APIRouter()
 
 @router.get("/health")
 async def health() -> dict[str, Any]:
-    return {"status": "ok", "agent": agent_status()}
+    status = agent_status()
+    return {"status": "ok", "agent": {"status": status["status"]}}

@@ -3,7 +3,7 @@ import { ConversationPanel } from "../conversation/ConversationPanel";
 import { Sidebar } from "./Sidebar";
 import { FloatingInspector } from "./FloatingInspector";
 import { Topbar } from "./Topbar";
-import type { ChatMessage, SendMode } from "../../types/chat";
+import type { ApprovalDecision, ChatMessage, SendMode, ToolApprovalRequest } from "../../types/chat";
 import type { SessionSummary } from "../../types/session";
 
 type AppShellProps = {
@@ -23,6 +23,7 @@ type AppShellProps = {
   sendMode: SendMode;
   isStreaming: boolean;
   canSend: boolean;
+  approvals: ToolApprovalRequest[];
   onCreateSession(): void;
   onSelectSession(sessionId: string): void;
   onStartRename(session: SessionSummary): void;
@@ -37,6 +38,8 @@ type AppShellProps = {
   onPromptChange(prompt: string): void;
   onSendModeChange(sendMode: SendMode): void;
   onApprovePlan(message: ChatMessage): void;
+  onRespondToApproval(approval: ToolApprovalRequest, decision: ApprovalDecision): void;
+  onCancelRun(): void;
 };
 
 export function AppShell({
@@ -56,6 +59,7 @@ export function AppShell({
   sendMode,
   isStreaming,
   canSend,
+  approvals,
   onCreateSession,
   onSelectSession,
   onStartRename,
@@ -70,6 +74,8 @@ export function AppShell({
   onPromptChange,
   onSendModeChange,
   onApprovePlan,
+  onRespondToApproval,
+  onCancelRun,
 }: AppShellProps) {
   const title = isNewSessionDraft ? "New session" : activeSession?.title ?? "Agent workspace";
 
@@ -111,12 +117,15 @@ export function AppShell({
             sendMode={sendMode}
             isStreaming={isStreaming}
             canSend={canSend}
+            approvals={approvals}
             onChooseDirectory={onChooseDirectory}
             onWorkingDirectoryChange={onWorkingDirectoryChange}
             onSubmit={onSubmit}
             onPromptChange={onPromptChange}
             onSendModeChange={onSendModeChange}
             onApprovePlan={onApprovePlan}
+            onRespondToApproval={onRespondToApproval}
+            onCancelRun={onCancelRun}
           />
         </section>
       </section>

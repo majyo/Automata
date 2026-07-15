@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Protocol, TYPE_CHECKING
 
+from automata_api.agent.execution.model import ToolRisk
 from automata_api.agent.tools.base import AgentTool
 
 if TYPE_CHECKING:
@@ -22,6 +23,7 @@ class ToolDescriptor:
     spec: dict[str, Any]
     executor: AgentTool
     read_only: bool
+    risk: ToolRisk = "read"
     exposure: ToolExposure = ToolExposure.DIRECT
     source: str = "backend"
     search_text: str | None = None

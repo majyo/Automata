@@ -139,6 +139,38 @@ class ToolRouter:
 
         return await self._registry.dispatch(name, raw_arguments, mode=mode)
 
+    def execution_descriptor(
+        self, name: str, *, mode: str = "act"
+    ) -> ToolDescriptor | None:
+        if name == TOOL_SEARCH_NAME:
+            return None
+        descriptor = self._descriptors_by_name.get(name)
+        if descriptor is None or not self._is_model_visible(descriptor, mode=mode):
+            return None
+        return descriptor
+
+    async def dispatch_authorized(
+        self,
+        name: str,
+        raw_arguments: str | dict[str, Any] | None,
+        *,
+        mode: str = "act",
+    ) -> ToolResult:
+        if name == TOOL_SEARCH_NAME:
+            return await self.dispatch(name, raw_arguments, mode=mode)
+        descriptor = self._descriptors_by_name.get(name)
+        if descriptor is None:
+            return await self.dispatch(name, raw_arguments, mode=mode)
+        if mode == "plan" and not descriptor.read_only:
+            return blocked_by_plan_mode(
+                name, raw_arguments, mode, self.allowed_names(mode=mode)
+            )
+        if not self._is_model_visible(descriptor, mode=mode):
+            return await self.dispatch(name, raw_arguments, mode=mode)
+        return await self._registry.run_authorized(
+            name, raw_arguments, mode=mode
+        )
+
     def activate_deferred(
         self, names: Iterable[str], *, mode: str = "act"
     ) -> list[str]:

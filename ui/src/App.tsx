@@ -114,6 +114,7 @@ function App() {
       sendMode={sendMode}
       isStreaming={agentSocket.isStreaming}
       canSend={canSend}
+      approvals={chatState.approvals}
       onCreateSession={handleCreateSession}
       onSelectSession={sessions.actions.selectSession}
       onStartRename={sessions.actions.startRename}
@@ -128,6 +129,8 @@ function App() {
       onPromptChange={setPrompt}
       onSendModeChange={setSendMode}
       onApprovePlan={agentSocket.approvePlan}
+      onRespondToApproval={agentSocket.respondToApproval}
+      onCancelRun={agentSocket.cancelRun}
     />
   );
 }

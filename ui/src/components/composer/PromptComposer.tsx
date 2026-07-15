@@ -1,4 +1,4 @@
-import { Send } from "lucide-react";
+import { Send, Square } from "lucide-react";
 import { SendModeToggle } from "./SendModeToggle";
 import type { SendMode } from "../../types/chat";
 
@@ -11,6 +11,7 @@ type PromptComposerProps = {
   draft?: boolean;
   onPromptChange(prompt: string): void;
   onSendModeChange(sendMode: SendMode): void;
+  onCancel(): void;
 };
 
 export function PromptComposer({
@@ -22,6 +23,7 @@ export function PromptComposer({
   draft,
   onPromptChange,
   onSendModeChange,
+  onCancel,
 }: PromptComposerProps) {
   return (
     <div className={`composer ${draft ? "draft" : ""}`}>
@@ -32,8 +34,14 @@ export function PromptComposer({
         onChange={(event) => onPromptChange(event.currentTarget.value)}
         placeholder="Ask the local coding agent..."
       />
-      <button className="composer-submit" type="submit" aria-label="Send prompt" disabled={!canSend}>
-        <Send size={18} />
+      <button
+        className={`composer-submit ${isStreaming ? "stop" : ""}`}
+        type={isStreaming ? "button" : "submit"}
+        aria-label={isStreaming ? "Stop run" : "Send prompt"}
+        disabled={isStreaming ? false : !canSend}
+        onClick={isStreaming ? onCancel : undefined}
+      >
+        {isStreaming ? <Square size={16} fill="currentColor" /> : <Send size={18} />}
       </button>
     </div>
   );

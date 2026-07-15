@@ -63,6 +63,7 @@ future provider requests.
 Headless backend-only mode from the repository root:
 
 ```powershell
+$env:AUTOMATA_API_TOKEN = '<at-least-32-random-characters>'
 .\run.ps1 headless
 ```
 
@@ -74,8 +75,11 @@ checks that need to verify the API independently. The health endpoint is:
 http://127.0.0.1:8765/health
 ```
 
-Override the bind address with `AUTOMATA_API_HOST` and `AUTOMATA_API_PORT` when
-running multiple isolated checks.
+All API routes except `/health` require
+`Authorization: Bearer <AUTOMATA_API_TOKEN>`, and WebSocket clients must send
+the same token in an `authenticate` first frame. The API only accepts loopback
+bind addresses. Override `AUTOMATA_API_PORT` when running multiple isolated
+checks.
 
 From `api/`:
 

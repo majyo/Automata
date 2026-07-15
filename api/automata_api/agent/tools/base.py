@@ -21,3 +21,8 @@ class AgentTool(ABC):
     ) -> ToolResult:
         del mode
         return await self.run(arguments)
+
+    async def run_authorized(
+        self, arguments: dict[str, Any], *, mode: str
+    ) -> ToolResult:
+        return await self.run_in_mode(arguments, mode=mode)

@@ -10,6 +10,11 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from automata_api.agent.execution.process import (
+    process_supervisor,
+    subprocess_group_kwargs,
+)
+
 from .patch_codex import (
     CodexPatchFile,
     apply_codex_hunks_to_content,
@@ -126,36 +131,42 @@ async def capture_process_output(
     stdout_limit: int,
     stderr_limit: int,
 ) -> CapturedProcessOutput:
-    stdout_task = asyncio.create_task(
-        read_limited_stream(process.stdout, stdout_limit)
-    )
-    stderr_task = asyncio.create_task(
-        read_limited_stream(process.stderr, stderr_limit)
-    )
-    wait_task = asyncio.create_task(process.wait())
-    timed_out = False
-
+    managed = await process_supervisor.register(process)
     try:
-        exit_code = await asyncio.wait_for(
-            asyncio.shield(wait_task), timeout=timeout_seconds
+        stdout_task = asyncio.create_task(
+            read_limited_stream(process.stdout, stdout_limit)
         )
-    except TimeoutError:
-        timed_out = True
-        if process.returncode is None:
-            try:
-                process.kill()
-            except ProcessLookupError:
-                pass
-        await wait_task
-        exit_code = None
+        stderr_task = asyncio.create_task(
+            read_limited_stream(process.stderr, stderr_limit)
+        )
+        wait_task = asyncio.create_task(process.wait())
+        timed_out = False
 
-    stdout, stderr = await asyncio.gather(stdout_task, stderr_task)
-    return CapturedProcessOutput(
-        stdout=stdout,
-        stderr=stderr,
-        exit_code=exit_code,
-        timed_out=timed_out,
-    )
+        try:
+            exit_code = await asyncio.wait_for(
+                asyncio.shield(wait_task), timeout=timeout_seconds
+            )
+        except TimeoutError:
+            timed_out = True
+            await process_supervisor.terminate(managed)
+            await asyncio.shield(wait_task)
+            exit_code = None
+        except asyncio.CancelledError:
+            await process_supervisor.terminate(managed)
+            await asyncio.gather(
+                wait_task, stdout_task, stderr_task, return_exceptions=True
+            )
+            raise
+
+        stdout, stderr = await asyncio.gather(stdout_task, stderr_task)
+        return CapturedProcessOutput(
+            stdout=stdout,
+            stderr=stderr,
+            exit_code=exit_code,
+            timed_out=timed_out,
+        )
+    finally:
+        await process_supervisor.unregister(managed)
 
 
 async def read_limited_stream(
@@ -440,6 +451,7 @@ async def run_process(
             cwd=str(cwd_path),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            **subprocess_group_kwargs(),
         )
     except OSError as error:
         return {
@@ -1538,6 +1550,7 @@ async def run_exec_command(arguments: dict[str, Any], workspace: str) -> ToolRes
             cwd=str(cwd_result),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            **subprocess_group_kwargs(),
         )
     except OSError as error:
         duration_seconds = round(time.monotonic() - started_at, 3)
@@ -1690,6 +1703,7 @@ async def run_bash(arguments: dict[str, Any], workspace: str) -> ToolResult:
             cwd=str(cwd_result),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            **subprocess_group_kwargs(),
         )
     except OSError as error:
         return bash_error_result(

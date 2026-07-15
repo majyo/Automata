@@ -228,6 +228,7 @@ class LocalBackend(Backend):
                 cwd=str(cwd_path),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                **core.subprocess_group_kwargs(),
             )
         except OSError as error:
             raise BackendError(

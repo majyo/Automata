@@ -4,6 +4,7 @@ export type ApiRuntimeConfig = {
   httpBaseUrl: string;
   wsChatUrl: string;
   defaultWorkingDirectory: string;
+  apiToken: string;
 };
 
 export type ApiMessage = {

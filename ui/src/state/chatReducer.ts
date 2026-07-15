@@ -1,8 +1,11 @@
-import type { ChatMessage, PlanStatus } from "../types/chat";
+import type { ChatMessage, PlanStatus, RunStatus, ToolApprovalRequest } from "../types/chat";
 import type { SocketPayload } from "../types/socket";
 
 export type ChatState = {
   messages: ChatMessage[];
+  activeRunId: string | null;
+  runStatus: RunStatus;
+  approvals: ToolApprovalRequest[];
 };
 
 type ToolCallPayload = Extract<SocketPayload, { type: "tool_call" }>;
@@ -21,23 +24,65 @@ export type ChatAction =
   | { type: "runEventAppended"; sessionId?: string; text: string; id: string }
   | { type: "toolCallStarted"; sessionId?: string; payload: ToolCallPayload; messageId: string; toolCallId: string }
   | { type: "toolCallCompleted"; sessionId?: string; payload: ToolResultPayload; messageId: string; toolCallId: string }
-  | { type: "streamingFailed"; messageId?: string | null; sessionId?: string | null; errorText: string };
+  | { type: "streamingFailed"; messageId?: string | null; sessionId?: string | null; errorText: string }
+  | { type: "runStarted"; runId: string }
+  | { type: "approvalRequired"; approval: ToolApprovalRequest }
+  | { type: "approvalResolved"; approvalId: string }
+  | { type: "runCancelRequested"; runId: string }
+  | { type: "runFinished"; runId?: string };
 
 export const initialChatState: ChatState = {
   messages: [],
+  activeRunId: null,
+  runStatus: "idle",
+  approvals: [],
 };
 
 export function chatReducer(state: ChatState, action: ChatAction): ChatState {
+  if (action.type === "runStarted") {
+    return { ...state, activeRunId: action.runId, runStatus: "running", approvals: [] };
+  }
+
+  if (action.type === "approvalRequired") {
+    return {
+      ...state,
+      runStatus: "waiting_approval",
+      approvals: [...state.approvals.filter((item) => item.approval_id !== action.approval.approval_id), action.approval],
+    };
+  }
+
+  if (action.type === "approvalResolved") {
+    return {
+      ...state,
+      runStatus: "running",
+      approvals: state.approvals.filter((item) => item.approval_id !== action.approvalId),
+    };
+  }
+
+  if (action.type === "runCancelRequested") {
+    if (state.activeRunId !== action.runId) {
+      return state;
+    }
+    return { ...state, runStatus: "cancelling", approvals: [] };
+  }
+
+  if (action.type === "runFinished") {
+    if (action.runId && state.activeRunId && action.runId !== state.activeRunId) {
+      return state;
+    }
+    return { ...state, activeRunId: null, runStatus: "idle", approvals: [] };
+  }
+
   if (action.type === "messagesLoaded") {
-    return { messages: action.messages };
+    return { ...state, messages: action.messages };
   }
 
   if (action.type === "messagesCleared") {
-    return { messages: [] };
+    return { ...state, messages: [] };
   }
 
   if (action.type === "userMessageQueued" || action.type === "agentMessageQueued") {
-    return { messages: [...state.messages, action.message] };
+    return { ...state, messages: [...state.messages, action.message] };
   }
 
   if (action.type === "tokenReceived") {
@@ -48,6 +93,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     const hasMessage = state.messages.some((message) => message.id === action.messageId);
     if (!hasMessage) {
       return {
+        ...state,
         messages: [
           ...state.messages,
           {
@@ -61,6 +107,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     }
 
     return {
+      ...state,
       messages: state.messages.map((message) =>
         message.id === action.messageId ? { ...message, text: `${message.text}${action.content}` } : message,
       ),
@@ -81,13 +128,15 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
 
     return state.messages.some((message) => message.id === messageId)
       ? {
+          ...state,
           messages: state.messages.map((message) => (message.id === messageId ? { ...message, ...nextMessage } : message)),
         }
-      : { messages: [...state.messages, nextMessage] };
+      : { ...state, messages: [...state.messages, nextMessage] };
   }
 
   if (action.type === "planStatusChanged") {
     return {
+      ...state,
       messages: state.messages.map((message) =>
         message.plan_id === action.planId ? { ...message, plan_status: action.status } : message,
       ),
@@ -100,6 +149,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     }
 
     return {
+      ...state,
       messages: state.messages.map((message) =>
         message.kind === "plan" && (message.plan_status === "pending" || message.plan_status === "approving")
           ? { ...message, plan_status: "error" }
@@ -110,6 +160,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
 
   if (action.type === "runEventAppended") {
     return {
+      ...state,
       messages: [
         ...state.messages,
         {
@@ -124,6 +175,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
 
   if (action.type === "toolCallStarted") {
     return {
+      ...state,
       messages: [
         ...state.messages,
         {
@@ -152,6 +204,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     const hasMessage = state.messages.some((message) => message.id === action.messageId);
     if (!hasMessage) {
       return {
+        ...state,
         messages: [
           ...state.messages,
           {
@@ -172,6 +225,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     }
 
     return {
+      ...state,
       messages: state.messages.map((message) =>
         message.id === action.messageId
           ? {
@@ -197,6 +251,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     const hasMessage = state.messages.some((message) => message.id === action.messageId);
     if (!hasMessage) {
       return {
+        ...state,
         messages: [
           ...state.messages,
           {
@@ -210,6 +265,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     }
 
     return {
+      ...state,
       messages: state.messages.map((message) =>
         message.id === action.messageId && !message.text.trim() ? { ...message, text: action.errorText } : message,
       ),

@@ -222,6 +222,10 @@ function Invoke-HeadlessApi {
     $env:AUTOMATA_WORKSPACE_DIR = $RootDir
   }
 
+  if (-not $env:AUTOMATA_API_TOKEN -or $env:AUTOMATA_API_TOKEN.Trim().Length -lt 32) {
+    throw "Headless mode requires AUTOMATA_API_TOKEN with at least 32 characters."
+  }
+
   $ApiHostValue = if ($env:AUTOMATA_API_HOST) { $env:AUTOMATA_API_HOST } else { "127.0.0.1" }
   $ApiPortValue = if ($env:AUTOMATA_API_PORT) { $env:AUTOMATA_API_PORT } else { "8765" }
 

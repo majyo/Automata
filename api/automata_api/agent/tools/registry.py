@@ -97,6 +97,21 @@ class ToolRegistry:
     ) -> ToolResult:
         return await self.run(name, raw_arguments, mode=mode)
 
+    async def run_authorized(
+        self,
+        name: str,
+        raw_arguments: str | dict[str, Any] | None,
+        *,
+        mode: str = "act",
+    ) -> ToolResult:
+        arguments, parse_error = parse_tool_arguments(raw_arguments)
+        if parse_error:
+            return await self.run(name, raw_arguments, mode=mode)
+        tool = self._tools_by_name.get(name)
+        if tool is None:
+            return await self.run(name, arguments, mode=mode)
+        return await tool.run_authorized(arguments, mode=mode)
+
 
 def default_tools(backend: Backend) -> tuple[AgentTool, ...]:
     return (

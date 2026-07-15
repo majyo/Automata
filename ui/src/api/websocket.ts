@@ -8,10 +8,13 @@ export type AgentSocketHandlers = {
   onError(): void;
 };
 
-export function createAgentSocket(url: string, handlers: AgentSocketHandlers): WebSocket {
+export function createAgentSocket(url: string, apiToken: string, handlers: AgentSocketHandlers): WebSocket {
   const socket = new WebSocket(url);
 
-  socket.addEventListener("open", handlers.onOpen);
+  socket.addEventListener("open", () => {
+    socket.send(JSON.stringify({ type: "authenticate", token: apiToken }));
+    handlers.onOpen();
+  });
   socket.addEventListener("message", (event) => {
     let payload: SocketPayload;
     try {

@@ -31,10 +31,7 @@ export async function updateSession(config: ApiRuntimeConfig, sessionId: string,
 }
 
 export async function deleteSession(config: ApiRuntimeConfig, sessionId: string): Promise<void> {
-  const response = await fetch(`${config.httpBaseUrl}/sessions/${sessionId}`, { method: "DELETE" });
-  if (!response.ok) {
-    throw new Error(`Delete failed: ${response.status}`);
-  }
+  await requestJson<unknown>(config, `/sessions/${sessionId}`, { method: "DELETE" });
 }
 
 export async function fetchMessages(config: ApiRuntimeConfig, sessionId: string): Promise<ChatMessage[]> {

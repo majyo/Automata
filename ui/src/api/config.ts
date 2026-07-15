@@ -5,12 +5,13 @@ export const DEFAULT_API_CONFIG: ApiRuntimeConfig = {
   httpBaseUrl: "http://127.0.0.1:8765",
   wsChatUrl: "ws://127.0.0.1:8765/ws/chat",
   defaultWorkingDirectory: "",
+  apiToken: "",
 };
 
 export async function loadApiConfig(): Promise<ApiRuntimeConfig> {
   try {
     const config = await invoke<ApiRuntimeConfig>("api_config");
-    if (config.httpBaseUrl.trim() && config.wsChatUrl.trim()) {
+    if (config.httpBaseUrl.trim() && config.wsChatUrl.trim() && config.apiToken.trim()) {
       return {
         ...config,
         defaultWorkingDirectory: config.defaultWorkingDirectory?.trim() ?? "",

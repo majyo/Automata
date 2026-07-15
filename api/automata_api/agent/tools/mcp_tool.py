@@ -50,6 +50,13 @@ class McpAgentTool(AgentTool):
     def spec(self) -> dict[str, Any]:
         return self._spec
 
+    def policy_decision(self, arguments: dict, *, mode: str):
+        return self._policy.evaluate(
+            tool=self.metadata,
+            arguments=arguments,
+            mode=mode,
+        )
+
     async def run(self, arguments: dict[str, Any]) -> ToolResult:
         return await self.run_in_mode(arguments, mode="act")
 
@@ -68,6 +75,31 @@ class McpAgentTool(AgentTool):
             if decision.action == "deny":
                 raise McpError(decision.reason, decision.reason)
 
+            started = time.perf_counter()
+            result = await self._manager.call_tool(
+                self.metadata.server_name,
+                self.metadata.original_name,
+                arguments,
+            )
+            return mcp_result_to_tool_result(
+                metadata=self.metadata,
+                arguments=arguments,
+                result=result,
+                duration_seconds=time.perf_counter() - started,
+            )
+        except McpError as error:
+            return mcp_error_tool_result(
+                metadata=self.metadata,
+                arguments=arguments,
+                error=error,
+            )
+
+    async def run_authorized(
+        self, arguments: dict[str, Any], *, mode: str
+    ) -> ToolResult:
+        del mode
+        try:
+            validate_arguments(self.metadata.input_schema, arguments)
             started = time.perf_counter()
             result = await self._manager.call_tool(
                 self.metadata.server_name,
