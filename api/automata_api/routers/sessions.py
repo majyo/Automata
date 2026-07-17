@@ -7,6 +7,7 @@ from automata_api.repositories import sessions as session_repository
 from automata_api.repositories.sessions import (
     InvalidBackendError,
     InvalidWorkingDirectoryError,
+    SessionHasActiveRunError,
     SessionNotFoundError,
 )
 from automata_api.schemas import (
@@ -58,6 +59,15 @@ async def delete_session(session_id: str) -> None:
         await run_repository_call(session_repository.delete_session, session_id)
     except SessionNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+    except SessionHasActiveRunError as error:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "session_busy",
+                "run_id": error.run_id,
+                "message": str(error),
+            },
+        ) from error
 
 
 @router.get("/sessions/{session_id}/messages", response_model=list[MessageRecord])

@@ -1,5 +1,6 @@
 import { Plus, Sparkles, TerminalSquare } from "lucide-react";
 import { SessionList } from "../sessions/SessionList";
+import type { PersistedRunStatus } from "../../types/chat";
 import type { SessionSummary } from "../../types/session";
 
 type SidebarProps = {
@@ -7,7 +8,8 @@ type SidebarProps = {
   activeSessionId: string | null;
   editingSessionId: string | null;
   editingTitle: string;
-  isStreaming: boolean;
+  activeRunIdBySession: Record<string, string>;
+  runStatusBySession: Record<string, PersistedRunStatus>;
   onCreateSession(): void;
   onSelectSession(sessionId: string): void;
   onStartRename(session: SessionSummary): void;
@@ -22,7 +24,8 @@ export function Sidebar({
   activeSessionId,
   editingSessionId,
   editingTitle,
-  isStreaming,
+  activeRunIdBySession,
+  runStatusBySession,
   onCreateSession,
   onSelectSession,
   onStartRename,
@@ -55,7 +58,8 @@ export function Sidebar({
         activeSessionId={activeSessionId}
         editingSessionId={editingSessionId}
         editingTitle={editingTitle}
-        disabled={isStreaming}
+        activeRunIdBySession={activeRunIdBySession}
+        runStatusBySession={runStatusBySession}
         onSelect={onSelectSession}
         onStartRename={onStartRename}
         onEditingTitleChange={onEditingTitleChange}

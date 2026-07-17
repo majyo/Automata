@@ -1,4 +1,5 @@
 import { SessionListItem } from "./SessionListItem";
+import type { PersistedRunStatus } from "../../types/chat";
 import type { SessionSummary } from "../../types/session";
 
 type SessionListProps = {
@@ -6,7 +7,8 @@ type SessionListProps = {
   activeSessionId: string | null;
   editingSessionId: string | null;
   editingTitle: string;
-  disabled: boolean;
+  activeRunIdBySession: Record<string, string>;
+  runStatusBySession: Record<string, PersistedRunStatus>;
   onSelect(sessionId: string): void;
   onStartRename(session: SessionSummary): void;
   onEditingTitleChange(title: string): void;
@@ -23,7 +25,8 @@ export function SessionList(props: SessionListProps) {
           key={session.id}
           session={session}
           isActive={session.id === props.activeSessionId}
-          disabled={props.disabled}
+          isRunning={Boolean(props.activeRunIdBySession[session.id])}
+          runStatus={props.runStatusBySession[session.id]}
           editingSessionId={props.editingSessionId}
           editingTitle={props.editingTitle}
           onSelect={props.onSelect}

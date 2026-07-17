@@ -2,26 +2,23 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from automata_api.agent.execution.approval import (
-    ApprovalBroker,
-    ApprovalResolutionError,
+from automata_api.agent.execution.approval import ApprovalResolutionError
+from automata_api.agent.execution.coordinator import (
+    RunHandle,
+    run_coordinator,
 )
-from automata_api.agent.execution.model import CancellationToken
-from automata_api.agent.execution.process import process_supervisor
-from automata_api.agent.execution.runs import ActiveRun, active_run_registry
+from automata_api.agent.execution.event_hub import run_event_hub
+from automata_api.agent.execution.model import RunOutcome
 from automata_api.agent.status import agent_ready_message
 from automata_api.config import get_api_config
+from automata_api.repositories import runs as run_repository
 from automata_api.repositories.sessions import (
-    PlanNotFoundError,
-    PlanStateError,
-    SessionNotFoundError,
-    approve_plan,
     save_context_message,
-    save_message,
     session_exists,
 )
 from automata_api.security import authenticate_websocket
@@ -39,31 +36,57 @@ class SerializedWebSocketSender:
         self._websocket = websocket
         self._lock = asyncio.Lock()
         self._closed = False
-        self._cancelled_runs: set[str] = set()
+        self._replay_buffers: dict[str, list[dict[str, Any]]] = {}
 
-    def mark_run_cancelled(self, run_id: str) -> None:
-        self._cancelled_runs.add(run_id)
-
-    def finish_cancelled_run(self, run_id: str) -> None:
-        self._cancelled_runs.discard(run_id)
+    @property
+    def closed(self) -> bool:
+        return self._closed
 
     def close(self) -> None:
         self._closed = True
+        self._replay_buffers.clear()
 
     async def send_json(self, data: Any) -> None:
-        if self._closed:
-            return
-        if isinstance(data, dict):
-            run_id = data.get("run_id")
-            if (
-                isinstance(run_id, str)
-                and run_id in self._cancelled_runs
-                and data.get("type") not in {"run_cancel_requested", "run_cancelled"}
-            ):
-                return
         async with self._lock:
-            if not self._closed:
-                await self._websocket.send_json(data)
+            await self._send_locked(data)
+
+    async def publish_json(self, data: Any) -> None:
+        async with self._lock:
+            if isinstance(data, dict):
+                run_id = data.get("run_id")
+                if isinstance(run_id, str) and run_id in self._replay_buffers:
+                    self._replay_buffers[run_id].append(data)
+                    return
+            await self._send_locked(data)
+
+    async def begin_replay(self, run_id: str) -> None:
+        async with self._lock:
+            self._replay_buffers.setdefault(run_id, [])
+
+    async def send_replay_event(self, event: dict[str, Any]) -> None:
+        async with self._lock:
+            await self._send_locked(event)
+
+    async def abort_replay(self, run_id: str) -> None:
+        async with self._lock:
+            self._replay_buffers.pop(run_id, None)
+
+    async def finish_replay(
+        self,
+        run_id: str,
+        watermark: int,
+        completion: dict[str, Any],
+    ) -> None:
+        async with self._lock:
+            buffered = self._replay_buffers.pop(run_id, [])
+            for event in sorted(buffered, key=lambda item: int(item.get("seq", 0))):
+                if int(event.get("seq", 0)) > watermark:
+                    await self._send_locked(event)
+            await self._send_locked(completion)
+
+    async def _send_locked(self, data: Any) -> None:
+        if not self._closed:
+            await self._websocket.send_json(data)
 
 
 class AgentConnection:
@@ -71,7 +94,6 @@ class AgentConnection:
         self.websocket = websocket
         self.sender = SerializedWebSocketSender(websocket)
         self.connection_id = uuid.uuid4().hex
-        self.active_run: ActiveRun | None = None
 
     async def serve(self) -> None:
         authenticated = await authenticate_websocket(
@@ -81,18 +103,28 @@ class AgentConnection:
         if not authenticated:
             return
 
-        await self.sender.send_json(
-            {"type": "ready", "message": agent_ready_message()}
-        )
+        await run_event_hub.register(self.sender)
         try:
+            active_runs = await run_repository_call(
+                run_repository.list_runs,
+                non_terminal_only=True,
+                limit=500,
+            )
+            await self.sender.send_json(
+                {
+                    "type": "ready",
+                    "message": agent_ready_message(),
+                    "active_runs": active_runs,
+                }
+            )
             while True:
                 payload = await receive_payload(self.websocket)
                 await self._handle_payload(payload)
         except (WebSocketDisconnect, RuntimeError):
             pass
         finally:
+            await run_event_hub.unregister(self.sender)
             self.sender.close()
-            await self._cancel_active_run("WebSocket disconnected.", notify=False)
 
     async def _handle_payload(self, payload: dict[str, Any]) -> None:
         payload_type = payload.get("type")
@@ -102,7 +134,14 @@ class AgentConnection:
         if payload_type == "cancel_run":
             await self._handle_cancel(payload)
             return
-        if payload_type not in {"prompt", "approve_plan"}:
+        if payload_type == "resume_run":
+            await self._resume_run(payload)
+            return
+        if payload_type not in {
+            "prompt",
+            "approve_plan",
+            "retry_plan",
+        }:
             await self.sender.send_json(
                 {"type": "error", "message": "Unsupported message type"}
             )
@@ -121,217 +160,306 @@ class AgentConnection:
             return
 
         if payload_type == "prompt":
-            prompt = str(payload.get("prompt", "")).strip()
-            if not prompt:
-                await self.sender.send_json(
-                    {"type": "error", "message": "Missing prompt"}
-                )
-                return
-            await self._start_run(
-                session_id,
-                lambda run: self._execute_prompt(run, payload, prompt),
+            await self._start_prompt(session_id, payload)
+            return
+        await self._start_plan_execution(
+            session_id,
+            payload,
+            retry=payload_type == "retry_plan",
+        )
+
+    async def _start_prompt(
+        self, session_id: str, payload: dict[str, Any]
+    ) -> None:
+        prompt = str(payload.get("prompt", "")).strip()
+        if not prompt:
+            await self.sender.send_json(
+                {"type": "error", "message": "Missing prompt"}
             )
             return
+        mode = "plan" if str(payload.get("mode", "")).strip() == "plan" else "act"
 
+        async def execute(
+            run: RunHandle, user_message: dict[str, Any]
+        ) -> RunOutcome:
+            await run_repository_call(
+                save_context_message,
+                session_id=run.session_id,
+                message={"role": "user", "content": prompt},
+            )
+            if mode == "plan":
+                return await stream_plan_reply(
+                    run.event_sink,
+                    run.session_id,
+                    prompt,
+                    str(user_message["id"]),
+                    run.run_id,
+                    run.cancellation,
+                    run.approval_broker,
+                    payload.get("skills"),
+                )
+            return await stream_agent_reply(
+                run.event_sink,
+                run.session_id,
+                prompt,
+                run.run_id,
+                run.cancellation,
+                run.approval_broker,
+                payload.get("skills"),
+            )
+
+        try:
+            await run_coordinator.start_prompt(
+                session_id=session_id,
+                prompt=prompt,
+                mode=mode,
+                execute=execute,
+            )
+        except run_repository.SessionBusyError as error:
+            await self._send_session_busy(session_id, error.run_id)
+
+    async def _start_plan_execution(
+        self,
+        session_id: str,
+        payload: dict[str, Any],
+        *,
+        retry: bool,
+    ) -> None:
         plan_id = str(payload.get("plan_id", "")).strip()
         if not plan_id:
             await self.sender.send_json(
                 {"type": "plan_error", "message": "Missing plan_id"}
             )
             return
-        await self._start_run(
-            session_id,
-            lambda run: self._execute_plan_approval(run, plan_id),
-        )
-
-    async def _start_run(self, session_id: str, execute) -> None:
-        if self.active_run is not None:
+        if retry and payload.get("confirm_possible_duplicate_side_effects") is not True:
             await self.sender.send_json(
                 {
-                    "type": "run_error",
-                    "code": "connection_busy",
+                    "type": "plan_error",
+                    "code": "duplicate_side_effect_confirmation_required",
                     "session_id": session_id,
-                    "run_id": self.active_run.run_id,
-                    "message": "This connection already has an active run.",
+                    "plan_id": plan_id,
+                    "message": (
+                        "Retry requires confirmation of possible duplicate side effects."
+                    ),
                 }
             )
             return
+        request_id = str(payload.get("request_id", "")).strip() or uuid.uuid4().hex
 
-        run_id = uuid.uuid4().hex
-        cancellation = CancellationToken()
-        broker = ApprovalBroker(
-            run_id=run_id,
-            session_id=session_id,
-            emit=self.sender.send_json,
-            cancellation=cancellation,
-        )
-        run = ActiveRun(
-            run_id=run_id,
-            session_id=session_id,
-            owner_connection_id=self.connection_id,
-            cancellation=cancellation,
-            approval_broker=broker,
-        )
-        existing = await active_run_registry.claim(run)
-        if existing is not None:
-            await self.sender.send_json(
-                {
-                    "type": "run_error",
-                    "code": "session_busy",
-                    "session_id": session_id,
-                    "run_id": existing.run_id,
-                    "message": "This session already has an active run.",
-                }
-            )
-            return
-
-        self.active_run = run
-        task = asyncio.create_task(self._run_wrapper(run, execute))
-        await active_run_registry.attach_task(run_id, task)
-
-    async def _run_wrapper(self, run: ActiveRun, execute) -> None:
-        try:
-            await execute(run)
-        except asyncio.CancelledError:
-            await process_supervisor.terminate_run(run.run_id)
-            await self.sender.send_json(
-                {
-                    "type": "run_cancelled",
-                    "run_id": run.run_id,
-                    "session_id": run.session_id,
-                    "message": run.cancellation.reason,
-                }
-            )
-            self.sender.finish_cancelled_run(run.run_id)
-        except Exception as error:
-            await process_supervisor.terminate_run(run.run_id)
-            await self.sender.send_json(
-                {
-                    "type": "error",
-                    "run_id": run.run_id,
-                    "message": f"Agent run failed: {error.__class__.__name__}",
-                }
-            )
-        finally:
-            run.approval_broker.cancel_all()
-            await active_run_registry.release(run.run_id)
-            if self.active_run is run:
-                self.active_run = None
-
-    async def _execute_prompt(
-        self, run: ActiveRun, payload: dict[str, Any], prompt: str
-    ) -> None:
-        user_message = await run_repository_call(
-            save_message,
-            session_id=run.session_id,
-            role="user",
-            content=prompt,
-        )
-        await run_repository_call(
-            save_context_message,
-            session_id=run.session_id,
-            message={"role": "user", "content": prompt},
-        )
-        if str(payload.get("mode", "")).strip() == "plan":
-            await stream_plan_reply(
-                self.sender,
+        async def execute(
+            run: RunHandle, plan: dict[str, Any]
+        ) -> RunOutcome:
+            return await stream_approved_plan_reply(
+                run.event_sink,
                 run.session_id,
-                prompt,
-                str(user_message["id"]),
+                plan,
                 run.run_id,
                 run.cancellation,
                 run.approval_broker,
-                payload.get("skills"),
             )
-            return
-        await stream_agent_reply(
-            self.sender,
-            run.session_id,
-            prompt,
-            run.run_id,
-            run.cancellation,
-            run.approval_broker,
-            payload.get("skills"),
-        )
 
-    async def _execute_plan_approval(self, run: ActiveRun, plan_id: str) -> None:
         try:
-            plan = await run_repository_call(approve_plan, run.session_id, plan_id)
-        except SessionNotFoundError:
+            run, plan, idempotent = await run_coordinator.start_plan_execution(
+                session_id=session_id,
+                plan_id=plan_id,
+                request_id=request_id,
+                retry=retry,
+                execute=execute,
+            )
+        except run_repository.SessionBusyError as error:
+            await self._send_session_busy(session_id, error.run_id)
+            return
+        except run_repository.PlanNotRetryableError as error:
             await self.sender.send_json(
-                {"type": "plan_error", "run_id": run.run_id, "message": "Session not found"}
+                {
+                    "type": "plan_error",
+                    "code": "plan_not_retryable",
+                    "session_id": session_id,
+                    "plan_id": plan_id,
+                    "message": str(error),
+                }
             )
             return
-        except PlanNotFoundError:
+
+        if idempotent:
             await self.sender.send_json(
-                {"type": "plan_error", "run_id": run.run_id, "message": "Plan not found"}
+                {
+                    "type": "plan_execution_attached",
+                    "session_id": session_id,
+                    "plan_id": plan_id,
+                    "run_id": run["id"],
+                    "status": run["status"],
+                    "request_id": request_id,
+                }
             )
-            return
-        except PlanStateError as error:
+        else:
             await self.sender.send_json(
-                {"type": "plan_error", "run_id": run.run_id, "message": str(error)}
+                {
+                    "type": "plan_execution_created",
+                    "session_id": session_id,
+                    "plan_id": plan["id"],
+                    "run_id": run["id"],
+                    "status": "executing",
+                    "request_id": request_id,
+                }
             )
-            return
-        await stream_approved_plan_reply(
-            self.sender,
-            run.session_id,
-            plan,
-            run.run_id,
-            run.cancellation,
-            run.approval_broker,
-        )
 
     async def _resolve_approval(self, payload: dict[str, Any]) -> None:
-        run = self.active_run
-        if run is None:
+        run_id = str(payload.get("run_id", "")).strip()
+        session_id = await self._session_id_for_run(payload, run_id)
+        if session_id is None:
             await self.sender.send_json(
-                {"type": "approval_error", "code": "run_not_found"}
+                {
+                    "type": "approval_error",
+                    "run_id": run_id,
+                    "code": "run_not_found",
+                }
             )
             return
         try:
-            run.approval_broker.resolve(
-                run_id=str(payload.get("run_id", "")),
+            await run_coordinator.resolve_approval(
+                session_id=session_id,
+                run_id=run_id,
                 approval_id=str(payload.get("approval_id", "")),
                 decision=str(payload.get("decision", "")),
+            )
+        except run_repository.RunNotFoundError:
+            await self.sender.send_json(
+                {
+                    "type": "approval_error",
+                    "run_id": run_id,
+                    "code": "run_not_found",
+                }
             )
         except ApprovalResolutionError as error:
             await self.sender.send_json(
                 {
                     "type": "approval_error",
-                    "run_id": run.run_id,
+                    "run_id": run_id,
                     "code": str(error),
                 }
             )
 
     async def _handle_cancel(self, payload: dict[str, Any]) -> None:
-        run = self.active_run
-        requested_run_id = str(payload.get("run_id", "")).strip()
-        if run is None or requested_run_id != run.run_id:
+        run_id = str(payload.get("run_id", "")).strip()
+        session_id = await self._session_id_for_run(payload, run_id)
+        if session_id is None:
             await self.sender.send_json(
                 {
                     "type": "run_error",
                     "code": "run_not_found",
-                    "run_id": requested_run_id,
+                    "run_id": run_id,
                 }
             )
             return
-        await self._cancel_active_run("Run cancelled by user.", notify=True)
-
-    async def _cancel_active_run(self, reason: str, *, notify: bool) -> None:
-        run = self.active_run
-        if run is None:
-            return
-        self.sender.mark_run_cancelled(run.run_id)
-        run.cancellation.cancel(reason)
-        run.approval_broker.cancel_all()
-        if notify:
+        try:
+            await run_coordinator.cancel(
+                session_id=session_id,
+                run_id=run_id,
+            )
+        except (run_repository.RunNotFoundError, run_repository.RunStateError):
             await self.sender.send_json(
                 {
-                    "type": "run_cancel_requested",
-                    "run_id": run.run_id,
-                    "session_id": run.session_id,
+                    "type": "run_error",
+                    "code": "run_not_found",
+                    "run_id": run_id,
                 }
             )
-        if run.task is not None and not run.task.done():
-            run.task.cancel()
-            await asyncio.gather(run.task, return_exceptions=True)
+
+    async def _resume_run(self, payload: dict[str, Any]) -> None:
+        run_id = str(payload.get("run_id", "")).strip()
+        session_id = str(payload.get("session_id", "")).strip()
+        try:
+            after_sequence = int(payload.get("after_sequence", 0))
+        except (TypeError, ValueError):
+            after_sequence = -1
+        try:
+            run = await run_repository_call(
+                run_repository.get_session_run,
+                session_id,
+                run_id,
+            )
+        except (ValueError, run_repository.RunNotFoundError):
+            await self._send_cursor_error(session_id, run_id)
+            return
+        if after_sequence < 0 or after_sequence > int(run["last_sequence"]):
+            await self._send_cursor_error(session_id, run_id)
+            return
+
+        watermark = int(run["last_sequence"])
+        await self.sender.begin_replay(run_id)
+        await self.sender.send_json(
+            {
+                "type": "run_resume_started",
+                "session_id": session_id,
+                "run_id": run_id,
+                "after_sequence": after_sequence,
+                "through_sequence": watermark,
+            }
+        )
+        cursor = after_sequence
+        while cursor < watermark:
+            try:
+                events = await run_repository_call(
+                    run_repository.list_events,
+                    run_id,
+                    after_sequence=cursor,
+                    through_sequence=watermark,
+                    limit=1000,
+                )
+            except run_repository.EventCursorError:
+                await self.sender.abort_replay(run_id)
+                await self._send_cursor_error(session_id, run_id)
+                return
+            if not events:
+                break
+            for event in events:
+                await self.sender.send_replay_event(event)
+            cursor = int(events[-1]["seq"])
+        latest = await run_repository_call(run_repository.get_run, run_id)
+        await self.sender.finish_replay(
+            run_id,
+            watermark,
+            {
+                "type": "run_resume_complete",
+                "session_id": session_id,
+                "run_id": run_id,
+                "status": latest["status"],
+                "last_sequence": latest["last_sequence"],
+            },
+        )
+
+    async def _session_id_for_run(
+        self, payload: dict[str, Any], run_id: str
+    ) -> str | None:
+        requested_session_id = str(payload.get("session_id", "")).strip()
+        try:
+            run = await run_repository_call(run_repository.get_run, run_id)
+        except run_repository.RunNotFoundError:
+            return None
+        session_id = str(run["session_id"])
+        if requested_session_id and requested_session_id != session_id:
+            return None
+        return session_id
+
+    async def _send_session_busy(self, session_id: str, run_id: str) -> None:
+        await self.sender.send_json(
+            {
+                "type": "run_error",
+                "code": "session_busy",
+                "session_id": session_id,
+                "run_id": run_id,
+                "message": "This session already has an active run.",
+            }
+        )
+
+    async def _send_cursor_error(self, session_id: str, run_id: str) -> None:
+        await self.sender.send_json(
+            {
+                "type": "run_error",
+                "code": "event_cursor_invalid",
+                "session_id": session_id,
+                "run_id": run_id,
+                "message": "The requested run event cursor is invalid.",
+            }
+        )

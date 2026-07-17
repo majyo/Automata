@@ -32,6 +32,12 @@ class PlanStateError(ValueError):
     pass
 
 
+class SessionHasActiveRunError(ValueError):
+    def __init__(self, run_id: str) -> None:
+        super().__init__("Session has an active run.")
+        self.run_id = run_id
+
+
 def list_sessions() -> list[dict[str, Any]]:
     with db_lock, connect_db() as db:
         rows = db.execute(
@@ -115,6 +121,18 @@ def update_session(session_id: str, title: str) -> dict[str, Any]:
 
 def delete_session(session_id: str) -> None:
     with db_lock, connect_db() as db:
+        active_run = db.execute(
+            """
+            SELECT id
+            FROM agent_runs
+            WHERE session_id = ?
+              AND status IN ('queued', 'running', 'waiting_approval', 'cancelling')
+            LIMIT 1
+            """,
+            (session_id,),
+        ).fetchone()
+        if active_run is not None:
+            raise SessionHasActiveRunError(str(active_run["id"]))
         cursor = db.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
         if cursor.rowcount == 0:
             raise SessionNotFoundError("Session not found")
@@ -508,7 +526,7 @@ def create_plan(
             """
             UPDATE session_plans
             SET status = 'superseded', updated_at = ?
-            WHERE session_id = ? AND status = 'pending'
+            WHERE session_id = ? AND status IN ('pending', 'failed')
             """,
             (now, session_id),
         )
@@ -611,7 +629,7 @@ def approve_plan(session_id: str, plan_id: str) -> dict[str, Any]:
         db.execute(
             """
             UPDATE session_plans
-            SET status = 'approved', updated_at = ?, approved_at = ?
+            SET status = 'executing', updated_at = ?, approved_at = ?
             WHERE session_id = ? AND id = ?
             """,
             (now, now, session_id, plan_id),
@@ -619,7 +637,7 @@ def approve_plan(session_id: str, plan_id: str) -> dict[str, Any]:
         db.commit()
 
     plan = dict(row)
-    plan["status"] = "approved"
+    plan["status"] = "executing"
     plan["updated_at"] = now
     plan["approved_at"] = now
     return plan
@@ -650,8 +668,8 @@ def mark_plan_executed(session_id: str, plan_id: str) -> dict[str, Any]:
         ).fetchone()
         if row is None:
             raise PlanNotFoundError("Plan not found")
-        if row["status"] != "approved":
-            raise PlanStateError(f"Plan is not approved: {row['status']}")
+        if row["status"] != "executing":
+            raise PlanStateError(f"Plan is not executing: {row['status']}")
 
         db.execute(
             """

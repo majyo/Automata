@@ -1,12 +1,14 @@
 import { Check, FolderGit2, FolderOpen, GitBranch, Pencil, ServerCog, Trash2, X } from "lucide-react";
 import type { KeyboardEvent } from "react";
+import type { PersistedRunStatus } from "../../types/chat";
 import type { SessionSummary } from "../../types/session";
 import { formatDirectoryName } from "../../utils/format";
 
 type SessionListItemProps = {
   session: SessionSummary;
   isActive: boolean;
-  disabled: boolean;
+  isRunning: boolean;
+  runStatus?: PersistedRunStatus;
   editingSessionId: string | null;
   editingTitle: string;
   onSelect(sessionId: string): void;
@@ -20,7 +22,8 @@ type SessionListItemProps = {
 export function SessionListItem({
   session,
   isActive,
-  disabled,
+  isRunning,
+  runStatus,
   editingSessionId,
   editingTitle,
   onSelect,
@@ -44,8 +47,7 @@ export function SessionListItem({
 
   return (
     <button
-      className={`session-item ${isActive ? "active" : ""}`}
-      disabled={disabled}
+      className={`session-item ${isActive ? "active" : ""} ${isRunning ? "running" : ""}`}
       onClick={() => onSelect(session.id)}
     >
       <FolderGit2 size={17} />
@@ -75,7 +77,7 @@ export function SessionListItem({
           {formatDirectoryName(session.working_directory)}
         </small>
       </span>
-      <em>{isActive ? "Active" : "Saved"}</em>
+      <em>{formatSessionRunStatus(runStatus, isRunning, isActive)}</em>
       <span className="session-actions">
         {isEditing ? (
           <>
@@ -131,4 +133,33 @@ export function SessionListItem({
       </span>
     </button>
   );
+}
+
+function formatSessionRunStatus(
+  status: PersistedRunStatus | undefined,
+  isRunning: boolean,
+  isActive: boolean,
+): string {
+  if (status === "waiting_approval") {
+    return "Approval";
+  }
+  if (isRunning) {
+    return status === "cancelling" ? "Stopping" : "Running";
+  }
+  if (isActive) {
+    return "Active";
+  }
+  if (status === "completed") {
+    return "Completed";
+  }
+  if (status === "failed") {
+    return "Failed";
+  }
+  if (status === "cancelled") {
+    return "Cancelled";
+  }
+  if (status === "interrupted") {
+    return "Interrupted";
+  }
+  return "Saved";
 }

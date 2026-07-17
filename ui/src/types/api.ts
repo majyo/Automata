@@ -1,4 +1,5 @@
 import type { PersistedPlanStatus, ToolRunMetadata } from "./chat";
+import type { PersistedRunStatus } from "./chat";
 
 export type ApiRuntimeConfig = {
   httpBaseUrl: string;
@@ -18,4 +19,21 @@ export type ApiMessage = {
   created_at: string;
   plan_id?: string | null;
   plan_status?: PersistedPlanStatus | null;
+};
+
+export type ApiRun = {
+  id: string;
+  session_id: string;
+  kind: "chat_act" | "chat_plan" | "plan_execution";
+  mode: "act" | "plan";
+  status: PersistedRunStatus;
+  request_message_id?: string | null;
+  response_message_id?: string | null;
+  plan_id?: string | null;
+  last_sequence: number;
+  error_code?: string | null;
+  public_error?: string | null;
+  created_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
 };

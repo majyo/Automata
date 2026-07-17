@@ -9,10 +9,9 @@ import { sleep } from "../utils/timing";
 type UseSessionsOptions = {
   apiConfigRef: React.MutableRefObject<ApiRuntimeConfig>;
   chatDispatch: React.Dispatch<ChatAction>;
-  getIsStreaming(): boolean;
 };
 
-export function useSessions({ apiConfigRef, chatDispatch, getIsStreaming }: UseSessionsOptions) {
+export function useSessions({ apiConfigRef, chatDispatch }: UseSessionsOptions) {
   const [state, dispatch] = useReducer(sessionReducer, initialSessionState);
   const activeSessionIdRef = useRef<string | null>(null);
   const stateRef = useRef(state);
@@ -30,21 +29,30 @@ export function useSessions({ apiConfigRef, chatDispatch, getIsStreaming }: UseS
   const startNewSessionDraft = useCallback(() => {
     activeSessionIdRef.current = null;
     dispatch({ type: "newDraftStarted", defaultWorkingDirectory: apiConfigRef.current.defaultWorkingDirectory });
-    chatDispatch({ type: "messagesCleared" });
   }, [apiConfigRef, chatDispatch]);
 
   const selectSession = useCallback(
     async (sessionId: string) => {
-      if (getIsStreaming()) {
-        return;
-      }
-
       const loadedMessages = await fetchMessages(apiConfigRef.current, sessionId);
       activeSessionIdRef.current = sessionId;
       dispatch({ type: "sessionSelected", sessionId });
-      chatDispatch({ type: "messagesLoaded", messages: loadedMessages });
+      chatDispatch({
+        type: "messagesLoaded",
+        sessionId,
+        messages: loadedMessages,
+        preserveTransient: true,
+      });
     },
-    [apiConfigRef, chatDispatch, getIsStreaming],
+    [apiConfigRef, chatDispatch],
+  );
+
+  const reloadSessionMessages = useCallback(
+    async (sessionId: string) => {
+      const loadedMessages = await fetchMessages(apiConfigRef.current, sessionId);
+      chatDispatch({ type: "messagesLoaded", sessionId, messages: loadedMessages });
+      return loadedMessages;
+    },
+    [apiConfigRef, chatDispatch],
   );
 
   const refreshSessionList = useCallback(async () => {
@@ -64,14 +72,13 @@ export function useSessions({ apiConfigRef, chatDispatch, getIsStreaming }: UseS
             const loadedMessages = await fetchMessages(config, loadedSessions[0].id);
             activeSessionIdRef.current = loadedSessions[0].id;
             dispatch({ type: "sessionSelected", sessionId: loadedSessions[0].id });
-            chatDispatch({ type: "messagesLoaded", messages: loadedMessages });
+            chatDispatch({ type: "messagesLoaded", sessionId: loadedSessions[0].id, messages: loadedMessages });
             return;
           }
 
           dispatch({ type: "sessionsLoaded", sessions: [] });
           activeSessionIdRef.current = null;
           dispatch({ type: "newDraftStarted", defaultWorkingDirectory: config.defaultWorkingDirectory });
-          chatDispatch({ type: "messagesCleared" });
           return;
         } catch {
           await sleep(350);
@@ -116,11 +123,8 @@ export function useSessions({ apiConfigRef, chatDispatch, getIsStreaming }: UseS
 
   const deleteCurrentSession = useCallback(
     async (sessionId: string) => {
-      if (getIsStreaming()) {
-        return;
-      }
-
       await deleteSession(apiConfigRef.current, sessionId);
+      chatDispatch({ type: "sessionMessagesCleared", sessionId });
       const loadedSessions = await fetchSessions(apiConfigRef.current);
       if (loadedSessions.length === 0) {
         dispatch({ type: "sessionsLoaded", sessions: [] });
@@ -136,7 +140,7 @@ export function useSessions({ apiConfigRef, chatDispatch, getIsStreaming }: UseS
         startNewSessionDraft();
       }
     },
-    [apiConfigRef, getIsStreaming, selectSession, startNewSessionDraft],
+    [apiConfigRef, chatDispatch, selectSession, startNewSessionDraft],
   );
 
   const ensureActiveSession = useCallback(async () => {
@@ -169,6 +173,7 @@ export function useSessions({ apiConfigRef, chatDispatch, getIsStreaming }: UseS
     actions: {
       initializeSessions,
       refreshSessionList,
+      reloadSessionMessages,
       selectSession,
       startNewSessionDraft,
       startRename,

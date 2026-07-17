@@ -7,8 +7,10 @@ from fastapi.responses import JSONResponse
 
 from automata_api.config import get_api_config, load_local_env
 from automata_api.agent.execution.process import process_supervisor
+from automata_api.agent.execution.coordinator import run_coordinator
+from automata_api.agent.execution.event_hub import run_event_hub
 from automata_api.db.schema import init_db
-from automata_api.routers import chat, health, mcp, sessions, skills
+from automata_api.routers import chat, health, mcp, runs, sessions, skills
 from automata_api.security import (
     bearer_token,
     get_api_token,
@@ -26,10 +28,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     validate_loopback_host(config.host)
     get_api_token()
     init_db()
+    await run_coordinator.startup()
     try:
         yield
     finally:
+        await run_coordinator.shutdown()
         await process_supervisor.terminate_all()
+        await run_event_hub.clear()
 
 
 def create_app() -> FastAPI:
@@ -61,6 +66,7 @@ def create_app() -> FastAPI:
     app.include_router(sessions.router)
     app.include_router(mcp.router)
     app.include_router(skills.router)
+    app.include_router(runs.router)
     app.include_router(chat.router)
     return app
 

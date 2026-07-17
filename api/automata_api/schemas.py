@@ -55,7 +55,50 @@ class MessageRecord(BaseModel):
     sequence: int
     created_at: str
     plan_id: str | None = None
-    plan_status: Literal["pending", "approved", "executed", "superseded"] | None = None
+    plan_status: Literal[
+        "pending", "executing", "failed", "executed", "superseded"
+    ] | None = None
+
+
+class RunRecord(BaseModel):
+    id: str
+    session_id: str
+    kind: Literal["chat_act", "chat_plan", "plan_execution"]
+    mode: Literal["act", "plan"]
+    status: Literal[
+        "queued",
+        "running",
+        "waiting_approval",
+        "cancelling",
+        "completed",
+        "failed",
+        "cancelled",
+        "interrupted",
+    ]
+    request_message_id: str | None = None
+    response_message_id: str | None = None
+    plan_id: str | None = None
+    owner_instance_id: str
+    last_sequence: int
+    error_code: str | None = None
+    public_error: str | None = None
+    created_at: str
+    started_at: str | None = None
+    finished_at: str | None = None
+    heartbeat_at: str | None = None
+
+
+class PlanAttemptRecord(BaseModel):
+    id: str
+    plan_id: str
+    run_id: str
+    attempt_no: int
+    request_id: str
+    created_at: str
+    status: str
+    error_code: str | None = None
+    public_error: str | None = None
+    finished_at: str | None = None
 
 
 class SkillSelectionPayload(TypedDict):

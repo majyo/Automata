@@ -1,9 +1,15 @@
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from automata_api.agent.prompts import agent_workspace
 from automata_api.agent.backends.factory import default_backend_kind
-from automata_api.db.schema import init_db
+from automata_api.db.schema import (
+    DatabaseMigrationChecksumError,
+    DatabaseSchemaTooNewError,
+    init_db,
+)
 from automata_api.repositories.sessions import (
     PlanNotFoundError,
     SessionNotFoundError,
@@ -255,7 +261,7 @@ def test_session_plans_supersede_pending_plans(client):
     assert fetch_plan(session["id"], second_plan["id"])["status"] == "pending"
 
     approved = approve_plan(session["id"], second_plan["id"])
-    assert approved["status"] == "approved"
+    assert approved["status"] == "executing"
     executed = mark_plan_executed(session["id"], second_plan["id"])
     assert executed["status"] == "executed"
 
@@ -315,7 +321,7 @@ def test_session_delete_cascades_plans(client):
         raise AssertionError("Plan should be removed with its session")
 
 
-def test_init_db_resets_legacy_messages_schema(
+def test_init_db_preserves_and_upgrades_legacy_messages_schema(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("AUTOMATA_DATA_DIR", str(tmp_path))
@@ -393,14 +399,23 @@ def test_init_db_resets_legacy_messages_schema(
 
     init_db()
 
-    assert client_orphan_session_is_gone()
     with sqlite3.connect(db_file) as db:
         columns = {
             row[1]
             for row in db.execute("PRAGMA table_info(messages)").fetchall()
         }
         assert {"kind", "metadata_json"}.issubset(columns)
-        assert db.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 2
+        assert db.execute("SELECT COUNT(*) FROM session_plans").fetchone()[0] == 1
+        assert db.execute(
+            "SELECT content FROM messages WHERE id = 'message-1'"
+        ).fetchone()[0] == "legacy prompt"
+        assert db.execute(
+            "SELECT COUNT(*) FROM schema_migrations"
+        ).fetchone()[0] == 3
+    assert list_messages("session-1")[0]["content"] == "legacy prompt"
+    assert list(tmp_path.glob("automata.db.backup.*"))
 
 
 def test_init_db_migrates_session_working_directory(tmp_path, monkeypatch):
@@ -506,6 +521,97 @@ def test_init_db_migrates_session_backend(tmp_path, monkeypatch):
         ).fetchone()[0]
         assert "backend" in columns
         assert backend == "local"
+
+
+def test_init_db_is_idempotent_and_backup_is_readable(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTOMATA_DATA_DIR", str(tmp_path))
+    db_file = tmp_path / "automata.db"
+    with sqlite3.connect(db_file) as db:
+        db.execute(
+            """
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        db.execute(
+            """
+            INSERT INTO sessions (id, title, created_at, updated_at)
+            VALUES ('session-1', 'Keep me', '2026-07-17', '2026-07-17')
+            """
+        )
+
+    init_db()
+    first_backup = next(tmp_path.glob("automata.db.backup.*"))
+    init_db()
+
+    with sqlite3.connect(db_file) as db:
+        assert db.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 3
+        assert db.execute("SELECT title FROM sessions").fetchone()[0] == "Keep me"
+    with sqlite3.connect(first_backup) as backup:
+        assert backup.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+        assert backup.execute("SELECT title FROM sessions").fetchone()[0] == "Keep me"
+    backup_files = [
+        path
+        for path in tmp_path.glob("automata.db.backup.*")
+        if not path.name.endswith(("-wal", "-shm"))
+    ]
+    assert backup_files == [first_backup]
+
+
+def test_unknown_database_schema_is_not_modified_and_failed_backup_is_kept(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("AUTOMATA_DATA_DIR", str(tmp_path))
+    db_file = tmp_path / "automata.db"
+    with sqlite3.connect(db_file) as db:
+        db.execute("CREATE TABLE mystery (value TEXT NOT NULL)")
+        db.execute("INSERT INTO mystery (value) VALUES ('original')")
+
+    with pytest.raises(RuntimeError, match="cannot be adopted safely"):
+        init_db()
+
+    with sqlite3.connect(db_file) as db:
+        assert db.execute("SELECT value FROM mystery").fetchone()[0] == "original"
+        assert db.execute(
+            """
+            SELECT COUNT(*) FROM sqlite_schema
+            WHERE type = 'table' AND name = 'schema_migrations'
+            """
+        ).fetchone()[0] == 0
+    failed_backup = next(tmp_path.glob("automata.db.backup.*.failed"))
+    with sqlite3.connect(failed_backup) as backup:
+        assert backup.execute("SELECT value FROM mystery").fetchone()[0] == "original"
+
+
+def test_migration_checksum_mismatch_is_rejected(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTOMATA_DATA_DIR", str(tmp_path))
+    init_db()
+    with sqlite3.connect(tmp_path / "automata.db") as db:
+        db.execute(
+            "UPDATE schema_migrations SET checksum = 'tampered' WHERE version = 1"
+        )
+
+    with pytest.raises(DatabaseMigrationChecksumError):
+        init_db()
+
+
+def test_database_schema_newer_than_application_is_rejected(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTOMATA_DATA_DIR", str(tmp_path))
+    init_db()
+    with sqlite3.connect(tmp_path / "automata.db") as db:
+        db.execute(
+            """
+            INSERT INTO schema_migrations (version, name, checksum, applied_at)
+            VALUES (999, 'future', 'future', '2026-07-17')
+            """
+        )
+
+    with pytest.raises(DatabaseSchemaTooNewError):
+        init_db()
 
 
 def client_orphan_session_is_gone():

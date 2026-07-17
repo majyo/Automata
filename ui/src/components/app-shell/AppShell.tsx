@@ -3,7 +3,13 @@ import { ConversationPanel } from "../conversation/ConversationPanel";
 import { Sidebar } from "./Sidebar";
 import { FloatingInspector } from "./FloatingInspector";
 import { Topbar } from "./Topbar";
-import type { ApprovalDecision, ChatMessage, SendMode, ToolApprovalRequest } from "../../types/chat";
+import type {
+  ApprovalDecision,
+  ChatMessage,
+  PersistedRunStatus,
+  SendMode,
+  ToolApprovalRequest,
+} from "../../types/chat";
 import type { SessionSummary } from "../../types/session";
 
 type AppShellProps = {
@@ -24,6 +30,8 @@ type AppShellProps = {
   isStreaming: boolean;
   canSend: boolean;
   approvals: ToolApprovalRequest[];
+  activeRunIdBySession: Record<string, string>;
+  runStatusBySession: Record<string, PersistedRunStatus>;
   onCreateSession(): void;
   onSelectSession(sessionId: string): void;
   onStartRename(session: SessionSummary): void;
@@ -60,6 +68,8 @@ export function AppShell({
   isStreaming,
   canSend,
   approvals,
+  activeRunIdBySession,
+  runStatusBySession,
   onCreateSession,
   onSelectSession,
   onStartRename,
@@ -86,7 +96,8 @@ export function AppShell({
         activeSessionId={activeSessionId}
         editingSessionId={editingSessionId}
         editingTitle={editingTitle}
-        isStreaming={isStreaming}
+        activeRunIdBySession={activeRunIdBySession}
+        runStatusBySession={runStatusBySession}
         onCreateSession={onCreateSession}
         onSelectSession={onSelectSession}
         onStartRename={onStartRename}

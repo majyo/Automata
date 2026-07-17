@@ -1,211 +1,228 @@
-from automata_api.agent.prompts import agent_workspace
+from __future__ import annotations
+
+import hashlib
+import inspect
+import sqlite3
+from datetime import UTC, datetime
+from pathlib import Path
+
 from automata_api.db.connection import connect_db, db_lock, db_path
+from automata_api.db.migrations import MIGRATIONS, Migration
 
 
-MESSAGES_TABLE_SQL = """
-CREATE TABLE IF NOT EXISTS messages (
-    id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL,
-    role TEXT NOT NULL CHECK (role IN ('user', 'agent', 'tool')),
-    kind TEXT NOT NULL DEFAULT 'message' CHECK (kind IN ('message', 'tool_run')),
-    content TEXT NOT NULL,
-    metadata_json TEXT,
-    sequence INTEGER NOT NULL,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
-    UNIQUE (session_id, sequence)
-);
-"""
+class DatabaseMigrationError(RuntimeError):
+    pass
 
-SESSION_PLANS_TABLE_SQL = """
-CREATE TABLE IF NOT EXISTS session_plans (
-    id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL,
-    prompt_message_id TEXT NOT NULL,
-    plan_message_id TEXT NOT NULL,
-    content TEXT NOT NULL,
-    status TEXT NOT NULL CHECK (
-        status IN ('pending', 'approved', 'executed', 'superseded')
-    ),
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    approved_at TEXT,
-    executed_at TEXT,
-    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
-    FOREIGN KEY (prompt_message_id) REFERENCES messages(id) ON DELETE CASCADE,
-    FOREIGN KEY (plan_message_id) REFERENCES messages(id) ON DELETE CASCADE
-);
-"""
 
-AGENT_CONTEXT_MESSAGES_TABLE_SQL = """
-CREATE TABLE IF NOT EXISTS agent_context_messages (
-    id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL,
-    message_json TEXT NOT NULL,
-    sequence INTEGER NOT NULL,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
-    UNIQUE (session_id, sequence)
-);
-"""
+class DatabaseSchemaTooNewError(DatabaseMigrationError):
+    pass
 
-INDEX_SQL = """
-CREATE INDEX IF NOT EXISTS idx_messages_session_sequence
-ON messages(session_id, sequence);
 
-CREATE INDEX IF NOT EXISTS idx_agent_context_messages_session_sequence
-ON agent_context_messages(session_id, sequence);
-
-CREATE INDEX IF NOT EXISTS idx_session_plans_session_status
-ON session_plans(session_id, status);
-"""
-
-SCHEMA_SQL = f"""
-CREATE TABLE IF NOT EXISTS sessions (
-    id TEXT PRIMARY KEY,
-    title TEXT NOT NULL,
-    working_directory TEXT NOT NULL,
-    backend TEXT NOT NULL DEFAULT 'local',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
-{MESSAGES_TABLE_SQL}
-
-{AGENT_CONTEXT_MESSAGES_TABLE_SQL}
-
-CREATE TABLE IF NOT EXISTS session_context_summaries (
-    session_id TEXT PRIMARY KEY,
-    content TEXT NOT NULL,
-    through_sequence INTEGER NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-);
-
-{SESSION_PLANS_TABLE_SQL}
-
-{INDEX_SQL}
-"""
+class DatabaseMigrationChecksumError(DatabaseMigrationError):
+    pass
 
 
 def init_db() -> None:
-    db_path().parent.mkdir(parents=True, exist_ok=True)
+    path = db_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+
     with db_lock, connect_db() as db:
         db.execute("PRAGMA journal_mode = WAL")
         db.execute("PRAGMA foreign_keys = ON")
-        if messages_schema_is_legacy(db):
-            reset_app_tables(db)
-        db.executescript(SCHEMA_SQL)
-        migrate_sessions_working_directory(db)
-        migrate_sessions_backend(db)
-        db.commit()
+        assert_database_integrity(db, "before migration")
+        has_user_objects = database_has_user_objects(db)
+        has_migration_table = table_exists(db, "schema_migrations")
+        backup_path: Path | None = None
+        if has_user_objects and not has_migration_table:
+            backup_path = create_database_backup(db, path, {}, list(MIGRATIONS))
+        applied = applied_migrations(db) if has_migration_table else {}
+        validate_applied_migrations(applied)
+
+        pending = [migration for migration in MIGRATIONS if migration.version not in applied]
+        if pending and has_user_objects and backup_path is None:
+            backup_path = create_database_backup(db, path, applied, pending)
+
+        try:
+            if pending:
+                db.execute("PRAGMA foreign_keys = OFF")
+                for migration in pending:
+                    apply_migration(db, migration)
+                db.execute("PRAGMA foreign_keys = ON")
+
+            assert_database_integrity(db, "after migration")
+        except Exception:
+            db.execute("PRAGMA foreign_keys = ON")
+            if backup_path is not None and backup_path.exists():
+                backup_path.rename(backup_path.with_name(f"{backup_path.name}.failed"))
+            raise
+
+        prune_successful_backups(path, keep=3)
 
 
-def messages_schema_is_legacy(db) -> bool:
-    row = db.execute(
+def ensure_migration_table(db: sqlite3.Connection) -> None:
+    db.execute(
         """
-        SELECT 1
-        FROM sqlite_schema
-        WHERE type = 'table' AND name = 'messages'
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+            version INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            checksum TEXT NOT NULL,
+            applied_at TEXT NOT NULL
+        )
         """
-    ).fetchone()
-    if row is None:
-        return False
-
-    columns = {
-        str(column["name"])
-        for column in db.execute("PRAGMA table_info(messages)").fetchall()
-    }
-    return "kind" not in columns or "metadata_json" not in columns
+    )
+    db.commit()
 
 
-def migrate_sessions_working_directory(db) -> None:
-    row = db.execute(
+def applied_migrations(db: sqlite3.Connection) -> dict[int, sqlite3.Row]:
+    rows = db.execute(
         """
-        SELECT 1
-        FROM sqlite_schema
-        WHERE type = 'table' AND name = 'sessions'
+        SELECT version, name, checksum, applied_at
+        FROM schema_migrations
+        ORDER BY version ASC
         """
-    ).fetchone()
-    if row is None:
-        return
+    ).fetchall()
+    return {int(row["version"]): row for row in rows}
 
-    columns = {
-        str(column["name"])
-        for column in db.execute("PRAGMA table_info(sessions)").fetchall()
-    }
-    if "working_directory" in columns:
+
+def validate_applied_migrations(applied: dict[int, sqlite3.Row]) -> None:
+    known = {migration.version: migration for migration in MIGRATIONS}
+    if applied and max(applied) > max(known):
+        raise DatabaseSchemaTooNewError(
+            f"Database schema version {max(applied)} is newer than supported "
+            f"version {max(known)}."
+        )
+
+    expected_versions = list(range(1, max(applied, default=0) + 1))
+    if sorted(applied) != expected_versions:
+        raise DatabaseMigrationError("Database migration history contains a gap.")
+
+    for version, row in applied.items():
+        migration = known.get(version)
+        if migration is None:
+            raise DatabaseSchemaTooNewError(
+                f"Database migration {version} is not supported by this application."
+            )
+        checksum = migration_checksum(migration)
+        if row["name"] != migration.name or row["checksum"] != checksum:
+            raise DatabaseMigrationChecksumError(
+                f"Database migration {version} does not match the application."
+            )
+
+
+def apply_migration(db: sqlite3.Connection, migration: Migration) -> None:
+    checksum = migration_checksum(migration)
+    try:
+        db.execute("BEGIN IMMEDIATE")
         db.execute(
             """
-            UPDATE sessions
-            SET working_directory = ?
-            WHERE working_directory IS NULL OR TRIM(working_directory) = ''
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                checksum TEXT NOT NULL,
+                applied_at TEXT NOT NULL
+            )
+            """
+        )
+        migration.apply(db)
+        db.execute(
+            """
+            INSERT INTO schema_migrations (version, name, checksum, applied_at)
+            VALUES (?, ?, ?, ?)
             """,
-            (agent_workspace(),),
+            (
+                migration.version,
+                migration.name,
+                checksum,
+                datetime.now(UTC).isoformat(),
+            ),
         )
-        return
-
-    db.execute("ALTER TABLE sessions ADD COLUMN working_directory TEXT")
-    db.execute(
-        """
-        UPDATE sessions
-        SET working_directory = ?
-        WHERE working_directory IS NULL OR TRIM(working_directory) = ''
-        """,
-        (agent_workspace(),),
-    )
+        assert_database_integrity(db, f"migration {migration.version}")
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
 
-def migrate_sessions_backend(db) -> None:
+def migration_checksum(migration: Migration) -> str:
+    source_path = inspect.getsourcefile(migration.apply)
+    if source_path is None:
+        raise DatabaseMigrationError(
+            f"Cannot locate migration source for version {migration.version}."
+        )
+    source = Path(source_path).read_bytes()
+    return hashlib.sha256(source).hexdigest()
+
+
+def assert_database_integrity(db: sqlite3.Connection, stage: str) -> None:
+    quick_check = db.execute("PRAGMA quick_check").fetchone()
+    if quick_check is None or str(quick_check[0]).lower() != "ok":
+        detail = quick_check[0] if quick_check else "no result"
+        raise DatabaseMigrationError(
+            f"Database quick_check failed {stage}: {detail}"
+        )
+
+    violations = db.execute("PRAGMA foreign_key_check").fetchall()
+    if violations:
+        raise DatabaseMigrationError(
+            f"Database foreign_key_check failed {stage}: {len(violations)} violation(s)."
+        )
+
+
+def database_has_user_objects(db: sqlite3.Connection) -> bool:
     row = db.execute(
         """
         SELECT 1
         FROM sqlite_schema
-        WHERE type = 'table' AND name = 'sessions'
+        WHERE name NOT LIKE 'sqlite_%'
+          AND name != 'schema_migrations'
+        LIMIT 1
         """
     ).fetchone()
-    if row is None:
-        return
+    return row is not None
 
-    columns = {
-        str(column["name"])
-        for column in db.execute("PRAGMA table_info(sessions)").fetchall()
-    }
-    if "backend" in columns:
-        db.execute(
-            """
-            UPDATE sessions
-            SET backend = 'local'
-            WHERE backend IS NULL OR TRIM(backend) = ''
-            """
-        )
-        return
 
-    db.execute("ALTER TABLE sessions ADD COLUMN backend TEXT NOT NULL DEFAULT 'local'")
-    db.execute(
+def table_exists(db: sqlite3.Connection, table: str) -> bool:
+    row = db.execute(
         """
-        UPDATE sessions
-        SET backend = 'local'
-        WHERE backend IS NULL OR TRIM(backend) = ''
-        """
+        SELECT 1
+        FROM sqlite_schema
+        WHERE type = 'table' AND name = ?
+        """,
+        (table,),
+    ).fetchone()
+    return row is not None
+
+
+def create_database_backup(
+    db: sqlite3.Connection,
+    path: Path,
+    applied: dict[int, sqlite3.Row],
+    pending: list[Migration],
+) -> Path:
+    db.execute("PRAGMA wal_checkpoint(FULL)")
+    from_version = max(applied, default=0)
+    to_version = pending[-1].version
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    backup_path = path.with_name(
+        f"{path.name}.backup.{timestamp}.v{from_version}-to-v{to_version}"
     )
+    backup = sqlite3.connect(backup_path)
+    try:
+        db.backup(backup)
+    finally:
+        backup.close()
+    return backup_path
 
 
-def reset_app_tables(db) -> None:
-    db.commit()
-    db.execute("PRAGMA foreign_keys = OFF")
-    db.executescript(
-        """
-        DROP INDEX IF EXISTS idx_messages_session_sequence;
-        DROP INDEX IF EXISTS idx_agent_context_messages_session_sequence;
-        DROP INDEX IF EXISTS idx_session_plans_session_status;
-        DROP TABLE IF EXISTS session_context_summaries;
-        DROP TABLE IF EXISTS agent_context_messages;
-        DROP TABLE IF EXISTS session_plans;
-        DROP TABLE IF EXISTS messages;
-        DROP TABLE IF EXISTS sessions;
-        """
+def prune_successful_backups(path: Path, *, keep: int) -> None:
+    backups = sorted(
+        (
+            candidate
+            for candidate in path.parent.glob(f"{path.name}.backup.*")
+            if not candidate.name.endswith(".failed")
+        ),
+        key=lambda candidate: candidate.stat().st_mtime,
+        reverse=True,
     )
-    db.commit()
-    db.execute("PRAGMA foreign_keys = ON")
+    for stale in backups[keep:]:
+        stale.unlink(missing_ok=True)

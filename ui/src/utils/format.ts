@@ -7,20 +7,17 @@ export function formatPlanStatus(status?: PlanStatus): string {
   if (status === "approving") {
     return "Approving";
   }
-  if (status === "approved") {
-    return "Approved";
-  }
   if (status === "executing") {
     return "Executing";
+  }
+  if (status === "failed") {
+    return "Failed";
   }
   if (status === "executed") {
     return "Executed";
   }
   if (status === "superseded") {
     return "Superseded";
-  }
-  if (status === "error") {
-    return "Error";
   }
   return "Pending";
 }

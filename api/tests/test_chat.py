@@ -1389,6 +1389,7 @@ def test_chat_websocket_approve_plan_executes_and_marks_executed(client, monkeyp
         repeated_approval = websocket.receive_json()
 
     assert compact_event_types(approve_events) == [
+        "plan_execution_created",
         "plan_approved",
         "started",
         "agent_step",
@@ -1424,4 +1425,5 @@ def test_chat_websocket_approve_plan_rejects_invalid_plan(client):
 
     assert event["type"] == "plan_error"
     assert event["message"] == "Plan not found"
-    assert event["run_id"]
+    assert event["code"] == "plan_not_retryable"
+    assert "run_id" not in event

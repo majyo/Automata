@@ -150,6 +150,11 @@
   background: var(--accent);
 }
 
+.session-item.running:not(.active) em {
+  color: var(--success);
+  background: var(--success-soft);
+}
+
 .session-title-input {
   width: 100%;
   min-width: 0;
@@ -1010,7 +1015,6 @@ h2 {
 
 .plan-status.approving,
 .plan-status.executing,
-.plan-status.approved,
 .plan-status.superseded {
   color: var(--ink-soft);
   background: var(--accent-soft);
@@ -1021,7 +1025,7 @@ h2 {
   background: var(--success-soft);
 }
 
-.plan-status.error {
+.plan-status.failed {
   color: var(--danger);
   background: var(--danger-soft);
 }

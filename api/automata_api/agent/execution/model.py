@@ -8,6 +8,13 @@ PolicyAction = Literal["allow", "prompt", "deny"]
 ApprovalDecision = Literal["allow_once", "allow_for_run", "deny"]
 
 
+class PublicRunError(RuntimeError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.public_message = message
+
+
 class RunCancelledError(asyncio.CancelledError):
     pass
 
@@ -56,6 +63,12 @@ class ToolExecutionContext:
     workspace: str
     mode: Literal["act", "plan"]
     cancellation: CancellationToken
+
+
+@dataclass(frozen=True)
+class RunOutcome:
+    response_content: str | None = None
+    plan_content: str | None = None
 
 
 @dataclass(frozen=True)

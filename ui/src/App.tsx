@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useEffect, useReducer, useState } from "react";
 import type { FormEvent } from "react";
 import { AppShell } from "./components/app-shell/AppShell";
 import { useAgentSocket } from "./hooks/useAgentSocket";
@@ -6,8 +6,13 @@ import { useApiConfig } from "./hooks/useApiConfig";
 import { useAutoScroll } from "./hooks/useAutoScroll";
 import { useSessions } from "./hooks/useSessions";
 import { useTauriBridge } from "./hooks/useTauriBridge";
-import { chatReducer, initialChatState } from "./state/chatReducer";
-import type { SendMode } from "./types/chat";
+import {
+  chatReducer,
+  initialChatState,
+  selectMessages,
+  selectSessionApprovals,
+} from "./state/chatReducer";
+import type { PersistedRunStatus, SendMode } from "./types/chat";
 import "./styles/base.css";
 import "./styles/layout.css";
 import "./styles/components.css";
@@ -16,16 +21,12 @@ function App() {
   const [chatState, chatDispatch] = useReducer(chatReducer, initialChatState);
   const [prompt, setPrompt] = useState("Inspect the API folder and suggest the first FastAPI route.");
   const [sendMode, setSendMode] = useState<SendMode>("execute");
-  const streamingRef = useRef(false);
-
   const { apiConfig, apiConfigRef, isConfigReady } = useApiConfig();
   const { bridgeStatus, runBridgeCheck, chooseDirectory } = useTauriBridge();
-  const getIsStreaming = useCallback(() => streamingRef.current, []);
 
   const sessions = useSessions({
     apiConfigRef,
     chatDispatch,
-    getIsStreaming,
   });
 
   const agentSocket = useAgentSocket({
@@ -34,14 +35,22 @@ function App() {
     chatDispatch,
     ensureActiveSession: sessions.actions.ensureActiveSession,
     refreshSessionList: sessions.actions.refreshSessionList,
+    reloadSessionMessages: sessions.actions.reloadSessionMessages,
   });
 
-  const messagesRef = useAutoScroll<HTMLDivElement>(chatState.messages);
-  const canSend = Boolean(prompt.trim()) && !agentSocket.isStreaming && Boolean(sessions.activeSessionId || sessions.isNewSessionDraft);
-
-  useEffect(() => {
-    streamingRef.current = agentSocket.isStreaming;
-  }, [agentSocket.isStreaming]);
+  const messages = selectMessages(chatState, sessions.activeSessionId);
+  const approvals = selectSessionApprovals(chatState, sessions.activeSessionId);
+  const runStatusBySession = Object.values(chatState.runsById).reduce<
+    Record<string, PersistedRunStatus>
+  >((statuses, run) => {
+    statuses[run.sessionId] = run.status;
+    return statuses;
+  }, {});
+  const messagesRef = useAutoScroll<HTMLDivElement>(messages);
+  const canSend =
+    Boolean(prompt.trim()) &&
+    !agentSocket.isSessionRunning(sessions.activeSessionId) &&
+    Boolean(sessions.activeSessionId || sessions.isNewSessionDraft);
 
   useEffect(() => {
     if (!isConfigReady) {
@@ -66,15 +75,11 @@ function App() {
   }, [agentSocket.connectSocket, agentSocket.setSocketStatus, apiConfig, isConfigReady, sessions.actions.initializeSessions]);
 
   function handleCreateSession() {
-    if (agentSocket.isStreaming) {
-      return;
-    }
-
     sessions.actions.startNewSessionDraft();
   }
 
   async function handleChooseDirectory() {
-    if (!sessions.isNewSessionDraft || agentSocket.isStreaming) {
+    if (!sessions.isNewSessionDraft) {
       return;
     }
 
@@ -106,7 +111,7 @@ function App() {
       defaultWorkingDirectory={apiConfig.defaultWorkingDirectory}
       editingSessionId={sessions.editingSessionId}
       editingTitle={sessions.editingTitle}
-      messages={chatState.messages}
+      messages={messages}
       messagesRef={messagesRef}
       bridgeStatus={bridgeStatus}
       socketStatus={agentSocket.socketStatus}
@@ -114,7 +119,9 @@ function App() {
       sendMode={sendMode}
       isStreaming={agentSocket.isStreaming}
       canSend={canSend}
-      approvals={chatState.approvals}
+      approvals={approvals}
+      activeRunIdBySession={agentSocket.activeRunIdBySession}
+      runStatusBySession={runStatusBySession}
       onCreateSession={handleCreateSession}
       onSelectSession={sessions.actions.selectSession}
       onStartRename={sessions.actions.startRename}

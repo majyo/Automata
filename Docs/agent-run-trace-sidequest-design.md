@@ -453,52 +453,36 @@ chat router
 错误处理：
 
 - provider、backend 或工具链抛错：run 标记 `failed`，写入经过清洗的公开错误摘要；
-- WebSocket 断开导致取消：在 `finally` 中 best-effort 标记 `cancelled`；
+- WebSocket 断开不改变 Run 状态；Trace recorder 继续随后台 Run 记录。只有明确 `cancel_run`
+  才标记 `cancelled`，API 进程退出后的未完成 Run 由持久化恢复层标记 `interrupted`；
 - trace repository 写入失败：记录 warning，停止轨迹持久化，但不使 agent reply 失败；
 - trace UI/事件发送失败不能改变工具执行结果和最终回答。
 
 ## 持久化设计
 
-新增独立表，不修改 `messages.kind` 约束，也不把 run phase 混入普通消息：
+> 衔接更新（2026-07-17）：通用 `agent_runs`、`agent_run_events`、Run 状态机和事件序号现在由
+> [Agent Run 持久化、断线恢复、Plan 重试与安全迁移设计方案](./agent-run-persistence-recovery-design.md)
+> 统一定义，RunTrace 不再重复建表。它应在同一 Run 事件总序列中写入
+> `category='trace'` 的事件，并只为制品或查询投影增加专用结构。
 
-```sql
-CREATE TABLE IF NOT EXISTS agent_runs (
-    id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL,
-    request_message_id TEXT NOT NULL,
-    response_message_id TEXT,
-    mode TEXT NOT NULL,
-    status TEXT NOT NULL,
-    schema_version INTEGER NOT NULL,
-    started_at TEXT NOT NULL,
-    completed_at TEXT,
-    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
-    FOREIGN KEY (request_message_id) REFERENCES messages(id) ON DELETE CASCADE,
-    FOREIGN KEY (response_message_id) REFERENCES messages(id) ON DELETE SET NULL
-);
+RunTrace 不再新增独立 Run 表，也不修改 `messages.kind`。Trace recorder 通过统一的
+`DurableRunEventSink` 向当前 Run 追加 `category='trace'` 的事件，并与 runtime 事件共用
+`(run_id, sequence)` 总顺序。功能关闭时只停止写 Trace 类事件，通用 Run 事实仍正常持久化。
 
-CREATE TABLE IF NOT EXISTS agent_run_events (
-    run_id TEXT NOT NULL,
-    sequence INTEGER NOT NULL,
-    event_type TEXT NOT NULL,
-    payload_json TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    PRIMARY KEY (run_id, sequence),
-    FOREIGN KEY (run_id) REFERENCES agent_runs(id) ON DELETE CASCADE
-);
-```
-
-表可以随 schema 初始化以 additive 方式创建；功能关闭时不写入任何 run 数据。不要把启用状态存进 session 数据库，MVP 使用配置即可。
+如果后续需要制品二进制、超大内容或高效阶段查询，可以新增 `agent_run_artifacts` 或物化投影表；
+这些结构只保存 Trace 扩展数据，不复制 Run 身份、状态或基础事件序号。
 
 建议 API：
 
 ```text
 GET /sessions/{session_id}/runs
-GET /runs/{run_id}
-GET /runs/{run_id}/events?after_sequence=42
+GET /sessions/{session_id}/runs/{run_id}
+GET /sessions/{session_id}/runs/{run_id}/events?after_sequence=42
 ```
 
-`GET /runs/{run_id}` 返回 reducer 可直接消费的 snapshot；events endpoint 用于重连补发和调试。第一阶段也可以只返回 events，由后端公共 reducer 物化 snapshot，但 UI 和后端必须共享协议测试 fixture，避免状态重放不一致。
+Run 摘要和恢复协议由持久化恢复方案实现。RunTrace UI 在同一事件响应中筛选
+`category='trace'`，或由未来的 Trace 查询投影返回阶段 snapshot。UI 和后端必须共享协议测试
+fixture，避免状态重放不一致。
 
 ## Skill Trace Profile
 
@@ -619,7 +603,7 @@ AUTOMATA_RUN_TRACE_MAX_PAYLOAD_BYTES=2097152
 
 语义：
 
-- `RUN_TRACE_ENABLED=false`：不创建 recorder、不注册 control tool、不发送事件、不写 run 表、不改变当前 UI。
+- `RUN_TRACE_ENABLED=false`：不创建 Trace recorder、不注册 control tool、不发送 Trace 事件、不改变 Trace UI；通用 Run 与 runtime 事件仍由持久化恢复基础设施记录。
 - `RUN_TRACE_ENABLED=true` 且 `MODEL_REPORTING_ENABLED=false`：只展示 runtime 派生的 execution/summary 轨迹，用于先验证事件、存储和 UI。
 - 两者都为 true：注册 `report_progress` 并允许 skill 驱动 planning/analysis items。
 
@@ -633,7 +617,7 @@ AUTOMATA_RUN_TRACE_MAX_PAYLOAD_BYTES=2097152
 - 当前 `started` / `done` payload 的必填字段不变；
 - ToolRouter 中没有额外 tool；
 - skills 加载和注入逻辑不变；
-- 不写 `agent_runs` / `agent_run_events`；
+- 不写 `category='trace'` 的 RunTrace 事件；通用 `agent_runs` / runtime 事件不受该开关影响；
 - 当前消息、plan 和 tool run API 响应不变；
 - 当前 UI 快照和交互不变；
 - 全量现有测试通过。

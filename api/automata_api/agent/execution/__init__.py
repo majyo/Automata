@@ -1,1 +1,1 @@
-"""Execution-safety primitives for one in-memory agent run."""
+"""Application-level durable Run coordination and execution safety."""

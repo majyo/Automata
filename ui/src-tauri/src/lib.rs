@@ -98,13 +98,10 @@ fn start_api_sidecar(app: &mut tauri::App) {
         return;
     }
 
-    let data_dir = match app.path().app_data_dir() {
+    let data_dir = match resolve_data_dir(app) {
         Ok(path) => path,
         Err(error) => {
-            set_backend_status(
-                &app_handle,
-                format!("Failed to resolve app data dir: {error}"),
-            );
+            set_backend_status(&app_handle, error);
             return;
         }
     };
@@ -191,6 +188,20 @@ fn resolve_workspace_dir() -> PathBuf {
     }
 
     env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+fn resolve_data_dir(app: &tauri::App) -> Result<PathBuf, String> {
+    if let Some(path) = env::var("AUTOMATA_DATA_DIR")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        return Ok(PathBuf::from(path));
+    }
+
+    app.path()
+        .app_data_dir()
+        .map_err(|error| format!("Failed to resolve app data dir: {error}"))
 }
 
 fn stop_api_sidecar(app_handle: &tauri::AppHandle) {

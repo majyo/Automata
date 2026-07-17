@@ -11,7 +11,11 @@ from automata_api.agent.backends.factory import (
 )
 from automata_api.agent.llm import AgentProviderError
 from automata_api.agent.execution.approval import ApprovalBroker
-from automata_api.agent.execution.model import CancellationToken
+from automata_api.agent.execution.model import (
+    CancellationToken,
+    PublicRunError,
+    RunOutcome,
+)
 from automata_api.agent.execution.orchestrator import ToolExecutionOrchestrator
 from automata_api.agent.mcp.runtime import create_mcp_tool_runtime
 from automata_api.agent.runtime import stream_agent_loop, stream_plan_loop
@@ -23,8 +27,6 @@ from automata_api.config import AgentConfigurationError
 from automata_api.repositories.agent_store import SessionAgentContextStore
 from automata_api.repositories.sessions import (
     SessionNotFoundError,
-    create_plan,
-    mark_plan_executed,
     save_message,
     save_tool_run_message,
     session_backend_config,
@@ -60,7 +62,7 @@ async def stream_agent_reply(
     selected_skills: object = None,
     approved_plan_content: str | None = None,
     approved_plan_id: str | None = None,
-) -> None:
+) -> RunOutcome:
     await websocket.send_json(
         {
             "type": "started",
@@ -114,43 +116,22 @@ async def stream_agent_reply(
                     run_id=run_id,
                 )
     except SessionNotFoundError as error:
-        await websocket.send_json(
-            {"type": "error", "run_id": run_id, "message": str(error)}
-        )
-        return
+        raise PublicRunError("session_not_found", str(error)) from error
     except BackendConfigurationError as error:
-        await websocket.send_json(
-            {"type": "error", "run_id": run_id, "message": str(error)}
-        )
-        return
+        raise PublicRunError("backend_configuration_error", str(error)) from error
     except AgentConfigurationError as error:
-        await websocket.send_json(
-            {"type": "error", "run_id": run_id, "message": str(error)}
-        )
-        return
+        raise PublicRunError("agent_configuration_error", str(error)) from error
     except AgentProviderError as error:
-        await websocket.send_json(
-            {"type": "error", "run_id": run_id, "message": str(error)}
-        )
-        return
+        raise PublicRunError("agent_provider_error", str(error)) from error
     except httpx.RequestError as error:
-        await websocket.send_json(
-            {
-                "type": "error",
-                "run_id": run_id,
-                "message": f"LLM request failed: {error.__class__.__name__}",
-            }
-        )
-        return
+        raise PublicRunError(
+            "llm_request_failed",
+            f"LLM request failed: {error.__class__.__name__}",
+        ) from error
 
     cancellation.raise_if_cancelled()
-    message = await run_repository_call(
-        save_message, session_id=session_id, role="agent", content=response
-    )
-    if approved_plan_id:
-        await run_repository_call(mark_plan_executed, session_id, approved_plan_id)
     cancellation.raise_if_cancelled()
-    await websocket.send_json({"type": "done", "run_id": run_id, "message": message})
+    return RunOutcome(response_content=response)
 
 
 async def stream_plan_reply(
@@ -162,7 +143,7 @@ async def stream_plan_reply(
     cancellation: CancellationToken,
     approval_broker: ApprovalBroker,
     selected_skills: object = None,
-) -> None:
+) -> RunOutcome:
     await websocket.send_json(
         {
             "type": "started",
@@ -216,58 +197,22 @@ async def stream_plan_reply(
                     run_id=run_id,
                 )
     except SessionNotFoundError as error:
-        await websocket.send_json(
-            {"type": "error", "run_id": run_id, "message": str(error)}
-        )
-        return
+        raise PublicRunError("session_not_found", str(error)) from error
     except BackendConfigurationError as error:
-        await websocket.send_json(
-            {"type": "error", "run_id": run_id, "message": str(error)}
-        )
-        return
+        raise PublicRunError("backend_configuration_error", str(error)) from error
     except AgentConfigurationError as error:
-        await websocket.send_json(
-            {"type": "error", "run_id": run_id, "message": str(error)}
-        )
-        return
+        raise PublicRunError("agent_configuration_error", str(error)) from error
     except AgentProviderError as error:
-        await websocket.send_json(
-            {"type": "error", "run_id": run_id, "message": str(error)}
-        )
-        return
+        raise PublicRunError("agent_provider_error", str(error)) from error
     except httpx.RequestError as error:
-        await websocket.send_json(
-            {
-                "type": "error",
-                "run_id": run_id,
-                "message": f"LLM request failed: {error.__class__.__name__}",
-            }
-        )
-        return
+        raise PublicRunError(
+            "llm_request_failed",
+            f"LLM request failed: {error.__class__.__name__}",
+        ) from error
 
     cancellation.raise_if_cancelled()
-    message = await run_repository_call(
-        save_message, session_id=session_id, role="agent", content=response
-    )
-    plan = await run_repository_call(
-        create_plan,
-        session_id=session_id,
-        prompt_message_id=prompt_message_id,
-        plan_message_id=message["id"],
-        content=response,
-    )
-    await websocket.send_json(
-        {
-            "type": "plan_ready",
-            "run_id": run_id,
-            "session_id": session_id,
-            "plan_id": plan["id"],
-            "status": plan["status"],
-            "content": response,
-        }
-    )
     cancellation.raise_if_cancelled()
-    await websocket.send_json({"type": "done", "run_id": run_id, "message": message})
+    return RunOutcome(response_content=response, plan_content=response)
 
 
 async def stream_approved_plan_reply(
@@ -277,7 +222,7 @@ async def stream_approved_plan_reply(
     run_id: str,
     cancellation: CancellationToken,
     approval_broker: ApprovalBroker,
-) -> None:
+) -> RunOutcome:
     plan_id = str(plan["id"])
     await websocket.send_json(
         {
@@ -287,7 +232,7 @@ async def stream_approved_plan_reply(
             "plan_id": plan_id,
         }
     )
-    await stream_agent_reply(
+    return await stream_agent_reply(
         websocket=websocket,
         session_id=session_id,
         prompt=f"Approved plan {plan_id}",
@@ -387,7 +332,15 @@ async def forward_agent_events(
                 arguments=arguments_from_event(event),
             )
             tool_run_message_ids[tool_call_id] = str(message["id"])
-            await websocket.send_json(event)
+            await websocket.send_json(
+                {
+                    **event,
+                    "message_id": str(message["id"]),
+                    "arguments": event_text_summary(
+                        arguments_from_event(event)
+                    ),
+                }
+            )
             continue
 
         if event_type == "tool_result":
@@ -416,7 +369,16 @@ async def forward_agent_events(
                     success=event.get("success") is not False,
                     content=content_from_event(event),
                 )
-            await websocket.send_json(event)
+                message_id = str(message["id"])
+            content = content_from_event(event)
+            await websocket.send_json(
+                {
+                    **event,
+                    "message_id": message_id,
+                    "content": event_text_summary(content),
+                    "content_truncated": len(content) > 8_000,
+                }
+            )
             continue
 
         await websocket.send_json(event)
@@ -457,3 +419,9 @@ def arguments_from_event(event: dict[str, Any]) -> str:
 def content_from_event(event: dict[str, Any]) -> str:
     content = event.get("content")
     return content if isinstance(content, str) else ""
+
+
+def event_text_summary(content: str, *, limit: int = 8_000) -> str:
+    if len(content) <= limit:
+        return content
+    return f"{content[:limit]}\n… [full result is stored in the linked message]"

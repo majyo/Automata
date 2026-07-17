@@ -10,16 +10,26 @@ export type ToolRunMetadata = {
   result?: ToolRunResult | null;
 };
 
-export type PersistedPlanStatus = "pending" | "approved" | "executed" | "superseded";
-export type PlanStatus = PersistedPlanStatus | "approving" | "executing" | "error";
+export type PersistedPlanStatus = "pending" | "executing" | "failed" | "executed" | "superseded";
+export type PlanStatus = PersistedPlanStatus | "approving";
 export type SendMode = "execute" | "plan";
 export type ToolRunStatus = "running" | "completed" | "failed";
-export type RunStatus = "idle" | "running" | "waiting_approval" | "cancelling";
+export type PersistedRunStatus =
+  | "queued"
+  | "running"
+  | "waiting_approval"
+  | "cancelling"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "interrupted";
+export type RunStatus = PersistedRunStatus | "idle";
 export type ApprovalDecision = "allow_once" | "allow_for_run" | "deny";
 
 export type ToolApprovalRequest = {
   approval_id: string;
   run_id: string;
+  session_id: string;
   tool_call_id: string;
   tool: string;
   risk: "read" | "write" | "command" | "destructive" | "external";

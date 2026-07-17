@@ -146,6 +146,10 @@ function Build-ApiSidecar {
   $WorkDir = Join-Path $PyinstallerRoot "work"
   $SpecDir = Join-Path $PyinstallerRoot "spec"
   $BuiltExe = Join-Path $DistDir "$SidecarName.exe"
+  $MigrationSourceData = (
+    (Join-Path $ApiDir "automata_api\db\migrations\*.py") +
+    ";automata_api\db\migrations"
+  )
 
   $Arguments = @(
     "run",
@@ -161,6 +165,7 @@ function Build-ApiSidecar {
     "--workpath", $WorkDir,
     "--specpath", $SpecDir,
     "--collect-data", "certifi",
+    "--add-data", $MigrationSourceData,
     "--hidden-import", "uvicorn.lifespan.on",
     "--hidden-import", "uvicorn.protocols.http.h11_impl",
     "--hidden-import", "uvicorn.protocols.websockets.websockets_impl",
