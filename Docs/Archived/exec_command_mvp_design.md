@@ -12,7 +12,7 @@ MVP 的核心目标不是复刻完整 Codex 终端子系统，而是在当前 `A
 - 工具清单是 `api/automata_api/agent/tools/registry.py` 中的模块级 `REGISTERED_TOOLS`，运行入口是 `api/automata_api/agent/tools/__init__.py` 的 `run_tool(name, raw_arguments, workspace)`。
 - Agent runtime 只发通用事件：`tool_call` 和 `tool_result`。前端 `ToolCard` 展示工具名、参数和最终 JSON 结果，不识别命令输出 delta。
 - 当前真实 shell 执行能力是 `run_bash`，实现集中在 `api/automata_api/agent/tools/_core.py`，已经具备 cwd 限制、超时上限、stdout/stderr 捕获和输出截断。
-- `Docs/backend-abstraction-plan.md` 中的 Backend 抽象还没有落地，因此本设计不能假设 `ToolRegistry` 实例化、Backend 原语或 per-session tool set 已存在。
+- `Docs/Archived/backend-abstraction-plan.md` 中的 Backend 抽象还没有落地，因此本设计不能假设 `ToolRegistry` 实例化、Backend 原语或 per-session tool set 已存在。
 
 因此，MVP 必须贴合当前代码形态：新增一个普通 function-call 工具，复用现有工具注册、运行时事件和结果持久化路径。
 
@@ -547,7 +547,7 @@ uv run --directory api --group dev --locked pytest tests/test_tools.py tests/tes
 
 ### 阶段 3：为 Backend 抽象预留迁移点
 
-当 `Docs/backend-abstraction-plan.md` 落地后：
+当 `Docs/Archived/backend-abstraction-plan.md` 落地后：
 
 - 将 `run_exec_command` 的 subprocess 逻辑下沉为 `LocalBackend.exec_shell`。
 - `ExecCommandTool` 改为注入 Backend。

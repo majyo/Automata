@@ -466,7 +466,7 @@ await websocket.send_json({"type": "done", "message": message})
 
 改动文件：
 
-- `Docs/agent-streaming-refactor-plan.md`
+- `Docs/Archived/agent-streaming-refactor-plan.md`
 - 可选：测试 fixture 或临时验证记录文件
 
 任务清单：
@@ -607,7 +607,7 @@ uv run --directory api --group dev --locked pytest tests/test_chat.py
 改动文件：
 
 - `api/README.md`
-- `Docs/agent-streaming-refactor-plan.md`
+- `Docs/Archived/agent-streaming-refactor-plan.md`
 - 可选：验证记录或 PR 描述
 
 任务清单：
