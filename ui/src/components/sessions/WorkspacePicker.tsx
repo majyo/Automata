@@ -18,27 +18,33 @@ export function WorkspacePicker({
   onChooseDirectory,
   onWorkingDirectoryChange,
 }: WorkspacePickerProps) {
+  const locked = !isNewSessionDraft || isStreaming;
+
   return (
     <section className={`workspace-picker ${isNewSessionDraft ? "" : "locked"}`} aria-label="Working directory">
-      <div className="workspace-picker-header">
-        <span>Working directory</span>
+      <span className="field-label">Working directory</span>
+      <div className="text-field">
+        <input
+          value={displayedWorkingDirectory}
+          onChange={(event) => onWorkingDirectoryChange(event.currentTarget.value)}
+          disabled={locked}
+          title={displayedWorkingDirectory}
+          placeholder={defaultWorkingDirectory || WORKING_DIRECTORY_PLACEHOLDER}
+        />
         <button
-          className="icon-button small"
+          className="icon-button"
           type="button"
           onClick={onChooseDirectory}
-          disabled={!isNewSessionDraft || isStreaming}
+          disabled={locked}
           aria-label="Choose working directory"
+          title="Choose working directory"
         >
-          <FolderOpen size={16} />
+          <FolderOpen size={18} />
         </button>
       </div>
-      <input
-        value={displayedWorkingDirectory}
-        onChange={(event) => onWorkingDirectoryChange(event.currentTarget.value)}
-        disabled={!isNewSessionDraft || isStreaming}
-        title={displayedWorkingDirectory}
-        placeholder={defaultWorkingDirectory || WORKING_DIRECTORY_PLACEHOLDER}
-      />
+      <span className="field-helper">
+        {locked ? "The working directory is fixed for this session." : "Pick a folder or type a path for the new session."}
+      </span>
     </section>
   );
 }

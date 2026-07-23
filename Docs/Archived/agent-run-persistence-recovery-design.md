@@ -5,7 +5,7 @@
 > - 实施完成：2026-07-17
 > - 代码基线：`7b48f26`
 > - 前置方案：[Agent 执行安全 MVP 设计方案](./agent-execution-safety-mvp-design.md)
-> - 关联方案：[Agent Run Trace Sidequest 设计方案](../agent-run-trace-sidequest-design.md)
+> - 关联方案：[Agent Run Trace Sidequest 设计方案](../Deferred/agent-run-trace-sidequest-design.md)
 
 ## 1. 文档目的
 

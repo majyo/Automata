@@ -1,4 +1,4 @@
-import { Check, FolderGit2, FolderOpen, GitBranch, Pencil, ServerCog, Trash2, X } from "lucide-react";
+import { Check, FolderGit2, FolderOpen, Pencil, Trash2, X } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import type { PersistedRunStatus } from "../../types/chat";
 import type { SessionSummary } from "../../types/session";
@@ -34,6 +34,8 @@ export function SessionListItem({
   onDelete,
 }: SessionListItemProps) {
   const isEditing = editingSessionId === session.id;
+  const statusLabel = formatSessionRunStatus(runStatus, isRunning, isActive);
+  const showStatus = statusLabel !== "Saved" && statusLabel !== "Active";
 
   function handleTitleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key === "Enter") {
@@ -50,8 +52,10 @@ export function SessionListItem({
       className={`session-item ${isActive ? "active" : ""} ${isRunning ? "running" : ""}`}
       onClick={() => onSelect(session.id)}
     >
-      <FolderGit2 size={17} />
-      <span>
+      <span className="session-item-icon">
+        <FolderGit2 size={18} />
+      </span>
+      <span className="session-item-text">
         {isEditing ? (
           <input
             autoFocus
@@ -65,71 +69,73 @@ export function SessionListItem({
           <strong>{session.title}</strong>
         )}
         <small>
-          <GitBranch size={13} />
-          {session.message_count} messages
-        </small>
-        <small>
-          <ServerCog size={13} />
-          {session.backend}
+          {session.message_count} messages · {session.backend}
         </small>
         <small className="session-directory" title={session.working_directory}>
-          <FolderOpen size={13} />
+          <FolderOpen size={12} />
           {formatDirectoryName(session.working_directory)}
         </small>
       </span>
-      <em>{formatSessionRunStatus(runStatus, isRunning, isActive)}</em>
-      <span className="session-actions">
-        {isEditing ? (
-          <>
-            <span
-              className="mini-action"
-              role="button"
-              tabIndex={0}
-              onClick={(event) => {
-                event.stopPropagation();
-                onCommitRename(session.id);
-              }}
-            >
-              <Check size={13} />
-            </span>
-            <span
-              className="mini-action"
-              role="button"
-              tabIndex={0}
-              onClick={(event) => {
-                event.stopPropagation();
-                onCancelRename();
-              }}
-            >
-              <X size={13} />
-            </span>
-          </>
-        ) : (
-          <>
-            <span
-              className="mini-action"
-              role="button"
-              tabIndex={0}
-              onClick={(event) => {
-                event.stopPropagation();
-                onStartRename(session);
-              }}
-            >
-              <Pencil size={13} />
-            </span>
-            <span
-              className="mini-action danger"
-              role="button"
-              tabIndex={0}
-              onClick={(event) => {
-                event.stopPropagation();
-                onDelete(session.id);
-              }}
-            >
-              <Trash2 size={13} />
-            </span>
-          </>
-        )}
+      <span className="session-item-trailing">
+        {showStatus ? (
+          <em className={`status-chip ${sessionStatusTone(runStatus, isRunning)}`}>
+            {isRunning ? <span className="status-dot" /> : null}
+            {statusLabel}
+          </em>
+        ) : null}
+        <span className="session-actions">
+          {isEditing ? (
+            <>
+              <span
+                className="mini-action"
+                role="button"
+                tabIndex={0}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onCommitRename(session.id);
+                }}
+              >
+                <Check size={14} />
+              </span>
+              <span
+                className="mini-action"
+                role="button"
+                tabIndex={0}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onCancelRename();
+                }}
+              >
+                <X size={14} />
+              </span>
+            </>
+          ) : (
+            <>
+              <span
+                className="mini-action"
+                role="button"
+                tabIndex={0}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onStartRename(session);
+                }}
+              >
+                <Pencil size={14} />
+              </span>
+              <span
+                className="mini-action danger"
+                role="button"
+                tabIndex={0}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onDelete(session.id);
+                }}
+              >
+                <Trash2 size={14} />
+              </span>
+            </>
+          )}
+        </span>
       </span>
     </button>
   );
@@ -162,4 +168,20 @@ function formatSessionRunStatus(
     return "Interrupted";
   }
   return "Saved";
+}
+
+function sessionStatusTone(status: PersistedRunStatus | undefined, isRunning: boolean): string {
+  if (status === "waiting_approval") {
+    return "tone-warning";
+  }
+  if (isRunning) {
+    return "tone-primary";
+  }
+  if (status === "failed") {
+    return "tone-error";
+  }
+  if (status === "completed") {
+    return "tone-success";
+  }
+  return "tone-neutral";
 }

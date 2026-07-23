@@ -6,6 +6,7 @@ import pytest
 from automata_api.agent.prompts import agent_workspace
 from automata_api.agent.backends.factory import default_backend_kind
 from automata_api.db.schema import (
+    DatabaseMigrationError,
     DatabaseMigrationChecksumError,
     DatabaseSchemaTooNewError,
     init_db,
@@ -416,6 +417,162 @@ def test_init_db_preserves_and_upgrades_legacy_messages_schema(
         ).fetchone()[0] == 3
     assert list_messages("session-1")[0]["content"] == "legacy prompt"
     assert list(tmp_path.glob("automata.db.backup.*"))
+
+
+def test_init_db_removes_orphaned_legacy_messages_shadow_table_after_backup(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("AUTOMATA_DATA_DIR", str(tmp_path))
+    db_file = tmp_path / "automata.db"
+    with sqlite3.connect(db_file) as db:
+        db.executescript(
+            """
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE messages (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role IN ('user', 'agent', 'tool')),
+                kind TEXT NOT NULL DEFAULT 'message' CHECK (
+                    kind IN ('message', 'tool_run')
+                ),
+                content TEXT NOT NULL,
+                metadata_json TEXT,
+                sequence INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+                UNIQUE (session_id, sequence)
+            );
+
+            CREATE TABLE messages_old (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role IN ('user', 'agent')),
+                content TEXT NOT NULL,
+                sequence INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+                UNIQUE (session_id, sequence)
+            );
+
+            INSERT INTO sessions (id, title, created_at, updated_at)
+            VALUES ('session-1', 'Keep', '2026-07-23', '2026-07-23');
+
+            INSERT INTO messages (
+                id, session_id, role, content, sequence, created_at
+            )
+            VALUES (
+                'message-1',
+                'session-1',
+                'user',
+                'keep me',
+                1,
+                '2026-07-23'
+            );
+
+            INSERT INTO messages_old (
+                id, session_id, role, content, sequence, created_at
+            )
+            VALUES (
+                'orphan-1',
+                'deleted-session',
+                'user',
+                'legacy orphan',
+                1,
+                '2026-05-11'
+            );
+            """
+        )
+
+    init_db()
+
+    with sqlite3.connect(db_file) as db:
+        assert db.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert db.execute(
+            """
+            SELECT COUNT(*) FROM sqlite_schema
+            WHERE type = 'table' AND name = 'messages_old'
+            """
+        ).fetchone()[0] == 0
+        assert db.execute(
+            "SELECT content FROM messages WHERE id = 'message-1'"
+        ).fetchone()[0] == "keep me"
+        assert db.execute(
+            "SELECT COUNT(*) FROM schema_migrations"
+        ).fetchone()[0] == 3
+
+    backup_file = next(tmp_path.glob("automata.db.backup.*"))
+    with sqlite3.connect(backup_file) as backup:
+        assert backup.execute(
+            "SELECT content FROM messages_old WHERE id = 'orphan-1'"
+        ).fetchone()[0] == "legacy orphan"
+
+
+def test_init_db_rejects_unrecognized_foreign_key_violation(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("AUTOMATA_DATA_DIR", str(tmp_path))
+    db_file = tmp_path / "automata.db"
+    with sqlite3.connect(db_file) as db:
+        db.executescript(
+            """
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE messages (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role IN ('user', 'agent', 'tool')),
+                kind TEXT NOT NULL DEFAULT 'message' CHECK (
+                    kind IN ('message', 'tool_run')
+                ),
+                content TEXT NOT NULL,
+                metadata_json TEXT,
+                sequence INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+                UNIQUE (session_id, sequence)
+            );
+
+            INSERT INTO messages (
+                id, session_id, role, content, sequence, created_at
+            )
+            VALUES (
+                'orphan-1',
+                'deleted-session',
+                'user',
+                'must not be repaired automatically',
+                1,
+                '2026-07-23'
+            );
+            """
+        )
+
+    with pytest.raises(
+        DatabaseMigrationError,
+        match=r"foreign_key_check failed before migration: 1 violation",
+    ):
+        init_db()
+
+    with sqlite3.connect(db_file) as db:
+        assert db.execute(
+            "SELECT content FROM messages WHERE id = 'orphan-1'"
+        ).fetchone()[0] == "must not be repaired automatically"
+        assert db.execute(
+            """
+            SELECT COUNT(*) FROM sqlite_schema
+            WHERE type = 'table' AND name = 'schema_migrations'
+            """
+        ).fetchone()[0] == 0
 
 
 def test_init_db_migrates_session_working_directory(tmp_path, monkeypatch):

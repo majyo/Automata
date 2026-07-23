@@ -2,10 +2,10 @@
 
 ## Status
 
-- 文档状态：MVP 已实现；live session / PTY / `write_stdin` 等高级能力尚未实现
-- 最近核对：2026-07-20
-- 代码基线：`main` / `d0f2eea`
-- 已归档的 MVP 方案：[exec_command MVP 落地设计](./Archived/exec_command_mvp_design.md)
+- 文档状态：一次性命令 MVP 已实现；通用 output delta 和 pipe-based live session 可实施；PTY、真实 sandbox 与远程执行暂缓
+- 最近核对：2026-07-23
+- 代码基线：`main` / `814d963`
+- 已归档的 MVP 方案：[exec_command MVP 落地设计](../Archived/exec_command_mvp_design.md)
 
 ## 结论
 
@@ -19,7 +19,9 @@ Automata 当前的 `exec_command` 是一个真实、一次性、非交互的本�
 - Run 取消、timeout 或 API shutdown 会终止已注册的进程树；
 - 使用普通 `tool_call` / `tool_result` 事件，不流式发送命令输出。
 
-当前实现不是完整的 terminal session 系统。仓库中没有 `write_stdin`、PTY、live process store、`session_id`、`yield_time_ms`、远程 environment、sandbox 或 command hooks。
+当前实现不是完整的 terminal session 系统。仓库中没有 `write_stdin`、PTY、live process store、`session_id`、`yield_time_ms`、远程 Backend 或真实 sandbox。
+
+后续实现应先补通用、可重放的工具输出事件和非 PTY live process session。PTY 需要跨平台适配和更严格的 transcript / 控制字符边界，暂不作为近期实现目标。远程执行属于 Backend 架构，不能通过给 `exec_command` 增加 `environment_id` 来实现。
 
 ## 当前代码路径
 
@@ -276,16 +278,14 @@ cwd 限制不是 sandbox。
 
 只有产品确实需要“长任务 / 交互终端”时，才继续扩展以下能力：
 
-1. 命令输出在运行中增量显示；
-2. 长命令在初始等待后返回 `session_id`；
-3. `write_stdin` 轮询和交互；
-4. PTY；
-5. live process 数量、空闲时间和关闭清理；
-6. 可配置 sandbox / permission；
-7. 多 environment 或远程执行；
-8. pre/post tool hooks。
+1. 用通用 `tool_output_delta` 让长工具的输出可持久化、重放和增量显示；
+2. 用独立 `ProcessSessionManager` 管理长命令；
+3. 长命令在初始等待后返回 `session_id`；
+4. 用 poll 和 pipe-based stdin 支持非 PTY 的 `write_stdin`；
+5. 对 live process 数量、transcript、空闲时间和关闭清理设置硬上限；
+6. 把最终 stdout/stderr 改成有界 head-tail buffer，避免只保留前缀。
 
-这些是后续设计，不是当前接口承诺。
+PTY、真实 sandbox 和远程执行列在本文的 Deferred 边界中，不是当前接口承诺。Codex 风格的 pre/post command hooks 没有现成 plugin 生命周期或消费者，本项目当前不实现。
 
 ## 后续协议草案
 
@@ -298,13 +298,14 @@ cwd 限制不是 sandbox。
   "cmd": "long-running command",
   "workdir": ".",
   "shell": "bash",
-  "tty": false,
   "yield_time_ms": 10000,
   "max_output_chars": 20000
 }
 ```
 
 建议继续使用 `max_output_chars`，除非 runtime 真正接入统一 token budget；不能仅改字段名为 `max_output_tokens`。
+
+第一阶段不暴露 `tty`。是否使用 PTY 必须等平台 adapter、resize、控制字符处理和安全限制全部实现后再进入公开 schema。
 
 进行中的响应：
 
@@ -322,7 +323,7 @@ cwd 限制不是 sandbox。
 
 ### `write_stdin`
 
-只有 live session store 和 PTY/pipe 语义完成后才注册：
+只有 live session store 和 pipe stdin 语义完成后才注册：
 
 ```json
 {
@@ -336,11 +337,12 @@ cwd 限制不是 sandbox。
 建议规则：
 
 - 空 `chars` 表示轮询；
-- 非空写入只允许对声明为可交互的 session；
+- 非空写入只允许对声明为 pipe-interactive 的 session；
 - 已退出或未知 session 返回稳定错误；
 - session 必须绑定创建它的 Run/session/workspace；
 - poll 观察到进程结束时，从 store 移除；
 - `cancel_run` 和 API shutdown 终止并移除全部关联 session。
+- `write_stdin` 第一版不承诺终端行编辑、窗口 resize、交互式密码提示或全屏 TUI。
 
 ## 后续架构
 
@@ -357,7 +359,7 @@ ProcessSessionEntry = {
     "tool_call_id": "...",
     "workspace": "...",
     "process": "...",
-    "tty": False,
+    "stdin_mode": "pipe",
     "created_at": "...",
     "last_used_at": "...",
 }
@@ -377,16 +379,23 @@ ProcessSessionEntry = {
 
 ### 输出事件
 
-后续可新增版本化事件：
+新增一个可供其他长工具复用的版本化事件：
 
-- `exec_command_begin`
-- `exec_command_output_delta`
-- `exec_command_end`
-- `terminal_interaction`
+- `tool_output_delta`
 
-这些事件必须进入现有持久化 Run sequence，支持断线 replay。不能只向当前 WebSocket 发送临时 delta，否则刷新后 UI 与实际 Run 不一致。
+```json
+{
+  "type": "tool_output_delta",
+  "tool_call_id": "call-id",
+  "tool": "exec_command",
+  "stream": "stdout",
+  "content": "incremental output"
+}
+```
 
-输出 delta 需要独立预算和批处理；最终 tool result 仍保持有界。
+现有 `tool_call` 和最终 `tool_result` 已经提供开始与结束边界，因此不再定义 exec 专用 begin/end 事件。`tool_output_delta` 必须进入现有持久化 Run sequence，支持断线 replay；不能只向当前 WebSocket 发送临时 delta，否则刷新后 UI 与实际 Run 不一致。
+
+输出 delta 需要按时间/字符批处理，并设置单事件、单工具和单 Run 累计预算。最终 tool result 继续有界，改用 head-tail 保留策略。UI 按 `tool_call_id` 把 delta 归入现有 `ToolCard`。
 
 ### Sandbox 和权限
 
@@ -397,6 +406,14 @@ Sandbox 不能只靠给 `exec_command` 增加几个未实现字段。正确顺�
 3. 让 `ToolExecutionOrchestrator` 选择策略；
 4. 只有 enforcement 存在时才向模型暴露 `sandbox_permissions`；
 5. 增加 denial、retry、cancel 和审计测试。
+
+在威胁模型、支持的 OS 矩阵、文件/网络 enforcement、环境变量与凭据隔离尚未确定前，这项能力保持 `DEFERRED`。文档和 UI 继续明确当前 workspace cwd 校验不是 sandbox。
+
+### 远程执行和 hooks 边界
+
+远程执行需要新的 `RemoteBackend`、transport、认证、远端进程生命周期和取消协议。调用方仍应通过 session 选择的 Backend 使用 `exec_command`，而不是在工具参数中加入 `environment_id`。这些前置条件当前不存在，因此远程执行保持 `DEFERRED`，并在 Backend 设计中单独立项。
+
+当前项目没有通用 hook/plugin 生命周期，也没有明确的 pre/post command hook 消费者。本文删除 hooks 目标；出现具体用例后再从编排器扩展点重新设计，不能照搬其他产品协议。
 
 ## 实施阶段
 
@@ -424,10 +441,12 @@ Sandbox 不能只靠给 `exec_command` 增加几个未实现字段。正确顺�
 
 状态：`TODO`
 
-- begin/delta/end event；
+- 通用 `tool_output_delta`，复用现有 `tool_call` / `tool_result` 边界；
 - 批处理和 event payload 限制；
-- UI 增量显示；
+- `ToolCard` 增量显示 stdout/stderr；
 - 断线重放。
+- 最终结果使用有界 head-tail buffer；
+- 明确提示命令主动输出的 secret 仍可能被持久化。
 
 ### Phase 3：live sessions 和 `write_stdin`
 
@@ -436,26 +455,31 @@ Sandbox 不能只靠给 `exec_command` 增加几个未实现字段。正确顺�
 - session manager；
 - 初始 yield；
 - poll；
-- stdin；
+- pipe-based stdin；
 - process limit / idle eviction；
 - Run 绑定与关闭清理。
 
 ### Phase 4：PTY
 
-状态：`TODO`
+状态：`DEFERRED`
 
 - 平台 PTY adapter；
 - resize 和交互；
 - 控制字符与 transcript 安全。
 
-### Phase 5：sandbox、environment 和 hooks
+前置条件是跨平台 PTY 依赖/adapter、明确的进程 session 协议、resize 事件、输入输出预算和自动化测试矩阵。
 
-状态：`TODO`
+### Deferred：真实 sandbox
 
-- 在有真实 enforcement 后再设计对外字段；
-- 多环境/远程执行；
-- pre/post hooks；
-- 网络和文件权限。
+状态：`DEFERRED`
+
+等待威胁模型、OS 支持矩阵、至少一个真实 enforcement runtime、网络/文件权限和凭据隔离方案。
+
+### Deferred：远程执行
+
+状态：`DEFERRED`
+
+等待 `RemoteBackend`、transport/auth、远端进程/session 生命周期和取消清理协议；不增加 tool-level `environment_id`。
 
 ## 验收标准
 
@@ -471,11 +495,13 @@ Sandbox 不能只靠给 `exec_command` 增加几个未实现字段。正确顺�
 未来 live session 阶段还必须满足：
 
 1. 运行中才返回 `session_id`，完成时返回 `exit_code`。
-2. output delta 可持久化和重放。
+2. 通用 `tool_output_delta` 可持久化和重放。
 3. `write_stdin` 不能访问其他 Run 的 process。
 4. 进程、transcript 和 session 数量都有硬上限。
 5. cancel、disconnect、API shutdown 和 idle eviction 不遗留进程。
 6. UI build 和新增 reducer/session 测试通过。
+
+Deferred 能力不计入 live session 阶段验收；在真实 enforcement 或 Backend 前置条件落地前，不向模型暴露 `sandbox_permissions`、`environment_id` 或 PTY 字段。
 
 回归命令：
 

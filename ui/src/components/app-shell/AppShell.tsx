@@ -1,7 +1,8 @@
+import { useEffect, useState } from "react";
 import type { FormEvent, RefObject } from "react";
 import { ConversationPanel } from "../conversation/ConversationPanel";
 import { Sidebar } from "./Sidebar";
-import { FloatingInspector } from "./FloatingInspector";
+import { InspectorSheet } from "./InspectorSheet";
 import { Topbar } from "./Topbar";
 import type {
   ApprovalDecision,
@@ -11,6 +12,10 @@ import type {
   ToolApprovalRequest,
 } from "../../types/chat";
 import type { SessionSummary } from "../../types/session";
+
+type Theme = "light" | "dark";
+
+const THEME_STORAGE_KEY = "automata-theme";
 
 type AppShellProps = {
   sessions: SessionSummary[];
@@ -87,6 +92,18 @@ export function AppShell({
   onRespondToApproval,
   onCancelRun,
 }: AppShellProps) {
+  const [theme, setTheme] = useState<Theme>(readStoredTheme);
+  const [isInspectorOpen, setIsInspectorOpen] = useState(false);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      // Storage may be unavailable in some webview contexts; theme still applies for the session.
+    }
+  }, [theme]);
+
   const title = isNewSessionDraft ? "New session" : activeSession?.title ?? "Agent workspace";
 
   return (
@@ -109,19 +126,21 @@ export function AppShell({
 
       <section className="workspace">
         <Topbar
-          displayedWorkingDirectory={displayedWorkingDirectory}
           title={title}
+          displayedWorkingDirectory={displayedWorkingDirectory}
+          socketStatus={socketStatus}
+          theme={theme}
+          isInspectorOpen={isInspectorOpen}
           onRunBridgeCheck={onRunBridgeCheck}
+          onToggleTheme={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
+          onToggleInspector={() => setIsInspectorOpen((open) => !open)}
         />
-        <FloatingInspector bridgeStatus={bridgeStatus} socketStatus={socketStatus} sessionCount={sessions.length} />
 
-        <section className="workspace-main">
+        <div className="workspace-body">
           <ConversationPanel
-            activeSession={activeSession}
             isNewSessionDraft={isNewSessionDraft}
             messages={messages}
             messagesRef={messagesRef}
-            socketStatus={socketStatus}
             displayedWorkingDirectory={displayedWorkingDirectory}
             defaultWorkingDirectory={defaultWorkingDirectory}
             prompt={prompt}
@@ -138,8 +157,24 @@ export function AppShell({
             onRespondToApproval={onRespondToApproval}
             onCancelRun={onCancelRun}
           />
-        </section>
+
+          <InspectorSheet
+            bridgeStatus={bridgeStatus}
+            socketStatus={socketStatus}
+            sessionCount={sessions.length}
+            open={isInspectorOpen}
+            onClose={() => setIsInspectorOpen(false)}
+          />
+        </div>
       </section>
     </main>
   );
+}
+
+function readStoredTheme(): Theme {
+  try {
+    return window.localStorage.getItem(THEME_STORAGE_KEY) === "dark" ? "dark" : "light";
+  } catch {
+    return "light";
+  }
 }

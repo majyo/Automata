@@ -14,7 +14,7 @@ export function PlanBubble({ message, isStreaming, onApprovePlan }: PlanBubblePr
     <div className="plan-bubble">
       <div className="plan-header">
         <span>
-          <CheckCircle2 size={15} />
+          <CheckCircle2 size={16} />
           Plan
         </span>
         <em className={`plan-status ${message.plan_status ?? "pending"}`}>{formatPlanStatus(message.plan_status)}</em>
@@ -22,6 +22,7 @@ export function PlanBubble({ message, isStreaming, onApprovePlan }: PlanBubblePr
       <p>{message.text || "..."}</p>
       <div className="plan-actions">
         <button
+          className="button button-filled"
           type="button"
           onClick={() => onApprovePlan(message)}
           disabled={isStreaming || (message.plan_status !== "pending" && !canRetry)}

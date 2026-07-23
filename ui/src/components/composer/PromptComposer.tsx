@@ -27,22 +27,25 @@ export function PromptComposer({
 }: PromptComposerProps) {
   return (
     <div className={`composer ${draft ? "draft" : ""}`}>
-      <SendModeToggle sendMode={sendMode} disabled={isStreaming} onChange={onSendModeChange} />
       <input
         autoFocus={autoFocus}
         value={prompt}
         onChange={(event) => onPromptChange(event.currentTarget.value)}
         placeholder="Ask the local coding agent..."
       />
-      <button
-        className={`composer-submit ${isStreaming ? "stop" : ""}`}
-        type={isStreaming ? "button" : "submit"}
-        aria-label={isStreaming ? "Stop run" : "Send prompt"}
-        disabled={isStreaming ? false : !canSend}
-        onClick={isStreaming ? onCancel : undefined}
-      >
-        {isStreaming ? <Square size={16} fill="currentColor" /> : <Send size={18} />}
-      </button>
+      <div className="composer-toolbar">
+        <SendModeToggle sendMode={sendMode} disabled={isStreaming} onChange={onSendModeChange} />
+        <button
+          className={`composer-submit ${isStreaming ? "stop" : ""}`}
+          type={isStreaming ? "button" : "submit"}
+          aria-label={isStreaming ? "Stop run" : "Send prompt"}
+          title={isStreaming ? "Stop run" : "Send prompt"}
+          disabled={isStreaming ? false : !canSend}
+          onClick={isStreaming ? onCancel : undefined}
+        >
+          {isStreaming ? <Square size={15} fill="currentColor" /> : <Send size={17} />}
+        </button>
+      </div>
     </div>
   );
 }

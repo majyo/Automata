@@ -1,30 +1,77 @@
+/* ==========================================================================
+   Layout — navigation drawer + app column (top bar, canvas, side sheet)
+   ========================================================================== */
+
 .app-shell {
   display: grid;
-  grid-template-columns: 282px minmax(0, 1fr);
-  gap: 18px;
-  min-height: 100vh;
-  padding: 14px;
-  background: var(--bg);
+  grid-template-columns: 320px minmax(0, 1fr);
+  height: 100vh;
+  overflow: hidden;
+  background: var(--md-surface);
 }
+
 .workspace {
   position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  padding: 8px 8px 8px 0;
 }
 
+/* M3 top app bar (small, center-content) */
 .topbar {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
-  justify-content: flex-start;
   gap: 16px;
-  min-height: 82px;
-  padding: 4px 370px 18px 10px;
+  height: 64px;
+  padding: 0 12px 0 24px;
+  background: var(--md-surface);
 }
-.workspace-main {
+
+.workspace-body {
   display: flex;
   flex: 1;
   min-height: 0;
+}
+
+/* Conversation canvas floats on the app surface; tinted regions (drawer,
+   side sheet) frame it. */
+.conversation-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Modal-less side sheet: animates its width when toggled */
+.inspector-sheet {
+  flex: 0 0 auto;
+  width: 0;
+  min-height: 0;
+  margin: 0 0 16px;
+  overflow: hidden;
+  visibility: hidden;
+  background: var(--md-surface-container-low);
+  transition:
+    width var(--md-duration-medium) var(--md-easing-emphasized),
+    visibility 0s var(--md-duration-medium);
+}
+
+.inspector-sheet.open {
+  width: 340px;
+  visibility: visible;
+  border-radius: var(--md-shape-lg) 0 0 0;
+  transition: width var(--md-duration-medium) var(--md-easing-emphasized);
+}
+
+@media (max-width: 1120px) {
+  .app-shell {
+    grid-template-columns: 288px minmax(0, 1fr);
+  }
+
+  .inspector-sheet.open {
+    width: 300px;
+  }
 }

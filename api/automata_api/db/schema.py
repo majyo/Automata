@@ -29,20 +29,30 @@ def init_db() -> None:
     with db_lock, connect_db() as db:
         db.execute("PRAGMA journal_mode = WAL")
         db.execute("PRAGMA foreign_keys = ON")
-        assert_database_integrity(db, "before migration")
+        assert_database_quick_check(db, "before migration")
         has_user_objects = database_has_user_objects(db)
         has_migration_table = table_exists(db, "schema_migrations")
-        backup_path: Path | None = None
-        if has_user_objects and not has_migration_table:
-            backup_path = create_database_backup(db, path, {}, list(MIGRATIONS))
         applied = applied_migrations(db) if has_migration_table else {}
         validate_applied_migrations(applied)
 
         pending = [migration for migration in MIGRATIONS if migration.version not in applied]
-        if pending and has_user_objects and backup_path is None:
+        violations = foreign_key_violations(db)
+        legacy_shadow_tables = repairable_legacy_shadow_tables(
+            db,
+            violations,
+            has_migration_table=has_migration_table,
+        )
+        if violations and not legacy_shadow_tables:
+            raise_foreign_key_error(violations, "before migration")
+
+        backup_path: Path | None = None
+        if pending and has_user_objects:
             backup_path = create_database_backup(db, path, applied, pending)
 
         try:
+            if legacy_shadow_tables:
+                drop_legacy_shadow_tables(db, legacy_shadow_tables)
+
             if pending:
                 db.execute("PRAGMA foreign_keys = OFF")
                 for migration in pending:
@@ -154,6 +164,13 @@ def migration_checksum(migration: Migration) -> str:
 
 
 def assert_database_integrity(db: sqlite3.Connection, stage: str) -> None:
+    assert_database_quick_check(db, stage)
+    violations = foreign_key_violations(db)
+    if violations:
+        raise_foreign_key_error(violations, stage)
+
+
+def assert_database_quick_check(db: sqlite3.Connection, stage: str) -> None:
     quick_check = db.execute("PRAGMA quick_check").fetchone()
     if quick_check is None or str(quick_check[0]).lower() != "ok":
         detail = quick_check[0] if quick_check else "no result"
@@ -161,11 +178,97 @@ def assert_database_integrity(db: sqlite3.Connection, stage: str) -> None:
             f"Database quick_check failed {stage}: {detail}"
         )
 
-    violations = db.execute("PRAGMA foreign_key_check").fetchall()
-    if violations:
-        raise DatabaseMigrationError(
-            f"Database foreign_key_check failed {stage}: {len(violations)} violation(s)."
-        )
+
+def foreign_key_violations(db: sqlite3.Connection) -> list[sqlite3.Row]:
+    return db.execute("PRAGMA foreign_key_check").fetchall()
+
+
+def raise_foreign_key_error(
+    violations: list[sqlite3.Row],
+    stage: str,
+) -> None:
+    raise DatabaseMigrationError(
+        f"Database foreign_key_check failed {stage}: {len(violations)} violation(s)."
+    )
+
+
+def repairable_legacy_shadow_tables(
+    db: sqlite3.Connection,
+    violations: list[sqlite3.Row],
+    *,
+    has_migration_table: bool,
+) -> list[str]:
+    if has_migration_table or not violations:
+        return []
+    if {str(row["table"]) for row in violations} != {"messages_old"}:
+        return []
+    if not table_exists(db, "messages") or not table_exists(db, "sessions"):
+        return []
+
+    columns = {
+        str(row["name"])
+        for row in db.execute('PRAGMA table_info("messages_old")').fetchall()
+    }
+    if columns != {
+        "id",
+        "session_id",
+        "role",
+        "content",
+        "sequence",
+        "created_at",
+    }:
+        return []
+
+    foreign_keys = db.execute(
+        'PRAGMA foreign_key_list("messages_old")'
+    ).fetchall()
+    if len(foreign_keys) != 1:
+        return []
+    foreign_key = foreign_keys[0]
+    if (
+        str(foreign_key["table"]) != "sessions"
+        or str(foreign_key["from"]) != "session_id"
+        or str(foreign_key["to"]) != "id"
+        or str(foreign_key["on_delete"]).upper() != "CASCADE"
+    ):
+        return []
+
+    row_count = int(
+        db.execute('SELECT COUNT(*) FROM "messages_old"').fetchone()[0]
+    )
+    if row_count != len(violations):
+        return []
+    linked_row = db.execute(
+        """
+        SELECT 1
+        FROM messages_old AS old
+        JOIN sessions ON sessions.id = old.session_id
+        LIMIT 1
+        """
+    ).fetchone()
+    if linked_row is not None:
+        return []
+
+    return ["messages_old"]
+
+
+def drop_legacy_shadow_tables(
+    db: sqlite3.Connection,
+    tables: list[str],
+) -> None:
+    db.execute("PRAGMA foreign_keys = OFF")
+    try:
+        db.execute("BEGIN IMMEDIATE")
+        for table in tables:
+            quoted_table = table.replace('"', '""')
+            db.execute(f'DROP TABLE "{quoted_table}"')
+        assert_database_integrity(db, "after legacy shadow table cleanup")
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.execute("PRAGMA foreign_keys = ON")
 
 
 def database_has_user_objects(db: sqlite3.Connection) -> bool:

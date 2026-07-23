@@ -2,10 +2,10 @@
 
 ## Status
 
-- 文档状态：后端上下文 MVP 已实现；前端选择、启停配置和高级能力尚未实现
-- 最近核对：2026-07-20
-- 代码基线：`main` / `d0f2eea`
-- 关联文档：[运行期工具发现设计](./Archived/runtime-tool-discovery-design.md)、[MCP 调用设计](./Archived/mcp-tool-calling-design.md)
+- 文档状态：后端上下文 MVP 已实现；前端、配置和依赖诊断可实施；packaged/plugin 能力暂缓
+- 最近核对：2026-07-23
+- 代码基线：`main` / `814d963`
+- 关联文档：[运行期工具发现设计](../Archived/runtime-tool-discovery-design.md)、[MCP 调用设计](../Archived/mcp-tool-calling-design.md)
 
 ## 结论
 
@@ -27,7 +27,6 @@ Automata 当前已经能够：
 - enable/disable 写接口；
 - `skills-config.json` 或数据库持久化规则；
 - plugin skill roots；
-- 文件 watcher；
 - dependency diagnostics；
 - 随应用发布的 system skills 内容。
 
@@ -226,7 +225,7 @@ dict[SkillCacheKey, SkillLoadOutcome]
 
 `GET /skills?force_reload=true` 参数已经存在，但在当前“一次请求一个新 manager”的路径下几乎没有可观察差异。
 
-如果后续需要真实缓存，应把 manager 放到 app/runtime 生命周期，并让 cache key 包含配置版本、disabled rules 和 roots。文件 watcher 或显式 reload 再清理共享 cache。
+后续应把 manager 放到 app/runtime 生命周期，并让 cache key 包含 workspace、roots、配置版本和 disabled rules。默认失效策略使用 root / `SKILL.md` / `openai.yaml` 的 mtime 或轻量 fingerprint，加短 TTL 和显式 `force_reload`；当前规模不引入常驻文件 watcher。
 
 ## 发现、选择和注入
 
@@ -277,14 +276,16 @@ WebSocket prompt 可传：
 
 Prompt 中的 `$code-review` 会按 name 触发 skill。重复 mention 去重。
 
-当前实现已经解析 `policy.allow_implicit_invocation`，但 `$name` 选择逻辑尚未检查这个字段。也就是说，即使 metadata 写了：
+当前实现已经解析 `policy.allow_implicit_invocation`，但 `$name` 选择逻辑不检查这个字段。例如 metadata 写成：
 
 ```yaml
 policy:
   allow_implicit_invocation: false
 ```
 
-当前 `$name` 仍可能注入该 skill。该字段在文档中只能标为“已解析、未执行”，后续必须补测试和 enforcement。
+当前 `$name` 仍可注入该 skill。这个行为应保留：`$skill-name` 是用户写出的显式调用，不是 implicit invocation，因此 `allow_implicit_invocation=false` 不应阻止 `$name`，结构化 `skills` payload 也不应受它影响。
+
+当前项目没有基于自然语言自动匹配 Skill 的机制，所以该字段目前没有运行时作用。实现配置阶段时应保留兼容解析但明确标为“仅预留给未来 automatic invocation”；如果未来新增自动匹配，建议改用更清晰的 `allow_automatic_invocation` 名称，并只控制自动候选，不影响任何显式选择。
 
 ### 完整正文
 
@@ -461,23 +462,44 @@ ui/src/components/conversation/SkillEvent.tsx
 
 当前 UI 没有 Vitest。若实现 picker/reducer 自动测试，需要先引入前端测试框架；否则至少保证 TypeScript build。
 
+基础 UI 属于当前可实施范围。为避免 Composer 选择、session/workspace 切换和 WebSocket reducer 只能靠手工回归，Phase 2B 应同时引入最小前端测试框架，而不是长期只依赖 build。
+
 ## Enable / Disable 后续设计
 
-建议持久化在 Automata data dir：
+不使用 canonical path 作为唯一身份。绝对路径会随 workspace 移动、用户目录变化或 root 重配而失效。建议先给 API 返回稳定 `skill_id`，其组成至少包含：
+
+```text
+scope
+root provenance / root id
+skill 在 root 内的相对目录
+name
+```
+
+canonical path 和内容 fingerprint 只作为诊断、迁移和冲突检测信息。配置可持久化在 Automata data dir：
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "disabled": [
-    {"scope": "user", "path": "D:/.../SKILL.md"}
+    {
+      "skill_id": "user:user-data:code-review",
+      "scope": "user",
+      "root_id": "user-data",
+      "relative_dir": "code-review",
+      "name": "code-review",
+      "path_hint": "D:/.../SKILL.md",
+      "fingerprint": "sha256:..."
+    }
   ]
 }
 ```
 
 实现要求：
 
-- 使用 canonical path；
-- 规则不能禁用到未发现文件之外；
+- repo / user / packaged roots 使用确定的 provenance；extra root 在配置中必须有稳定 id；
+- `skill_id` 精确匹配时应用规则；path hint 不作为唯一匹配键；
+- name 或 fingerprint 只用于迁移提示，歧义时不自动套用旧规则；
+- 写接口只能接受当前已发现的 `skill_id`，不能借此禁用任意文件；
 - shared `SkillManager` cache key 包含 config version；
 - API 写入后清 cache；
 - disabled skill 不进入摘要、`$name` 或结构化选择；
@@ -499,14 +521,14 @@ ui/src/components/conversation/SkillEvent.tsx
 
 当前缺口：
 
-- `allow_implicit_invocation=false` enforcement；
+- implicit/automatic invocation 字段的清晰命名和兼容语义；
 - `openai.yaml` 错误 warning；
 - shared cache / reload；
 - disabled rules；
 - duplicate-name UI 消歧；
 - WebSocket Skills event 的前端消费；
 - dependency diagnostics；
-- packaged/plugin roots。
+- packaged skill 内容和 plugin roots（均为 Deferred）。
 
 ## 分阶段实施
 
@@ -542,27 +564,46 @@ ui/src/components/conversation/SkillEvent.tsx
 - event 类型和展示；
 - workspace 切换；
 - duplicate-name 消歧。
+- 最小前端测试框架；
+- picker、session/workspace 切换和 Skills event reducer 测试。
 
 ### Phase 3：配置、禁用与缓存
 
 状态：`TODO`
 
 - app-scoped/shared manager；
-- 有效 reload；
-- enable/disable 持久化和 API；
+- mtime/fingerprint + TTL 的轻量失效和有效 `force_reload`；
+- 基于稳定 `skill_id` 的 enable/disable 持久化和 API；
 - UI 开关；
-- `allow_implicit_invocation` enforcement；
+- 保持 `$name` 和结构化 payload 为显式调用，不受 implicit/automatic policy 限制；
+- 为未来 automatic invocation 保留兼容字段，但当前不增加自动匹配；
 - metadata parse warning。
 
-### Phase 4：高级能力
+### Phase 4：Dependency diagnostics
 
 状态：`TODO`
 
-- 文件 watcher；
-- dependency diagnostics；
-- packaged system skills；
-- plugin roots 和 trust；
-- invocation telemetry。
+- 将 `dependencies.tools` 与当前 ToolRouter descriptor、deferred candidate 和 MCP grant 做只读比对；
+- API/UI 显示 `available`、`not_found`、`not_granted`、`deferred` 等诊断；
+- 诊断仅提供建议，不自动激活 deferred tool、不写 MCP grant、不启动 server，也不阻止显式 Skill 注入。
+
+### Deferred：packaged system skills
+
+状态：`DEFERRED`
+
+代码中的 packaged root 已存在，但仓库没有可发布内容。等待具体 Skill 内容、维护 owner、版本/升级策略和 repo/user override 规则后再实施。
+
+### Deferred：plugin roots 和 trust
+
+状态：`DEFERRED`
+
+当前没有 plugin 安装生命周期、来源身份或 trust model。等待这些前置条件后，再定义 plugin root provider、卸载清理、冲突优先级和信任提示。
+
+### 明确不实现
+
+- 常驻文件 watcher：当前规模采用轻量 fingerprint/TTL 和显式 reload；
+- invocation telemetry：项目尚无隐私、留存、开关和 telemetry 基础设施，当前没有足够产品需求；
+- Skill 自动授予工具或 MCP 权限：违反现有 ToolRouter / grant / approval 边界。
 
 ## 验收标准
 
@@ -587,9 +628,15 @@ ui/src/components/conversation/SkillEvent.tsx
 
 1. disable 规则跨重启有效。
 2. disabled skill 不进入摘要或注入。
-3. `allow_implicit_invocation=false` 对 `$name` 生效。
+3. `$name` 和结构化 payload 始终作为显式调用；implicit/automatic policy 不会错误阻止它们。
 4. reload/cache 行为有自动化证明。
 5. metadata 错误可诊断。
+6. workspace 移动或 root 重配时不会仅因绝对路径变化而静默误用禁用规则。
+
+Dependency diagnostics 完成后：
+
+1. 缺少 builtin/deferred/MCP dependency 时可见且可解释。
+2. 诊断不会自动改变 ToolRouter、MCP grant、server 状态或 Plan mode。
 
 回归命令：
 

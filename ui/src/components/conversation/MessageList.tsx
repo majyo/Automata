@@ -1,4 +1,5 @@
 import type { RefObject } from "react";
+import { Sparkles } from "lucide-react";
 import { MessageBubble } from "./MessageBubble";
 import { ToolRunGroup } from "./ToolCard";
 import type { ChatMessage } from "../../types/chat";
@@ -16,9 +17,13 @@ export function MessageList({ messages, messagesRef, isStreaming, onApprovePlan 
   return (
     <div className="messages" ref={messagesRef}>
       {messages.length === 0 && (
-        <article className="message agent empty">
+        <div className="empty-state">
+          <div className="empty-state-icon">
+            <Sparkles size={28} />
+          </div>
+          <h3>Start the conversation</h3>
           <p>This session is empty. Send a prompt to start a persisted conversation.</p>
-        </article>
+        </div>
       )}
       {items.map((item) => (
         item.kind === "tool_group" ? (

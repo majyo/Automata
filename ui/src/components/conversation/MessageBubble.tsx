@@ -1,4 +1,4 @@
-import { Code2 } from "lucide-react";
+import { Bot } from "lucide-react";
 import { PlanBubble } from "./PlanBubble";
 import { ToolCard } from "./ToolCard";
 import type { ChatMessage } from "../../types/chat";
@@ -16,9 +16,9 @@ export function MessageBubble({ message, isStreaming, onApprovePlan }: MessageBu
         message.kind === "tool_run" ? "tool-run" : ""
       }`}
     >
-      {message.role === "user" && (
+      {message.role === "agent" && message.kind !== "plan" && (
         <div className="avatar">
-          <Code2 size={18} />
+          <Bot size={17} />
         </div>
       )}
       {message.kind === "tool_run" ? (
@@ -26,7 +26,7 @@ export function MessageBubble({ message, isStreaming, onApprovePlan }: MessageBu
       ) : message.kind === "plan" ? (
         <PlanBubble message={message} isStreaming={isStreaming} onApprovePlan={onApprovePlan} />
       ) : (
-        <p>{message.text || "..."}</p>
+        <p className="message-bubble">{message.text || "..."}</p>
       )}
     </article>
   );

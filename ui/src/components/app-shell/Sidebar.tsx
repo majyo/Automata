@@ -1,4 +1,4 @@
-import { Plus, Sparkles, TerminalSquare } from "lucide-react";
+import { Plus, Sparkles } from "lucide-react";
 import { SessionList } from "../sessions/SessionList";
 import type { PersistedRunStatus } from "../../types/chat";
 import type { SessionSummary } from "../../types/session";
@@ -46,11 +46,14 @@ export function Sidebar({
         </div>
       </div>
 
+      <button className="new-session-button" type="button" onClick={onCreateSession}>
+        <Plus size={19} />
+        New session
+      </button>
+
       <div className="sidebar-toolbar">
         <span>Sessions</span>
-        <button className="icon-button small" onClick={onCreateSession} aria-label="New session">
-          <Plus size={16} />
-        </button>
+        <span className="count">{sessions.length}</span>
       </div>
 
       <SessionList
@@ -67,17 +70,6 @@ export function Sidebar({
         onCancelRename={onCancelRename}
         onDelete={onDeleteSession}
       />
-
-      <div className="sidebar-footer">
-        <div className="sidebar-footer-actions">
-          <button className="icon-button" onClick={onCreateSession} aria-label="New session">
-            <Plus size={18} />
-          </button>
-          <button className="icon-button" aria-label="Open terminal">
-            <TerminalSquare size={18} />
-          </button>
-        </div>
-      </div>
     </aside>
   );
 }

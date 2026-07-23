@@ -1,18 +1,15 @@
 import type { FormEvent, RefObject } from "react";
-import { Activity } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { MessageList } from "./MessageList";
 import { PromptComposer } from "../composer/PromptComposer";
 import { WorkspacePicker } from "../sessions/WorkspacePicker";
 import { ToolApprovalCard } from "./ToolApprovalCard";
 import type { ApprovalDecision, ChatMessage, SendMode, ToolApprovalRequest } from "../../types/chat";
-import type { SessionSummary } from "../../types/session";
 
 type ConversationPanelProps = {
-  activeSession: SessionSummary | null;
   isNewSessionDraft: boolean;
   messages: ChatMessage[];
   messagesRef: RefObject<HTMLDivElement | null>;
-  socketStatus: string;
   displayedWorkingDirectory: string;
   defaultWorkingDirectory: string;
   prompt: string;
@@ -31,11 +28,9 @@ type ConversationPanelProps = {
 };
 
 export function ConversationPanel({
-  activeSession,
   isNewSessionDraft,
   messages,
   messagesRef,
-  socketStatus,
   displayedWorkingDirectory,
   defaultWorkingDirectory,
   prompt,
@@ -54,27 +49,12 @@ export function ConversationPanel({
 }: ConversationPanelProps) {
   return (
     <section className="conversation-panel" aria-label="Agent conversation">
-      <div className="panel-header">
-        <div>
-          <span className="eyebrow">Session</span>
-          <h2>
-            {isNewSessionDraft
-              ? "No session selected"
-              : activeSession
-                ? `${activeSession.message_count} saved messages`
-                : "Loading session"}
-          </h2>
-        </div>
-        <span className="status-pill" title={socketStatus}>
-          <Activity size={14} />
-          {socketStatus}
-        </span>
-      </div>
-
       {isNewSessionDraft ? (
         <div className="new-session-stage">
           <form className="new-session-dialog" onSubmit={onSubmit}>
-            <span className="eyebrow">New session</span>
+            <div className="new-session-icon">
+              <Sparkles size={22} />
+            </div>
             <h2>输入一条消息来开始新的会话</h2>
             <WorkspacePicker
               displayedWorkingDirectory={displayedWorkingDirectory}

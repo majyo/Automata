@@ -9,12 +9,13 @@ type SendModeToggleProps = {
 
 export function SendModeToggle({ sendMode, disabled, onChange }: SendModeToggleProps) {
   return (
-    <div className="mode-toggle" aria-label="Prompt mode">
+    <div className="mode-toggle" role="group" aria-label="Prompt mode">
       <button
         type="button"
         className={sendMode === "execute" ? "active" : ""}
         onClick={() => onChange("execute")}
         disabled={disabled}
+        aria-pressed={sendMode === "execute"}
         title="Execute prompt"
       >
         <Play size={14} />
@@ -25,6 +26,7 @@ export function SendModeToggle({ sendMode, disabled, onChange }: SendModeToggleP
         className={sendMode === "plan" ? "active" : ""}
         onClick={() => onChange("plan")}
         disabled={disabled}
+        aria-pressed={sendMode === "plan"}
         title="Generate a plan"
       >
         <CheckCircle2 size={14} />
