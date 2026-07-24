@@ -19,6 +19,7 @@ automata_api/routers/    HTTP and WebSocket routes
 automata_api/services/   API transport and application orchestration
 automata_api/agent/      Agent runtime, context, prompts, tools, and LLM integration
 automata_api/db/         SQLite connection and schema initialization
+automata_api/observability/ Structured logs, spans, profile samples, and retention
 automata_api/repositories/ Session and message persistence
 tests/                   FastAPI TestClient coverage
 ```
@@ -67,6 +68,17 @@ $env:AUTOMATA_API_TOKEN = '<at-least-32-random-characters>'
 .\run.ps1 headless
 ```
 
+Diagnostic observability is always enabled. Explicit profile starts are:
+
+```powershell
+.\run.ps1 -Mode headless -Profile
+.\run.ps1 -Mode headless -Profile -ProfileCaptureContent
+```
+
+`-ProfileCaptureContent` is rejected unless `-Profile` is also present. Profile
+mode is fixed for the lifetime of the backend process and cannot be enabled by
+an API or WebSocket request.
+
 This starts only the FastAPI backend in the foreground, without installing or
 building the Tauri UI. It is intended for AI CLI workflows and other automated
 checks that need to verify the API independently. The health endpoint is:
@@ -105,6 +117,35 @@ Tests use the `dev` dependency group:
 ```bash
 uv run --directory api --group dev --locked pytest
 ```
+
+## Observability
+
+The backend writes low-overhead diagnostic JSONL and a separate span index under
+`AUTOMATA_DATA_DIR/observability` (or `api/.data/observability` in local
+development):
+
+```text
+observability/
+  observability.db
+  logs/automata-*.jsonl
+  profiles/<profile-session-id>/
+    manifest.json
+    events-*.jsonl
+    samples-*.jsonl
+    content-*.jsonl
+```
+
+Normal diagnostic and profile records contain timing, sizes, hashes, model/tool
+names, statuses, usage metadata, and correlation IDs, but not prompt, response,
+tool argument, or tool output bodies. `content-*.jsonl` is created only by the
+explicit `-ProfileCaptureContent` mode and should be treated as sensitive even
+after best-effort redaction.
+
+The span index is intentionally separate from `automata.db` and
+`agent_run_events`: observability write failures degrade to JSONL/stderr and do
+not block agent runs or WebSocket replay. See
+[`../Docs/agent-observability-collection.md`](../Docs/agent-observability-collection.md)
+for the record contract, retention defaults, and instrumentation boundaries.
 
 The UI connects to:
 

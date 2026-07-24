@@ -8,6 +8,7 @@ from automata_api.agent.execution.process import process_execution_scope
 from automata_api.agent.execution.tool_output import tool_output_execution_scope
 from automata_api.agent.tools._core import ToolResult, parse_tool_arguments
 from automata_api.agent.tools.router import ToolRouter
+from automata_api.observability import observe_span
 
 
 class ToolExecutionOrchestrator:
@@ -35,24 +36,46 @@ class ToolExecutionOrchestrator:
 
         descriptor = router.execution_descriptor(tool_name, mode=context.mode)
         if descriptor is None:
-            return await router.dispatch(tool_name, arguments, mode=context.mode)
+            async with observe_span(
+                "tool.execute",
+                attributes={"tool": tool_name, "authorized": False},
+            ):
+                return await router.dispatch(
+                    tool_name, arguments, mode=context.mode
+                )
 
-        decision = self.policy.evaluate(
-            descriptor=descriptor,
-            arguments=arguments,
-            mode=context.mode,
-        )
+        async with observe_span(
+            "tool.policy.evaluate",
+            attributes={"tool": tool_name},
+        ) as policy_span:
+            decision = self.policy.evaluate(
+                descriptor=descriptor,
+                arguments=arguments,
+                mode=context.mode,
+            )
+            policy_span.set_attributes(
+                action=decision.action,
+                risk=decision.risk,
+            )
         if decision.action == "deny":
             return failed_result(tool_name, arguments, decision.reason, decision.reason)
         if decision.action == "prompt":
-            approval = await self.approval_broker.request(
-                tool=tool_name,
-                tool_identity=descriptor.identity
-                or f"{descriptor.source}:{descriptor.name}",
-                arguments=arguments,
-                decision=decision,
-                context=context,
-            )
+            async with observe_span(
+                "tool.approval.wait",
+                attributes={
+                    "tool": tool_name,
+                    "risk": decision.risk,
+                },
+            ) as approval_span:
+                approval = await self.approval_broker.request(
+                    tool=tool_name,
+                    tool_identity=descriptor.identity
+                    or f"{descriptor.source}:{descriptor.name}",
+                    arguments=arguments,
+                    decision=decision,
+                    context=context,
+                )
+                approval_span.set_attributes(decision=approval)
             if approval == "deny":
                 return failed_result(
                     tool_name,
@@ -73,11 +96,18 @@ class ToolExecutionOrchestrator:
                 tool=tool_name,
                 emit=context.emit_event,
             ):
-                return await router.dispatch_authorized(
-                    tool_name,
-                    arguments,
-                    mode=context.mode,
-                )
+                async with observe_span(
+                    "tool.execute",
+                    attributes={
+                        "tool": tool_name,
+                        "source": descriptor.source,
+                    },
+                ):
+                    return await router.dispatch_authorized(
+                        tool_name,
+                        arguments,
+                        mode=context.mode,
+                    )
 
 
 def failed_result(

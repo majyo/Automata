@@ -25,6 +25,10 @@ from automata_api.config import (
     get_agent_config,
     get_context_compression_config,
 )
+from automata_api.observability import (
+    emit_content_record,
+    observe_span,
+)
 
 
 MAX_AGENT_STEPS = 6
@@ -61,17 +65,23 @@ async def stream_agent_loop(
     config = get_agent_config()
     compression_config = get_context_compression_config()
     collector = EventCollector()
-    messages = await fetch_agent_context(
-        emit_event=collector.emit,
-        session_id=session_id,
-        store=store,
-        compression_config=compression_config,
-        system_prompt=agent_system_prompt(
-            workspace_label or workspace,
-            tool_notes=tool_notes,
-            skill_notes=skill_context.available_notes if skill_context else None,
-        ),
-    )
+    async with observe_span(
+        "context.load",
+        attributes={"compression_enabled": compression_config.enabled},
+    ):
+        messages = await fetch_agent_context(
+            emit_event=collector.emit,
+            session_id=session_id,
+            store=store,
+            compression_config=compression_config,
+            system_prompt=agent_system_prompt(
+                workspace_label or workspace,
+                tool_notes=tool_notes,
+                skill_notes=(
+                    skill_context.available_notes if skill_context else None
+                ),
+            ),
+        )
     for event in collector.events:
         yield event
 
@@ -130,18 +140,24 @@ async def stream_plan_loop(
             else PLAN_TOOL_NAMES
         )
     )
-    messages = await fetch_agent_context(
-        emit_event=collector.emit,
-        session_id=session_id,
-        store=store,
-        compression_config=compression_config,
-        system_prompt=plan_system_prompt(
-            workspace_label or workspace,
-            allowed_tool_names=allowed_tool_names,
-            tool_notes=tool_notes,
-            skill_notes=skill_context.available_notes if skill_context else None,
-        ),
-    )
+    async with observe_span(
+        "context.load",
+        attributes={"compression_enabled": compression_config.enabled},
+    ):
+        messages = await fetch_agent_context(
+            emit_event=collector.emit,
+            session_id=session_id,
+            store=store,
+            compression_config=compression_config,
+            system_prompt=plan_system_prompt(
+                workspace_label or workspace,
+                allowed_tool_names=allowed_tool_names,
+                tool_notes=tool_notes,
+                skill_notes=(
+                    skill_context.available_notes if skill_context else None
+                ),
+            ),
+        )
     for event in collector.events:
         yield event
     insert_skill_messages(messages, skill_context, index=1)
@@ -191,84 +207,120 @@ async def stream_model_loop(
     orchestrator: ToolExecutionOrchestrator | None = None,
 ) -> AsyncIterator[AgentLoopEvent]:
     for step in range(1, MAX_AGENT_STEPS + 1):
-        if cancellation is not None:
-            cancellation.raise_if_cancelled()
-        yield {
-            "type": "agent_step",
-            "step": step,
-            "mode": mode,
-            "message": f"Calling model {model}",
-        }
-        current_tools = (
-            router.model_visible_specs(mode=mode)
-            if router is not None
-            else (tools or [])
-        )
-        accumulator = llm.AssistantStreamAccumulator()
-        tool_call_started = False
-        emitted_text = False
-        async for delta in llm.stream_chat_completion(messages, tools=current_tools):
+        async with observe_span(
+            "agent.step",
+            attributes={
+                "step": step,
+                "mode": mode,
+                "model": model,
+                "message_count": len(messages),
+            },
+        ) as step_span:
             if cancellation is not None:
                 cancellation.raise_if_cancelled()
-            accumulator.add(delta)
-            if delta.get("tool_calls"):
-                tool_call_started = True
-
-            content = delta.get("content")
-            if isinstance(content, str) and content and (
-                emitted_text or not tool_call_started
+            yield {
+                "type": "agent_step",
+                "step": step,
+                "mode": mode,
+                "message": f"Calling model {model}",
+            }
+            async with observe_span("tools.specs.build"):
+                current_tools = (
+                    router.model_visible_specs(mode=mode)
+                    if router is not None
+                    else (tools or [])
+                )
+            step_span.set_attributes(tool_spec_count=len(current_tools))
+            accumulator = llm.AssistantStreamAccumulator()
+            tool_call_started = False
+            emitted_text = False
+            async for delta in llm.stream_chat_completion(
+                messages, tools=current_tools
             ):
-                emitted_text = True
-                yield {"type": "token", "content": content}
+                if cancellation is not None:
+                    cancellation.raise_if_cancelled()
+                accumulator.add(delta)
+                if delta.get("tool_calls"):
+                    tool_call_started = True
 
-        assistant_message = accumulator.message()
-        tool_calls = assistant_message.get("tool_calls")
-
-        if isinstance(tool_calls, list) and tool_calls:
-            provider_message = assistant_message_for_provider(assistant_message)
-            messages.append(provider_message)
-            await save_context_message_if_possible(
-                store=store, session_id=session_id, message=provider_message
-            )
-            for tool_call in tool_calls:
-                async for event in stream_execute_tool_call(
-                    messages=messages,
-                    tool_call=tool_call,
-                    mode=mode,
-                    allowed_tool_names=allowed_tool_names,
-                    workspace=workspace,
-                    router=router,
-                    registry=registry,
-                    session_id=session_id,
-                    store=store,
-                    run_id=run_id,
-                    cancellation=cancellation,
-                    orchestrator=orchestrator,
+                content = delta.get("content")
+                if isinstance(content, str) and content and (
+                    emitted_text or not tool_call_started
                 ):
+                    emitted_text = True
+                    yield {"type": "token", "content": content}
+
+            assistant_message = accumulator.message()
+            emit_content_record(
+                "llm.assistant_message", assistant_message
+            )
+            tool_calls = assistant_message.get("tool_calls")
+
+            if isinstance(tool_calls, list) and tool_calls:
+                step_span.set_attributes(
+                    outcome="tool_calls",
+                    tool_call_count=len(tool_calls),
+                )
+                provider_message = assistant_message_for_provider(
+                    assistant_message
+                )
+                messages.append(provider_message)
+                async with observe_span("context.message.persist"):
+                    await save_context_message_if_possible(
+                        store=store,
+                        session_id=session_id,
+                        message=provider_message,
+                    )
+                for tool_call in tool_calls:
+                    async for event in stream_execute_tool_call(
+                        messages=messages,
+                        tool_call=tool_call,
+                        mode=mode,
+                        allowed_tool_names=allowed_tool_names,
+                        workspace=workspace,
+                        router=router,
+                        registry=registry,
+                        session_id=session_id,
+                        store=store,
+                        run_id=run_id,
+                        cancellation=cancellation,
+                        orchestrator=orchestrator,
+                    ):
+                        yield event
+                collector = EventCollector()
+                async with observe_span("context.compress"):
+                    messages = await compress_loop_context_if_needed(
+                        emit_event=collector.emit,
+                        messages=messages,
+                        compression_config=compression_config,
+                    )
+                for event in collector.events:
                     yield event
-            collector = EventCollector()
-            messages = await compress_loop_context_if_needed(
-                emit_event=collector.emit,
-                messages=messages,
-                compression_config=compression_config,
-            )
-            for event in collector.events:
-                yield event
-            continue
+                continue
 
-        content = assistant_message.get("content")
-        if isinstance(content, str) and content.strip():
-            if cancellation is not None:
-                cancellation.raise_if_cancelled()
-            await save_context_message_if_possible(
-                store=store,
-                session_id=session_id,
-                message={"role": "assistant", "content": content},
-            )
-            yield {"type": "final", "content": content, "mode": mode}
-            return
+            content = assistant_message.get("content")
+            if isinstance(content, str) and content.strip():
+                step_span.set_attributes(
+                    outcome="final",
+                    content_chars=len(content),
+                )
+                if cancellation is not None:
+                    cancellation.raise_if_cancelled()
+                async with observe_span("response.persist"):
+                    await save_context_message_if_possible(
+                        store=store,
+                        session_id=session_id,
+                        message={"role": "assistant", "content": content},
+                    )
+                yield {"type": "final", "content": content, "mode": mode}
+                return
 
-        raise llm.AgentProviderError("LLM provider returned an empty response.")
+            step_span.set_status(
+                "error", error_type="empty_model_response"
+            )
+            raise llm.AgentProviderError(
+                "LLM provider returned an empty response."
+            )
 
     raise llm.AgentProviderError(
         f"Agent reached the maximum step limit ({MAX_AGENT_STEPS}) before finishing."
@@ -276,6 +328,79 @@ async def stream_model_loop(
 
 
 async def stream_execute_tool_call(
+    *,
+    messages: list[dict[str, Any]],
+    tool_call: dict[str, Any],
+    workspace: str | None = None,
+    router: ToolRouter | None = None,
+    registry: ToolRegistry | None = None,
+    mode: str = "act",
+    allowed_tool_names: set[str] | None = None,
+    session_id: str | None = None,
+    store: AgentContextStore | None = None,
+    run_id: str | None = None,
+    cancellation: CancellationToken | None = None,
+    orchestrator: ToolExecutionOrchestrator | None = None,
+) -> AsyncIterator[AgentLoopEvent]:
+    function = tool_call.get("function")
+    function = function if isinstance(function, dict) else {}
+    name = function.get("name")
+    name = name if isinstance(name, str) and name else "unknown_tool"
+    raw_arguments = function.get("arguments")
+    raw_arguments = (
+        raw_arguments if isinstance(raw_arguments, str) else "{}"
+    )
+    call_id = tool_call.get("id")
+    call_id = call_id if isinstance(call_id, str) else ""
+    async with observe_span(
+        "tool.call",
+        attributes={
+            "tool": name,
+            "tool_call_id": call_id,
+            "mode": mode,
+            "argument_chars": len(raw_arguments),
+        },
+        critical=True,
+    ) as tool_span:
+        emit_content_record(
+            "tool.request",
+            {
+                "tool": name,
+                "tool_call_id": call_id,
+                "arguments": raw_arguments,
+            },
+        )
+        async for event in _stream_execute_tool_call_inner(
+            messages=messages,
+            tool_call=tool_call,
+            workspace=workspace,
+            router=router,
+            registry=registry,
+            mode=mode,
+            allowed_tool_names=allowed_tool_names,
+            session_id=session_id,
+            store=store,
+            run_id=run_id,
+            cancellation=cancellation,
+            orchestrator=orchestrator,
+        ):
+            if event.get("type") == "tool_result":
+                content = event.get("content")
+                content = content if isinstance(content, str) else ""
+                success = event.get("success") is not False
+                tool_span.set_attributes(
+                    success=success,
+                    result_chars=len(content),
+                )
+                if not success:
+                    tool_span.set_status(
+                        "error", error_type="tool_result_failed"
+                    )
+                emit_content_record("tool.response", event)
+            yield event
+
+
+async def _stream_execute_tool_call_inner(
     *,
     messages: list[dict[str, Any]],
     tool_call: dict[str, Any],

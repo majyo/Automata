@@ -14,6 +14,7 @@ from automata_api.agent.mcp.schema import (
     McpError,
     McpToolInfo,
 )
+from automata_api.observability import observe_span
 
 
 McpClientFactory = Callable[[McpServerDefinition, str], McpClient]
@@ -49,14 +50,19 @@ class McpConnectionManager:
             return self._tool_cache[server_name]
         definition = self._definition(server_name)
         try:
-            async with asyncio.timeout(
-                min(
-                    definition.list_timeout_seconds,
-                    self.limits.total_timeout_seconds,
-                )
-            ):
-                client = await self._client(server_name)
-                tools = await self._list_all_pages(client)
+            async with observe_span(
+                "mcp.tools.list",
+                attributes={"server": server_name},
+            ) as list_span:
+                async with asyncio.timeout(
+                    min(
+                        definition.list_timeout_seconds,
+                        self.limits.total_timeout_seconds,
+                    )
+                ):
+                    client = await self._client(server_name)
+                    tools = await self._list_all_pages(client)
+                list_span.set_attributes(tool_count=len(tools))
         except TimeoutError as error:
             raise McpError(
                 "mcp_server_unavailable",
@@ -81,9 +87,17 @@ class McpConnectionManager:
     ) -> McpCallResult:
         definition = self._definition(server_name)
         try:
-            async with asyncio.timeout(definition.call_timeout_seconds):
-                client = await self._client(server_name)
-                return await client.call_tool(tool_name, arguments)
+            async with observe_span(
+                "mcp.call",
+                attributes={
+                    "server": server_name,
+                    "tool": tool_name,
+                    "argument_count": len(arguments),
+                },
+            ):
+                async with asyncio.timeout(definition.call_timeout_seconds):
+                    client = await self._client(server_name)
+                    return await client.call_tool(tool_name, arguments)
         except TimeoutError as error:
             raise McpError(
                 "mcp_tool_timeout",
@@ -129,7 +143,11 @@ class McpConnectionManager:
             definition = self._definition(server_name)
             client = self._client_factory(definition, self.workspace)
             try:
-                await client.start()
+                async with observe_span(
+                    "mcp.server.initialize",
+                    attributes={"server": server_name},
+                ):
+                    await client.start()
             except Exception:
                 await client.aclose()
                 raise

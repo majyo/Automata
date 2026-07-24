@@ -104,6 +104,10 @@ class ProcessSupervisor:
         if managed.windows_job is not None:
             managed.windows_job.close()
 
+    async def active_count(self) -> int:
+        async with self._lock:
+            return len(self._managed)
+
     async def terminate(self, managed: ManagedProcess) -> None:
         process = managed.process
         if process.returncode is not None:

@@ -1,4 +1,5 @@
 import { Bot } from "lucide-react";
+import { MarkdownContent } from "./MarkdownContent";
 import { PlanBubble } from "./PlanBubble";
 import { ToolCard } from "./ToolCard";
 import type { ChatMessage } from "../../types/chat";
@@ -25,8 +26,10 @@ export function MessageBubble({ message, isStreaming, onApprovePlan }: MessageBu
         <ToolCard metadata={message.metadata ?? null} />
       ) : message.kind === "plan" ? (
         <PlanBubble message={message} isStreaming={isStreaming} onApprovePlan={onApprovePlan} />
-      ) : (
+      ) : message.role === "user" ? (
         <p className="message-bubble">{message.text || "..."}</p>
+      ) : (
+        <MarkdownContent className="message-bubble" text={message.text || "..."} />
       )}
     </article>
   );

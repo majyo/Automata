@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from typing import Any
 
 from automata_api.agent.execution.event_hub import RunEventHub, run_event_hub
+from automata_api.observability import (
+    emit_profile_event,
+    get_observability_manager,
+)
 from automata_api.repositories import runs as run_repository
 
 
@@ -23,6 +28,11 @@ class DurableRunEventSink:
         self._token_timer: asyncio.Task[None] | None = None
         self._closed = False
         self._tool_output_chars = 0
+        self._first_token_queued_ns: int | None = None
+        self._persist_count = 0
+        self._persist_duration_ns = 0
+        self._broadcast_duration_ns = 0
+        self._max_token_buffer_delay_ns = 0
         self._token_chunk_chars = read_positive_int(
             "AUTOMATA_RUN_EVENT_TOKEN_CHUNK_CHARS", 4096
         )
@@ -78,12 +88,29 @@ class DurableRunEventSink:
         if timer is not None and timer is not asyncio.current_task():
             timer.cancel()
             await asyncio.gather(timer, return_exceptions=True)
+        get_observability_manager().emit(
+            {
+                "record_type": "event_sink_summary",
+                "run_id": self.run_id,
+                "attributes": {
+                    "persist_count": self._persist_count,
+                    "persist_duration_ns": self._persist_duration_ns,
+                    "broadcast_duration_ns": self._broadcast_duration_ns,
+                    "max_token_buffer_delay_ns": (
+                        self._max_token_buffer_delay_ns
+                    ),
+                },
+            },
+            critical=True,
+        )
 
     async def broadcast_persisted(self, event: dict[str, Any]) -> None:
         await self._hub.broadcast(event)
 
     async def _queue_token(self, content: str) -> None:
         async with self._lock:
+            if not self._token_parts:
+                self._first_token_queued_ns = time.monotonic_ns()
             self._token_parts.append(content)
             self._token_chars += len(content)
             if self._token_chars >= self._token_chunk_chars:
@@ -104,6 +131,12 @@ class DurableRunEventSink:
         if not self._token_parts:
             return
         content = "".join(self._token_parts)
+        if self._first_token_queued_ns is not None:
+            self._max_token_buffer_delay_ns = max(
+                self._max_token_buffer_delay_ns,
+                time.monotonic_ns() - self._first_token_queued_ns,
+            )
+        self._first_token_queued_ns = None
         self._token_parts.clear()
         self._token_chars = 0
         timer = self._token_timer
@@ -136,13 +169,29 @@ class DurableRunEventSink:
             except run_repository.RunStateError:
                 pass
 
+        persist_started_ns = time.monotonic_ns()
         event = await asyncio.to_thread(
             run_repository.append_event,
             self.run_id,
             payload,
             max_payload_bytes=self._max_payload_bytes,
         )
+        persist_duration_ns = time.monotonic_ns() - persist_started_ns
+        self._persist_count += 1
+        self._persist_duration_ns += persist_duration_ns
+        broadcast_started_ns = time.monotonic_ns()
         await self._hub.broadcast(event)
+        broadcast_duration_ns = time.monotonic_ns() - broadcast_started_ns
+        self._broadcast_duration_ns += broadcast_duration_ns
+        emit_profile_event(
+            "runtime.event.persist_and_broadcast",
+            {
+                "event_type": event_type,
+                "payload_bytes": len(str(payload).encode("utf-8")),
+                "persist_duration_ns": persist_duration_ns,
+                "broadcast_duration_ns": broadcast_duration_ns,
+            },
+        )
 
 
 def read_positive_int(name: str, default: int) -> int:

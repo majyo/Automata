@@ -140,6 +140,10 @@ class ProcessSessionManager:
         self._entries: dict[str, ProcessSessionEntry] = {}
         self._lock = asyncio.Lock()
 
+    async def active_count(self) -> int:
+        async with self._lock:
+            return len(self._entries)
+
     async def start(
         self,
         process: Any,

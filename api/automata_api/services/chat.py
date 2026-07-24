@@ -24,6 +24,7 @@ from automata_api.agent.skills.runtime import (
     skill_selections_from_payload,
 )
 from automata_api.config import AgentConfigurationError
+from automata_api.observability import observe_span
 from automata_api.repositories.agent_store import SessionAgentContextStore
 from automata_api.repositories.sessions import (
     SessionNotFoundError,
@@ -74,11 +75,18 @@ async def stream_agent_reply(
     response = ""
 
     try:
-        session_config = await run_repository_call(session_backend_config, session_id)
-        backend = create_backend(
-            session_config["backend"],
-            workspace=session_config["working_directory"],
-        )
+        async with observe_span("session.config.load"):
+            session_config = await run_repository_call(
+                session_backend_config, session_id
+            )
+        async with observe_span(
+            "backend.create",
+            attributes={"backend": session_config["backend"]},
+        ):
+            backend = create_backend(
+                session_config["backend"],
+                workspace=session_config["working_directory"],
+            )
         async with backend:
             async with create_mcp_tool_runtime(
                 backend=backend,
@@ -87,13 +95,16 @@ async def stream_agent_reply(
                 mode="act",
             ) as mcp_runtime:
                 await send_mcp_runtime_events(websocket, mcp_runtime, run_id)
-                skill_context = await create_skill_turn_context(
-                    workspace=session_config["working_directory"],
-                    mode="act",
-                    prompt=prompt,
-                    selected_skills=skill_selections_from_payload(selected_skills),
-                    router=mcp_runtime.router,
-                )
+                async with observe_span("skills.resolve"):
+                    skill_context = await create_skill_turn_context(
+                        workspace=session_config["working_directory"],
+                        mode="act",
+                        prompt=prompt,
+                        selected_skills=skill_selections_from_payload(
+                            selected_skills
+                        ),
+                        router=mcp_runtime.router,
+                    )
                 await send_skill_runtime_events(websocket, skill_context, run_id)
                 response = await forward_agent_events(
                     session_id=session_id,
@@ -156,11 +167,18 @@ async def stream_plan_reply(
     response = ""
 
     try:
-        session_config = await run_repository_call(session_backend_config, session_id)
-        backend = create_backend(
-            session_config["backend"],
-            workspace=session_config["working_directory"],
-        )
+        async with observe_span("session.config.load"):
+            session_config = await run_repository_call(
+                session_backend_config, session_id
+            )
+        async with observe_span(
+            "backend.create",
+            attributes={"backend": session_config["backend"]},
+        ):
+            backend = create_backend(
+                session_config["backend"],
+                workspace=session_config["working_directory"],
+            )
         async with backend:
             async with create_mcp_tool_runtime(
                 backend=backend,
@@ -169,13 +187,16 @@ async def stream_plan_reply(
                 mode="plan",
             ) as mcp_runtime:
                 await send_mcp_runtime_events(websocket, mcp_runtime, run_id)
-                skill_context = await create_skill_turn_context(
-                    workspace=session_config["working_directory"],
-                    mode="plan",
-                    prompt=prompt,
-                    selected_skills=skill_selections_from_payload(selected_skills),
-                    router=mcp_runtime.router,
-                )
+                async with observe_span("skills.resolve"):
+                    skill_context = await create_skill_turn_context(
+                        workspace=session_config["working_directory"],
+                        mode="plan",
+                        prompt=prompt,
+                        selected_skills=skill_selections_from_payload(
+                            selected_skills
+                        ),
+                        router=mcp_runtime.router,
+                    )
                 await send_skill_runtime_events(websocket, skill_context, run_id)
                 response = await forward_agent_events(
                     session_id=session_id,

@@ -758,6 +758,186 @@ p {
   color: var(--md-on-surface);
 }
 
+/* Markdown body — agent messages & plan text */
+
+.markdown-body {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.markdown-body > :first-child {
+  margin-top: 0;
+}
+
+.markdown-body > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-body p {
+  margin: 0 0 8px;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4 {
+  margin: 14px 0 6px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.markdown-body h1 {
+  font-size: var(--md-type-title-large, 1.4em);
+}
+
+.markdown-body h2 {
+  font-size: 1.25em;
+}
+
+.markdown-body h3 {
+  font-size: 1.1em;
+}
+
+.markdown-body h4 {
+  font-size: 1em;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  margin: 0 0 8px;
+  padding-left: 22px;
+}
+
+.markdown-body li + li {
+  margin-top: 2px;
+}
+
+.markdown-body li > p {
+  margin-bottom: 4px;
+}
+
+.markdown-body blockquote {
+  margin: 0 0 8px;
+  padding: 2px 12px;
+  color: var(--md-on-surface-variant);
+  border-left: 3px solid var(--md-outline-variant);
+}
+
+.markdown-body code {
+  padding: 1px 5px;
+  font-family: var(--md-font-mono);
+  font-size: 0.92em;
+  background: var(--md-surface-container-high);
+  border-radius: var(--md-shape-xs);
+}
+
+.markdown-body pre {
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  overflow: auto;
+  background: var(--md-surface-container-low);
+  border: 1px solid var(--md-outline-variant);
+  border-radius: var(--md-shape-sm);
+}
+
+.markdown-body pre code {
+  padding: 0;
+  font-size: var(--md-type-body-small);
+  line-height: 1.5;
+  background: transparent;
+  border-radius: 0;
+}
+
+.markdown-body a {
+  color: var(--md-primary);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.markdown-body a:hover {
+  text-decoration: underline;
+}
+
+.markdown-body table {
+  margin: 0 0 8px;
+  border-collapse: collapse;
+}
+
+.markdown-body th,
+.markdown-body td {
+  padding: 4px 10px;
+  border: 1px solid var(--md-outline-variant);
+}
+
+.markdown-body th {
+  font-weight: 600;
+  background: var(--md-surface-container);
+}
+
+.markdown-body hr {
+  margin: 12px 0;
+  border: 0;
+  border-top: 1px solid var(--md-outline-variant);
+}
+
+.markdown-body img {
+  max-width: 100%;
+}
+
+/* Code highlighting (rehype-highlight) — token colors follow the active theme */
+
+.markdown-body .hljs {
+  color: inherit;
+  background: transparent;
+}
+
+.markdown-body .hljs-comment,
+.markdown-body .hljs-quote {
+  color: var(--md-on-surface-variant);
+  font-style: italic;
+}
+
+.markdown-body .hljs-keyword,
+.markdown-body .hljs-selector-tag,
+.markdown-body .hljs-meta {
+  color: var(--md-primary);
+}
+
+.markdown-body .hljs-string,
+.markdown-body .hljs-regexp,
+.markdown-body .hljs-addition {
+  color: var(--md-success);
+}
+
+.markdown-body .hljs-number,
+.markdown-body .hljs-literal,
+.markdown-body .hljs-symbol {
+  color: var(--md-warning);
+}
+
+.markdown-body .hljs-title,
+.markdown-body .hljs-name,
+.markdown-body .hljs-built_in,
+.markdown-body .hljs-attr,
+.markdown-body .hljs-attribute,
+.markdown-body .hljs-variable,
+.markdown-body .hljs-template-variable {
+  color: inherit;
+}
+
+.markdown-body .hljs-deletion {
+  color: var(--md-error);
+}
+
+.markdown-body .hljs-emphasis {
+  font-style: italic;
+}
+
+.markdown-body .hljs-strong {
+  font-weight: 650;
+}
+
 .message.tool,
 .message.tool-run,
 .message.plan,
@@ -850,15 +1030,36 @@ p {
 }
 
 .tool-run-line {
-  display: grid;
-  grid-template-columns: 16px auto minmax(0, 1fr);
-  align-items: center;
-  gap: 7px;
   min-width: 0;
-  min-height: 22px;
   color: var(--md-on-surface-variant);
   font-size: var(--md-type-body-small);
   line-height: 1.4;
+}
+
+.tool-run-line-toggle {
+  display: grid;
+  grid-template-columns: 16px auto minmax(0, 1fr) 14px;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  min-height: 22px;
+  padding: 0 4px 0 0;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border-radius: var(--md-shape-sm);
+  cursor: pointer;
+  transition: background var(--md-duration-short) var(--md-easing);
+}
+
+.tool-run-line-toggle:hover {
+  background: var(--md-surface-container);
+}
+
+.tool-run-line-toggle > svg {
+  color: var(--md-on-surface-variant);
+  opacity: 0.7;
 }
 
 .tool-run-line.failed {
@@ -903,19 +1104,15 @@ p {
   white-space: nowrap;
 }
 
-.tool-run-details {
-  display: grid;
-  gap: 12px;
-  min-width: 0;
-  padding: 12px 10px;
-  border-top: 1px solid var(--md-outline-variant);
-  background: var(--md-surface-container-low);
-}
-
-.tool-run-detail {
+.tool-run-line-detail {
   display: grid;
   gap: 6px;
   min-width: 0;
+  margin: 2px 0 6px;
+  padding: 8px 10px;
+  background: var(--md-surface-container-low);
+  border: 1px solid var(--md-outline-variant);
+  border-radius: var(--md-shape-sm);
 }
 
 .tool-run-detail-heading {
@@ -1013,12 +1210,25 @@ p {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  width: 100%;
   padding: 10px 14px;
   color: var(--md-on-surface);
+  text-align: left;
+  background: transparent;
   border-bottom: 1px solid var(--md-outline-variant);
+  cursor: pointer;
+  transition: background var(--md-duration-short) var(--md-easing);
 }
 
-.plan-header span {
+.plan-header:hover {
+  background: var(--md-surface-container);
+}
+
+.plan-bubble.collapsed .plan-header {
+  border-bottom-color: transparent;
+}
+
+.plan-header-title {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -1027,8 +1237,19 @@ p {
   font-weight: 650;
 }
 
-.plan-header span svg {
+.plan-header-title svg {
   color: var(--md-primary);
+}
+
+.plan-header-meta {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.plan-header-meta svg {
+  color: var(--md-on-surface-variant);
 }
 
 .plan-status {
@@ -1058,13 +1279,11 @@ p {
   background: color-mix(in srgb, var(--md-error) 12%, transparent);
 }
 
-.plan-bubble > p {
+.plan-bubble > .plan-text {
   padding: 12px 14px;
   color: var(--md-on-surface);
   font-size: var(--md-type-body-medium);
   line-height: 1.6;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 
 .plan-actions {

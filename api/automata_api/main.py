@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+import logging
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,6 +12,11 @@ from automata_api.agent.execution.process_sessions import process_session_manage
 from automata_api.agent.execution.coordinator import run_coordinator
 from automata_api.agent.execution.event_hub import run_event_hub
 from automata_api.db.schema import init_db
+from automata_api.observability import (
+    get_observability_manager,
+    start_observability,
+    stop_observability,
+)
 from automata_api.routers import chat, health, mcp, runs, sessions, skills
 from automata_api.security import (
     bearer_token,
@@ -21,22 +27,39 @@ from automata_api.security import (
 
 
 load_local_env()
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    config = get_api_config()
-    validate_loopback_host(config.host)
-    get_api_token()
-    init_db()
-    await run_coordinator.startup()
+    await start_observability()
+    observer = get_observability_manager()
+    logger.info(
+        "Observability started mode=%s output_dir=%s capture_content=%s",
+        observer.config.mode if observer.config else "disabled",
+        observer.config.output_dir if observer.config else "",
+        observer.capture_content,
+    )
+    if observer.capture_content:
+        logger.warning(
+            "Profile content capture is enabled; artifacts may contain "
+            "sensitive workspace and conversation data."
+        )
     try:
-        yield
+        config = get_api_config()
+        validate_loopback_host(config.host)
+        get_api_token()
+        init_db()
+        await run_coordinator.startup()
+        try:
+            yield
+        finally:
+            await run_coordinator.shutdown()
+            await process_session_manager.terminate_all()
+            await process_supervisor.terminate_all()
+            await run_event_hub.clear()
     finally:
-        await run_coordinator.shutdown()
-        await process_session_manager.terminate_all()
-        await process_supervisor.terminate_all()
-        await run_event_hub.clear()
+        await stop_observability()
 
 
 def create_app() -> FastAPI:

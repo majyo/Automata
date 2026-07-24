@@ -5,6 +5,7 @@ import os
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from automata_api.agent.execution.approval import (
@@ -19,6 +20,7 @@ from automata_api.agent.execution.model import (
 )
 from automata_api.agent.execution.process import process_supervisor
 from automata_api.agent.execution.process_sessions import process_session_manager
+from automata_api.observability import observe_span
 from automata_api.repositories import runs as run_repository
 
 
@@ -38,6 +40,7 @@ class RunHandle:
     cancellation: CancellationToken
     approval_broker: ApprovalBroker
     event_sink: DurableRunEventSink
+    created_at: str | None = None
     task: asyncio.Task[None] | None = None
     explicit_cancel: bool = False
 
@@ -194,6 +197,9 @@ class RunCoordinator:
             cancellation=cancellation,
             approval_broker=broker,
             event_sink=event_sink,
+            created_at=(
+                str(run["created_at"]) if run.get("created_at") else None
+            ),
         )
         async with self._lock:
             self._by_run[handle.run_id] = handle
@@ -202,6 +208,25 @@ class RunCoordinator:
 
     async def _run_wrapper(
         self, handle: RunHandle, execute: RunExecutor
+    ) -> None:
+        async with observe_span(
+            "agent.run",
+            attributes={
+                "owner_instance_id": self.instance_id,
+                "queue_delay_ns": queue_delay_ns(handle.created_at),
+            },
+            run_id=handle.run_id,
+            session_id=handle.session_id,
+            root=True,
+            critical=True,
+        ) as run_span:
+            await self._run_wrapper_observed(handle, execute, run_span)
+
+    async def _run_wrapper_observed(
+        self,
+        handle: RunHandle,
+        execute: RunExecutor,
+        run_span: Any,
     ) -> None:
         try:
             await asyncio.to_thread(
@@ -232,6 +257,7 @@ class RunCoordinator:
             )
             for event in committed_events:
                 await handle.event_sink.broadcast_persisted(event)
+            run_span.set_attributes(run_status="completed")
         except asyncio.CancelledError:
             await process_session_manager.terminate_run(handle.run_id)
             await process_supervisor.terminate_run(handle.run_id)
@@ -262,6 +288,8 @@ class RunCoordinator:
                 public_error=handle.cancellation.reason,
             )
             await handle.event_sink.broadcast_persisted(terminal)
+            run_span.set_status(status, error_type=code)
+            run_span.set_attributes(run_status=status)
         except PublicRunError as error:
             await process_session_manager.terminate_run(handle.run_id)
             await process_supervisor.terminate_run(handle.run_id)
@@ -279,6 +307,8 @@ class RunCoordinator:
                 public_error=error.public_message,
             )
             await handle.event_sink.broadcast_persisted(terminal)
+            run_span.set_status("error", error_type=error.code)
+            run_span.set_attributes(run_status="failed")
         except Exception as error:
             await process_session_manager.terminate_run(handle.run_id)
             await process_supervisor.terminate_run(handle.run_id)
@@ -297,6 +327,10 @@ class RunCoordinator:
                 public_error=public_message,
             )
             await handle.event_sink.broadcast_persisted(terminal)
+            run_span.set_status(
+                "error", error_type=error.__class__.__name__
+            )
+            run_span.set_attributes(run_status="failed")
         finally:
             handle.approval_broker.cancel_all()
             await handle.event_sink.close()
@@ -315,6 +349,26 @@ def run_event_retention_days() -> int:
         return max(0, min(int(raw), 3650))
     except ValueError:
         return 30
+
+
+def queue_delay_ns(created_at: str | None) -> int | None:
+    if not created_at:
+        return None
+    try:
+        created = datetime.fromisoformat(created_at)
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=UTC)
+        return max(
+            0,
+            int(
+                (
+                    datetime.now(UTC) - created.astimezone(UTC)
+                ).total_seconds()
+                * 1_000_000_000
+            ),
+        )
+    except ValueError:
+        return None
 
 
 __all__ = [

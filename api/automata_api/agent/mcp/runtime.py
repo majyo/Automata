@@ -12,6 +12,7 @@ from automata_api.agent.tools.mcp_provider import McpToolProvider
 from automata_api.agent.tools.model import ToolDiscoveryContext
 from automata_api.agent.tools.providers import BackendToolProvider
 from automata_api.agent.tools.router import ToolRouter, ToolRouterBuilder
+from automata_api.observability import observe_span
 
 
 @dataclass(frozen=True)
@@ -56,19 +57,30 @@ async def create_mcp_tool_runtime(
 
     definitions = tuple(definition for definition, _ in granted)
     async with McpConnectionManager(definitions, workspace) as manager:
-        async_providers = (
-            (McpToolProvider(manager, tuple(granted)),) if granted else ()
-        )
-        router = await ToolRouterBuilder().build(
-            context=ToolDiscoveryContext(
-                session_id=session_id,
-                workspace=workspace,
-                backend=backend,
-                mode=mode,
-            ),
-            sync_providers=(BackendToolProvider(),),
-            async_providers=async_providers,
-        )
+        async with observe_span(
+            "mcp.runtime.start",
+            attributes={
+                "mode": mode,
+                "configured_server_count": len(config.definitions),
+                "granted_server_count": len(granted),
+                "candidate_server_count": len(candidates),
+            },
+        ):
+            async_providers = (
+                (McpToolProvider(manager, tuple(granted)),)
+                if granted
+                else ()
+            )
+            router = await ToolRouterBuilder().build(
+                context=ToolDiscoveryContext(
+                    session_id=session_id,
+                    workspace=workspace,
+                    backend=backend,
+                    mode=mode,
+                ),
+                sync_providers=(BackendToolProvider(),),
+                async_providers=async_providers,
+            )
         yield McpRuntimeState(
             router=router,
             candidates=tuple(candidates),

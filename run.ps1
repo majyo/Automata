@@ -3,7 +3,9 @@ param(
   [string]$Mode = "run",
 
   [switch]$SkipInstall,
-  [switch]$ForceSidecarBuild
+  [switch]$ForceSidecarBuild,
+  [switch]$Profile,
+  [switch]$ProfileCaptureContent
 )
 
 $ErrorActionPreference = "Stop"
@@ -275,6 +277,24 @@ function Get-ReleaseExecutable {
 Require-Command "uv" "Install uv, or add it to PATH: https://docs.astral.sh/uv/"
 
 Import-LocalEnvironment
+
+if ($ProfileCaptureContent -and -not $Profile) {
+  throw "-ProfileCaptureContent requires -Profile."
+}
+
+if ($Profile) {
+  $env:AUTOMATA_OBSERVABILITY_MODE = "profile"
+  $env:AUTOMATA_PROFILE_CAPTURE_CONTENT = if ($ProfileCaptureContent) {
+    "true"
+  } else {
+    "false"
+  }
+  Write-Step "Profiling enabled"
+  Write-Host (
+    "Content capture: " +
+    $(if ($ProfileCaptureContent) { "enabled" } else { "disabled" })
+  ) -ForegroundColor DarkGray
+}
 
 if ($Mode -eq "headless") {
   Invoke-HeadlessApi

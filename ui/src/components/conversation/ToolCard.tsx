@@ -66,55 +66,30 @@ export function ToolRunGroup({ messages }: ToolRunGroupProps) {
 }
 
 function ToolRunGroupContent({ messages }: ToolRunGroupProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isListExpanded, setIsListExpanded] = useState(true);
   const summaries = messages.map((message) => summarizeToolRun(message.id, message.metadata ?? null));
   const status = groupStatus(summaries);
-  const noun = summaries.every((summary) => isCommandLikeTool(summary.tool)) ? "command" : "tool call";
-  const countLabel = `${summaries.length} ${noun}${summaries.length === 1 ? "" : "s"}`;
+  const countLabel = `${summaries.length} tool call${summaries.length === 1 ? "" : "s"}`;
 
   return (
     <div className={`tool-run-group-shell ${status}`}>
       <button
         className="tool-run-group-header"
         type="button"
-        aria-expanded={isExpanded}
-        onClick={() => setIsExpanded((expanded) => !expanded)}
+        aria-expanded={isListExpanded}
+        onClick={() => setIsListExpanded((expanded) => !expanded)}
       >
         <span className="tool-run-group-title">
           <Terminal size={14} />
-          <span>{`${groupState(status)} ${countLabel}`}</span>
+          <span>{groupHeaderLabel(summaries, status, countLabel)}</span>
         </span>
-        {isExpanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+        {isListExpanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
       </button>
 
-      <div className="tool-run-lines">
-        {summaries.map((summary) => (
-          <ToolRunLine key={summary.id} summary={summary} />
-        ))}
-      </div>
-
-      {isExpanded && (
-        <div className="tool-run-details">
+      {isListExpanded && (
+        <div className="tool-run-lines">
           {summaries.map((summary) => (
-            <section className="tool-run-detail" key={`${summary.id}-detail`}>
-              <div className="tool-run-detail-heading">
-                <strong>{summary.tool}</strong>
-                <span className={`tool-run-detail-status ${summary.status}`}>
-                  {formatToolRunStatus(summary.status)}
-                </span>
-              </div>
-              <div className="tool-run-detail-grid">
-                <ToolRunDetailBlock label="Arguments" value={summary.argumentsDisplayText || "{}"} />
-                <ToolRunDetailBlock
-                  label="Result"
-                  value={
-                    summary.result
-                      ? summary.resultDisplayText || "(empty)"
-                      : summary.liveOutputDisplayText || "Running..."
-                  }
-                />
-              </div>
-            </section>
+            <ToolRunLine key={summary.id} summary={summary} />
           ))}
         </div>
       )}
@@ -123,19 +98,51 @@ function ToolRunGroupContent({ messages }: ToolRunGroupProps) {
 }
 
 function ToolRunLine({ summary }: { summary: ToolRunSummary }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
   return (
     <div className={`tool-run-line ${summary.status}`}>
-      <span className="tool-run-line-icon" aria-hidden="true">
-        {summary.status === "running" ? (
-          <Activity size={13} />
-        ) : summary.status === "failed" ? (
-          <X size={13} />
-        ) : (
-          <CheckCircle2 size={13} />
-        )}
-      </span>
-      <span className="tool-run-line-state">{lineState(summary.status)}</span>
-      <span className="tool-run-line-text">{summary.summaryText}</span>
+      <button
+        className="tool-run-line-toggle"
+        type="button"
+        aria-expanded={isExpanded}
+        onClick={() => setIsExpanded((expanded) => !expanded)}
+      >
+        <span className="tool-run-line-icon" aria-hidden="true">
+          {summary.status === "running" ? (
+            <Activity size={13} />
+          ) : summary.status === "failed" ? (
+            <X size={13} />
+          ) : (
+            <CheckCircle2 size={13} />
+          )}
+        </span>
+        <span className="tool-run-line-state">{lineState(summary.status)}</span>
+        <span className="tool-run-line-text">{summary.summaryText}</span>
+        {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+      </button>
+
+      {isExpanded && (
+        <div className="tool-run-line-detail">
+          <div className="tool-run-detail-heading">
+            <strong>{summary.tool}</strong>
+            <span className={`tool-run-detail-status ${summary.status}`}>
+              {formatToolRunStatus(summary.status)}
+            </span>
+          </div>
+          <div className="tool-run-detail-grid">
+            <ToolRunDetailBlock label="Arguments" value={summary.argumentsDisplayText || "{}"} />
+            <ToolRunDetailBlock
+              label="Result"
+              value={
+                summary.result
+                  ? summary.resultDisplayText || "(empty)"
+                  : summary.liveOutputDisplayText || "Running..."
+              }
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -227,6 +234,23 @@ function groupState(status: ToolRunStatus): string {
   return lineState(status);
 }
 
+function groupHeaderLabel(summaries: ToolRunSummary[], status: ToolRunStatus, countLabel: string): string {
+  const running = summaries.filter((summary) => summary.status === "running").length;
+  const failed = summaries.filter((summary) => summary.status === "failed").length;
+  const completed = summaries.length - running - failed;
+  const parts: string[] = [];
+  if (running > 0) {
+    parts.push(`${running} running`);
+  }
+  if (completed > 0) {
+    parts.push(`${completed} succeeded`);
+  }
+  if (failed > 0) {
+    parts.push(`${failed} failed`);
+  }
+  return `${groupState(status)} ${countLabel} · ${parts.join(" · ")}`;
+}
+
 function extractReadableToolText(tool: string, argumentsText: string, resultText: string): string {
   const args = asRecord(parseJson(argumentsText));
   const result = asRecord(parseJson(resultText));
@@ -259,10 +283,6 @@ function extractReadableToolText(tool: string, argumentsText: string, resultText
   }
 
   return "";
-}
-
-function isCommandLikeTool(tool: string): boolean {
-  return ["exec_command", "run_bash", "rg", "grep"].includes(tool);
 }
 
 function parseJson(value: string): unknown {
