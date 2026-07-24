@@ -53,6 +53,6 @@ def descriptor_for_tool(
 def tool_risk(tool: AgentTool):
     if tool.read_only:
         return "read"
-    if tool.name in {"exec_command", "run_bash", "run_powershell"}:
+    if tool.name in {"exec_command", "write_stdin", "run_bash", "run_powershell"}:
         return "command"
     return "write"

@@ -22,11 +22,16 @@ class DurableRunEventSink:
         self._token_chars = 0
         self._token_timer: asyncio.Task[None] | None = None
         self._closed = False
+        self._tool_output_chars = 0
         self._token_chunk_chars = read_positive_int(
             "AUTOMATA_RUN_EVENT_TOKEN_CHUNK_CHARS", 4096
         )
         self._max_payload_bytes = read_positive_int(
             "AUTOMATA_RUN_EVENT_MAX_BYTES", 65_536
+        )
+        self._max_tool_output_chars = read_positive_int(
+            "AUTOMATA_RUN_TOOL_OUTPUT_MAX_CHARS",
+            1_000_000,
         )
 
     async def send_json(self, data: Any) -> None:
@@ -35,6 +40,21 @@ class DurableRunEventSink:
         if not isinstance(data, dict):
             raise TypeError("Run events must be JSON objects.")
         payload = redact_event(data)
+        if payload.get("type") == "tool_output_delta":
+            content = payload.get("content")
+            if not isinstance(content, str) or not content:
+                return
+            remaining = self._max_tool_output_chars - self._tool_output_chars
+            if remaining <= 0:
+                return
+            bounded = content[:remaining]
+            self._tool_output_chars += len(bounded)
+            payload = {
+                **payload,
+                "content": bounded,
+                "truncated": payload.get("truncated") is True
+                or len(bounded) < len(content),
+            }
         if payload.get("type") == "token":
             content = payload.get("content")
             if isinstance(content, str) and content:

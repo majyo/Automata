@@ -186,6 +186,8 @@ class ApprovalBroker:
 def approval_summary(tool: str, arguments: dict[str, Any], risk: str) -> str:
     if tool == "exec_command":
         return f"Run a {arguments.get('shell', 'bash')} command"
+    if tool == "write_stdin":
+        return "Write to a running process stdin"
     if tool in {"run_bash", "run_powershell"}:
         return f"Run a {tool.removeprefix('run_')} command"
     if tool == "write_file":
@@ -215,6 +217,13 @@ def approval_preview(
             "shell": arguments.get("shell", "bash"),
             "cwd": arguments.get("workdir", workspace),
             "command": clipped(arguments.get("cmd")),
+        }
+    if tool == "write_stdin":
+        chars = arguments.get("chars")
+        return {
+            "session_id": arguments.get("session_id", ""),
+            "chars": clipped(chars),
+            "chars_count": len(chars) if isinstance(chars, str) else 0,
         }
     if tool in {"run_bash", "run_powershell"}:
         return {

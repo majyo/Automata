@@ -710,14 +710,15 @@ def test_chat_websocket_runs_agent_loop_with_real_bash_tool(client, monkeypatch)
         "started",
         "agent_step",
         "tool_call",
+        "tool_output_delta",
         "tool_result",
         "agent_step",
         "token",
         "done",
     ]
     assert events[2]["tool"] == "run_bash"
-    assert events[3]["success"] is True
-    assert '"simulated": false' in events[3]["content"]
+    assert events[4]["success"] is True
+    assert '"simulated": false' in events[4]["content"]
     assert token_content(events) == "Bash finished."
 
     messages = client.get(f"/sessions/{session['id']}/messages").json()
@@ -808,14 +809,17 @@ def test_chat_websocket_runs_agent_loop_with_exec_command_tool(client, monkeypat
         "started",
         "agent_step",
         "tool_call",
+        "tool_output_delta",
         "tool_result",
         "agent_step",
         "token",
         "done",
     ]
     assert events[2]["tool"] == "exec_command"
-    assert events[3]["success"] is True
-    assert '"tool": "exec_command"' in events[3]["content"]
+    assert events[3]["stream"] == "stdout"
+    assert events[3]["content"] == "agent-exec"
+    assert events[4]["success"] is True
+    assert '"tool": "exec_command"' in events[4]["content"]
     assert token_content(events) == "Exec finished."
 
     messages = client.get(f"/sessions/{session['id']}/messages").json()
@@ -827,6 +831,15 @@ def test_chat_websocket_runs_agent_loop_with_exec_command_tool(client, monkeypat
         result_contains='"output": "agent-exec"',
     )
     assert messages[2]["content"] == "Exec finished."
+    persisted_events = client.get(
+        f"/sessions/{session['id']}/runs/{events[0]['run_id']}/events"
+    ).json()
+    assert any(
+        event["type"] == "tool_output_delta"
+        and event["tool_call_id"] == "call_exec_1"
+        and event["content"] == "agent-exec"
+        for event in persisted_events
+    )
     assert len(calls) == 2
 
 
@@ -899,14 +912,15 @@ def test_chat_websocket_runs_agent_loop_with_rg_tool(client, monkeypatch):
         "started",
         "agent_step",
         "tool_call",
+        "tool_output_delta",
         "tool_result",
         "agent_step",
         "token",
         "done",
     ]
     assert events[2]["tool"] == "rg"
-    assert events[3]["success"] is True
-    assert '"simulated": false' in events[3]["content"]
+    assert events[4]["success"] is True
+    assert '"simulated": false' in events[4]["content"]
     assert token_content(events) == "Search finished."
 
     messages = client.get(f"/sessions/{session['id']}/messages").json()

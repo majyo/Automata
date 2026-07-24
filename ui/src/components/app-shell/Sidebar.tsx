@@ -38,7 +38,7 @@ export function Sidebar({
     <aside className="sidebar">
       <div className="brand">
         <div className="brand-mark">
-          <Sparkles size={20} />
+          <Sparkles size={17} />
         </div>
         <div>
           <strong>Automata</strong>
@@ -47,7 +47,7 @@ export function Sidebar({
       </div>
 
       <button className="new-session-button" type="button" onClick={onCreateSession}>
-        <Plus size={19} />
+        <Plus size={17} />
         New session
       </button>
 

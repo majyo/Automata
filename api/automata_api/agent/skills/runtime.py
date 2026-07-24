@@ -3,11 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from automata_api.agent.skills.config import get_skills_config
+from automata_api.agent.skills.diagnostics import diagnose_skill_dependencies
 from automata_api.agent.skills.injection import (
     build_skill_messages,
     resolve_selected_skills,
 )
-from automata_api.agent.skills.manager import SkillManager
+from automata_api.agent.skills.manager import SkillManager, get_skill_manager
 from automata_api.agent.skills.model import (
     AgentMode,
     SkillSelection,
@@ -27,12 +28,11 @@ async def create_skill_turn_context(
     manager: SkillManager | None = None,
     force_reload: bool = False,
 ) -> SkillTurnContext:
-    del router
     config = get_skills_config()
     if not config.enabled:
         return SkillTurnContext()
 
-    skill_manager = manager or SkillManager(config)
+    skill_manager = manager or get_skill_manager()
     outcome = skill_manager.skills_for_workspace(workspace, force_reload=force_reload)
     enabled = outcome.enabled_skills(mode=mode)
     available_notes, render_warnings = render_available_skills(
@@ -49,11 +49,22 @@ async def create_skill_turn_context(
         selected,
         body_budget_chars=config.body_budget_chars,
     )
+    dependency_warnings = tuple(
+        f"Skill {skill.name}: {diagnostic.message}"
+        for skill in selected
+        for diagnostic in diagnose_skill_dependencies(
+            skill,
+            router=router,
+            workspace=workspace,
+        )
+        if diagnostic.status not in {"available", "deferred"}
+    )
     warnings = (
         tuple(error.message for error in outcome.errors)
         + render_warnings
         + selection_warnings
         + injection_warnings
+        + dependency_warnings
     )
     return SkillTurnContext(
         available_notes=available_notes,

@@ -40,7 +40,7 @@ export function Topbar({
         </span>
 
         <button className="button button-tonal" type="button" onClick={onRunBridgeCheck}>
-          <Play size={16} />
+          <Play size={14} />
           Run bridge check
         </button>
 
@@ -53,7 +53,7 @@ export function Topbar({
           aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
           title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
         >
-          {theme === "dark" ? <Sun size={19} /> : <Moon size={19} />}
+          {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
         </button>
 
         <button
@@ -64,7 +64,7 @@ export function Topbar({
           aria-pressed={isInspectorOpen}
           title="Toggle run details panel"
         >
-          <PanelRight size={19} />
+          <PanelRight size={17} />
         </button>
       </div>
     </header>

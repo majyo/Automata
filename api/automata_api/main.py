@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 
 from automata_api.config import get_api_config, load_local_env
 from automata_api.agent.execution.process import process_supervisor
+from automata_api.agent.execution.process_sessions import process_session_manager
 from automata_api.agent.execution.coordinator import run_coordinator
 from automata_api.agent.execution.event_hub import run_event_hub
 from automata_api.db.schema import init_db
@@ -33,6 +34,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         await run_coordinator.shutdown()
+        await process_session_manager.terminate_all()
         await process_supervisor.terminate_all()
         await run_event_hub.clear()
 

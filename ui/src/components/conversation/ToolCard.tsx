@@ -19,6 +19,7 @@ type ToolRunSummary = {
   argumentsDisplayText: string;
   resultText: string;
   resultDisplayText: string;
+  liveOutputDisplayText: string;
   summaryText: string;
   result: ToolRunMetadata["result"];
 };
@@ -106,7 +107,11 @@ function ToolRunGroupContent({ messages }: ToolRunGroupProps) {
                 <ToolRunDetailBlock label="Arguments" value={summary.argumentsDisplayText || "{}"} />
                 <ToolRunDetailBlock
                   label="Result"
-                  value={summary.result ? summary.resultDisplayText || "(empty)" : "Running..."}
+                  value={
+                    summary.result
+                      ? summary.resultDisplayText || "(empty)"
+                      : summary.liveOutputDisplayText || "Running..."
+                  }
                 />
               </div>
             </section>
@@ -159,6 +164,7 @@ function summarizeToolRun(id: string, metadata: ToolRunMetadata | null): ToolRun
     fieldOrder: RESULT_FIELD_ORDER,
     textKeys: RESULT_TEXT_KEYS,
   });
+  const liveOutputDisplayText = formatLiveOutput(metadata);
 
   return {
     id,
@@ -168,9 +174,23 @@ function summarizeToolRun(id: string, metadata: ToolRunMetadata | null): ToolRun
     argumentsDisplayText,
     resultText,
     resultDisplayText,
+    liveOutputDisplayText,
     result,
     summaryText: commandText ? `${tool} ${commandText}` : tool,
   };
+}
+
+function formatLiveOutput(metadata: ToolRunMetadata | null): string {
+  const output = metadata?.live_output;
+  if (!output) {
+    return "";
+  }
+  const sections = [
+    output.stdout ? `stdout:\n${output.stdout}` : "",
+    output.stderr ? `stderr:\n${output.stderr}` : "",
+    output.truncated ? "(additional live output was truncated)" : "",
+  ].filter(Boolean);
+  return sections.join("\n\n");
 }
 
 function toolMessageFromMetadata(metadata: ToolRunMetadata | null): ChatMessage {

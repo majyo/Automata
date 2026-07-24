@@ -3,11 +3,18 @@ export type ToolRunResult = {
   content?: string;
 };
 
+export type ToolLiveOutput = {
+  stdout: string;
+  stderr: string;
+  truncated?: boolean;
+};
+
 export type ToolRunMetadata = {
   tool_call_id?: string;
   tool?: string;
   arguments?: string;
   result?: ToolRunResult | null;
+  live_output?: ToolLiveOutput;
 };
 
 export type PersistedPlanStatus = "pending" | "executing" | "failed" | "executed" | "superseded";

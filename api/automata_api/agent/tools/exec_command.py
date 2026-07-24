@@ -22,6 +22,8 @@ class ExecCommandTool(AgentTool):
                     "shell=bash for POSIX shell scripts and shell=powershell "
                     "for PowerShell scripts. Cwd is restricted to the workspace "
                     "and output is bounded."
+                    " Set yield_time_ms to create a non-PTY live process session "
+                    "when the command is still running after the initial wait."
                 ),
                 "parameters": {
                     "type": "object",
@@ -59,6 +61,14 @@ class ExecCommandTool(AgentTool):
                                 "Optional character limit applied to stdout, "
                                 "stderr, and combined output. Defaults to 20000 "
                                 "and is capped at 60000."
+                            ),
+                        },
+                        "yield_time_ms": {
+                            "type": "integer",
+                            "description": (
+                                "Optional initial wait in milliseconds. When set, "
+                                "a still-running command returns a process session "
+                                "id for write_stdin. Capped at 30000."
                             ),
                         },
                     },

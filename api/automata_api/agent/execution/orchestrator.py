@@ -5,6 +5,7 @@ from automata_api.agent.execution.approval import ApprovalBroker
 from automata_api.agent.execution.model import ToolExecutionContext
 from automata_api.agent.execution.policy import ToolPolicyEngine
 from automata_api.agent.execution.process import process_execution_scope
+from automata_api.agent.execution.tool_output import tool_output_execution_scope
 from automata_api.agent.tools._core import ToolResult, parse_tool_arguments
 from automata_api.agent.tools.router import ToolRouter
 
@@ -61,12 +62,22 @@ class ToolExecutionOrchestrator:
                 )
 
         context.cancellation.raise_if_cancelled()
-        with process_execution_scope(context.run_id, context.tool_call_id):
-            return await router.dispatch_authorized(
-                tool_name,
-                arguments,
-                mode=context.mode,
-            )
+        with process_execution_scope(
+            context.run_id,
+            context.tool_call_id,
+            session_id=context.session_id,
+            workspace=context.workspace,
+        ):
+            with tool_output_execution_scope(
+                tool_call_id=context.tool_call_id,
+                tool=tool_name,
+                emit=context.emit_event,
+            ):
+                return await router.dispatch_authorized(
+                    tool_name,
+                    arguments,
+                    mode=context.mode,
+                )
 
 
 def failed_result(

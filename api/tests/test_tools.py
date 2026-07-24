@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 
 from automata_api.agent import tools
+from automata_api.agent.execution.process import process_execution_scope
+from automata_api.agent.execution.process_sessions import process_session_manager
 
 
 def patch_text(*lines):
@@ -167,8 +169,8 @@ def test_exec_command_respects_max_output_chars(tmp_path):
     payload = json.loads(result.content)
 
     assert result.success is True
-    assert payload["stdout"] == "1234"
-    assert payload["output"] == "1234"
+    assert payload["stdout"] == "1290"
+    assert payload["output"] == "1290"
     assert payload["stdout_truncated"] is True
     assert payload["stderr_truncated"] is False
     assert payload["output_truncated"] is True
@@ -196,12 +198,197 @@ def test_exec_command_streams_large_stdout_and_stderr_with_limit(tmp_path):
     payload = json.loads(result.content)
 
     assert result.success is True
-    assert payload["stdout"] == "o" * 1024
-    assert payload["stderr"] == "e" * 1024
-    assert payload["output"] == "o" * 1024
+    assert len(payload["stdout"]) == 1024
+    assert payload["stdout"].startswith("o" * 400)
+    assert payload["stdout"].endswith("o" * 400)
+    assert "... output truncated ..." in payload["stdout"]
+    assert len(payload["stderr"]) == 1024
+    assert payload["stderr"].startswith("e" * 400)
+    assert payload["stderr"].endswith("e" * 400)
+    assert "... output truncated ..." in payload["stderr"]
+    assert len(payload["output"]) == 1024
+    assert payload["output"].startswith("o" * 400)
+    assert payload["output"].endswith("o" * 400)
+    assert "... output truncated ..." in payload["output"]
     assert payload["stdout_truncated"] is True
     assert payload["stderr_truncated"] is True
     assert payload["output_truncated"] is True
+
+
+def test_exec_command_live_session_accepts_stdin_and_closes(tmp_path):
+    if tools.resolve_bash_executable() is None:
+        pytest.skip("bash is not available")
+
+    async def exercise():
+        command = python_shell_command(
+            "import sys; "
+            "print('ready', flush=True); "
+            "value = sys.stdin.readline(); "
+            "print('received:' + value.strip(), flush=True)"
+        )
+        with process_execution_scope(
+            "run-live",
+            "call-exec",
+            session_id="conversation-live",
+            workspace=str(tmp_path),
+        ):
+            started = await tools.run_tool(
+                "exec_command",
+                {
+                    "cmd": command,
+                    "yield_time_ms": 3000,
+                    "timeout_seconds": 10,
+                },
+                str(tmp_path),
+            )
+        started_payload = json.loads(started.content)
+        assert started.success is True
+        assert started_payload["running"] is True
+        assert started_payload["stdout"].replace("\r\n", "\n") == "ready\n"
+        assert started_payload["session_id"].startswith("proc_")
+
+        with process_execution_scope(
+            "run-live",
+            "call-stdin",
+            session_id="conversation-live",
+            workspace=str(tmp_path),
+        ):
+            completed = await tools.run_tool(
+                "write_stdin",
+                {
+                    "session_id": started_payload["session_id"],
+                    "chars": "hello\n",
+                    "yield_time_ms": 3000,
+                },
+                str(tmp_path),
+            )
+        completed_payload = json.loads(completed.content)
+        assert completed.success is True
+        assert (
+            completed_payload["stdout"].replace("\r\n", "\n")
+            == "received:hello\n"
+        )
+        if completed_payload["running"]:
+            with process_execution_scope(
+                "run-live",
+                "call-final-poll",
+                session_id="conversation-live",
+                workspace=str(tmp_path),
+            ):
+                completed = await tools.run_tool(
+                    "write_stdin",
+                    {
+                        "session_id": started_payload["session_id"],
+                        "yield_time_ms": 3000,
+                    },
+                    str(tmp_path),
+                )
+            completed_payload = json.loads(completed.content)
+        assert completed_payload["running"] is False
+        assert completed_payload["exit_code"] == 0
+
+        with process_execution_scope(
+            "run-live",
+            "call-poll-closed",
+            session_id="conversation-live",
+            workspace=str(tmp_path),
+        ):
+            closed = await tools.run_tool(
+                "write_stdin",
+                {"session_id": started_payload["session_id"]},
+                str(tmp_path),
+            )
+        closed_payload = json.loads(closed.content)
+        assert closed.success is False
+        assert closed_payload["error_code"] == "process_session_not_found"
+
+    asyncio.run(exercise())
+
+
+def test_write_stdin_rejects_a_different_run_and_cleanup_terminates(tmp_path):
+    if tools.resolve_bash_executable() is None:
+        pytest.skip("bash is not available")
+
+    async def exercise():
+        with process_execution_scope(
+            "run-owner",
+            "call-exec",
+            session_id="conversation-owner",
+            workspace=str(tmp_path),
+        ):
+            started = await tools.run_tool(
+                "exec_command",
+                {
+                    "cmd": python_shell_command(
+                        "import time; print('waiting', flush=True); time.sleep(30)"
+                    ),
+                    "yield_time_ms": 3000,
+                    "timeout_seconds": 60,
+                },
+                str(tmp_path),
+            )
+        session_id = json.loads(started.content)["session_id"]
+
+        with process_execution_scope(
+            "run-other",
+            "call-poll",
+            session_id="conversation-owner",
+            workspace=str(tmp_path),
+        ):
+            rejected = await tools.run_tool(
+                "write_stdin",
+                {"session_id": session_id},
+                str(tmp_path),
+            )
+        rejected_payload = json.loads(rejected.content)
+        assert rejected.success is False
+        assert rejected_payload["error_code"] == "process_session_scope_mismatch"
+
+        await process_session_manager.terminate_run("run-owner")
+        with process_execution_scope(
+            "run-owner",
+            "call-poll-closed",
+            session_id="conversation-owner",
+            workspace=str(tmp_path),
+        ):
+            closed = await tools.run_tool(
+                "write_stdin",
+                {"session_id": session_id},
+                str(tmp_path),
+            )
+        assert json.loads(closed.content)["error_code"] == "process_session_not_found"
+
+    asyncio.run(exercise())
+
+
+def test_exec_command_live_session_timeout_returns_terminal_result(tmp_path):
+    if tools.resolve_bash_executable() is None:
+        pytest.skip("bash is not available")
+
+    async def exercise():
+        with process_execution_scope(
+            "run-timeout",
+            "call-exec",
+            session_id="conversation-timeout",
+            workspace=str(tmp_path),
+        ):
+            return await tools.run_tool(
+                "exec_command",
+                {
+                    "cmd": python_shell_command("import time; time.sleep(30)"),
+                    "yield_time_ms": 3000,
+                    "timeout_seconds": 0.1,
+                },
+                str(tmp_path),
+            )
+
+    result = asyncio.run(exercise())
+    payload = json.loads(result.content)
+    assert result.success is False
+    assert payload["running"] is False
+    assert payload["timed_out"] is True
+    assert payload["exit_code"] is None
+    assert "session_id" not in payload
 
 
 def test_run_bash_executes_command_in_workspace(tmp_path):

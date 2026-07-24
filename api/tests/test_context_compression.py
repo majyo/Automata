@@ -441,13 +441,14 @@ def test_chat_websocket_emits_loop_compression_event(client, monkeypatch):
         "started",
         "agent_step",
         "tool_call",
+        "tool_output_delta",
         "tool_result",
         "context_compressed",
         "agent_step",
         "token",
         "done",
     ]
-    assert events[4]["scope"] == "loop"
-    assert events[4]["compressed_messages"] == 2
+    assert events[5]["scope"] == "loop"
+    assert events[5]["compressed_messages"] == 2
     assert token_content(events) == "Loop compression finished."
     assert len(agent_calls) == 2

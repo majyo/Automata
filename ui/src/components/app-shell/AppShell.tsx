@@ -12,6 +12,7 @@ import type {
   ToolApprovalRequest,
 } from "../../types/chat";
 import type { SessionSummary } from "../../types/session";
+import type { SkillRecord, SkillRuntimeNotice } from "../../types/skills";
 
 type Theme = "light" | "dark";
 
@@ -35,6 +36,11 @@ type AppShellProps = {
   isStreaming: boolean;
   canSend: boolean;
   approvals: ToolApprovalRequest[];
+  skills: SkillRecord[];
+  selectedSkillIds: Set<string>;
+  skillErrors: string[];
+  skillNotices: SkillRuntimeNotice[];
+  skillsLoading: boolean;
   activeRunIdBySession: Record<string, string>;
   runStatusBySession: Record<string, PersistedRunStatus>;
   onCreateSession(): void;
@@ -53,6 +59,9 @@ type AppShellProps = {
   onApprovePlan(message: ChatMessage): void;
   onRespondToApproval(approval: ToolApprovalRequest, decision: ApprovalDecision): void;
   onCancelRun(): void;
+  onToggleSkill(skillId: string): void;
+  onToggleSkillEnabled(skill: SkillRecord): Promise<void>;
+  onRefreshSkills(): void;
 };
 
 export function AppShell({
@@ -73,6 +82,11 @@ export function AppShell({
   isStreaming,
   canSend,
   approvals,
+  skills,
+  selectedSkillIds,
+  skillErrors,
+  skillNotices,
+  skillsLoading,
   activeRunIdBySession,
   runStatusBySession,
   onCreateSession,
@@ -91,6 +105,9 @@ export function AppShell({
   onApprovePlan,
   onRespondToApproval,
   onCancelRun,
+  onToggleSkill,
+  onToggleSkillEnabled,
+  onRefreshSkills,
 }: AppShellProps) {
   const [theme, setTheme] = useState<Theme>(readStoredTheme);
   const [isInspectorOpen, setIsInspectorOpen] = useState(false);
@@ -148,6 +165,11 @@ export function AppShell({
             isStreaming={isStreaming}
             canSend={canSend}
             approvals={approvals}
+            skills={skills}
+            selectedSkillIds={selectedSkillIds}
+            skillErrors={skillErrors}
+            skillNotices={skillNotices}
+            skillsLoading={skillsLoading}
             onChooseDirectory={onChooseDirectory}
             onWorkingDirectoryChange={onWorkingDirectoryChange}
             onSubmit={onSubmit}
@@ -156,6 +178,9 @@ export function AppShell({
             onApprovePlan={onApprovePlan}
             onRespondToApproval={onRespondToApproval}
             onCancelRun={onCancelRun}
+            onToggleSkill={onToggleSkill}
+            onToggleSkillEnabled={onToggleSkillEnabled}
+            onRefreshSkills={onRefreshSkills}
           />
 
           <InspectorSheet

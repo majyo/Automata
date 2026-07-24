@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -63,6 +64,7 @@ class ToolExecutionContext:
     workspace: str
     mode: Literal["act", "plan"]
     cancellation: CancellationToken
+    emit_event: Callable[[dict[str, Any]], Awaitable[None]] | None = None
 
 
 @dataclass(frozen=True)

@@ -19,7 +19,7 @@ export function MessageList({ messages, messagesRef, isStreaming, onApprovePlan 
       {messages.length === 0 && (
         <div className="empty-state">
           <div className="empty-state-icon">
-            <Sparkles size={28} />
+            <Sparkles size={22} />
           </div>
           <h3>Start the conversation</h3>
           <p>This session is empty. Send a prompt to start a persisted conversation.</p>

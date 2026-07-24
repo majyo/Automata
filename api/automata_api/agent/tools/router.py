@@ -191,6 +191,10 @@ class ToolRouter:
     def registered_names(self) -> set[str]:
         return set(self._descriptors_by_name)
 
+    def descriptors(self) -> tuple[ToolDescriptor, ...]:
+        """Return immutable descriptor metadata for read-only diagnostics."""
+        return self._descriptors
+
     def replace_source_descriptors(
         self,
         source: str,

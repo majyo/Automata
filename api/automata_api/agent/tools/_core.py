@@ -14,6 +14,12 @@ from automata_api.agent.execution.process import (
     process_supervisor,
     subprocess_group_kwargs,
 )
+from automata_api.agent.execution.process_sessions import (
+    ProcessSessionError,
+    ProcessSessionSnapshot,
+    process_session_manager,
+)
+from automata_api.agent.execution.tool_output import emit_tool_output
 
 from .patch_codex import (
     CodexPatchFile,
@@ -29,6 +35,8 @@ SEARCH_TIMEOUT_SECONDS = 30.0
 FILE_READ_LIMIT = 120_000
 DEFAULT_EXEC_OUTPUT_CHARS = OUTPUT_LIMIT
 MAX_EXEC_OUTPUT_CHARS = 60_000
+MAX_PROCESS_YIELD_MILLISECONDS = 30_000
+DEFAULT_STDIN_YIELD_MILLISECONDS = 250
 PROCESS_OUTPUT_CHUNK_BYTES = 8192
 SUPPORTED_EXEC_SHELLS = ("bash", "powershell")
 
@@ -54,6 +62,56 @@ class CapturedProcessOutput:
     stderr: CapturedStream
     exit_code: int | None
     timed_out: bool
+
+
+class HeadTailTextBuffer:
+    _MARKER = "\n... output truncated ...\n"
+
+    def __init__(self, max_chars: int) -> None:
+        self.max_chars = max(0, max_chars)
+        self._value = ""
+        self._head = ""
+        self._tail = ""
+        self.truncated = False
+
+    def append(self, text: str) -> None:
+        if not text:
+            return
+        if self.max_chars <= 0:
+            self.truncated = True
+            return
+        if not self.truncated:
+            combined = self._value + text
+            if len(combined) <= self.max_chars:
+                self._value = combined
+                return
+            self.truncated = True
+            marker = self._marker()
+            available = max(0, self.max_chars - len(marker))
+            head_chars = available // 2
+            tail_chars = available - head_chars
+            self._head = combined[:head_chars]
+            self._tail = combined[-tail_chars:] if tail_chars else ""
+            self._value = ""
+            return
+        tail_chars = self._tail_limit()
+        if tail_chars:
+            self._tail = (self._tail + text)[-tail_chars:]
+
+    @property
+    def text(self) -> str:
+        if not self.truncated:
+            return self._value
+        return f"{self._head}{self._marker()}{self._tail}"
+
+    def _marker(self) -> str:
+        if self.max_chars < len(self._MARKER) + 2:
+            return ""
+        return self._MARKER
+
+    def _tail_limit(self) -> int:
+        available = max(0, self.max_chars - len(self._marker()))
+        return available - available // 2
 
 
 @dataclass(frozen=True)
@@ -134,10 +192,10 @@ async def capture_process_output(
     managed = await process_supervisor.register(process)
     try:
         stdout_task = asyncio.create_task(
-            read_limited_stream(process.stdout, stdout_limit)
+            read_limited_stream(process.stdout, stdout_limit, stream_name="stdout")
         )
         stderr_task = asyncio.create_task(
-            read_limited_stream(process.stderr, stderr_limit)
+            read_limited_stream(process.stderr, stderr_limit, stream_name="stderr")
         )
         wait_task = asyncio.create_task(process.wait())
         timed_out = False
@@ -174,13 +232,13 @@ async def read_limited_stream(
     max_chars: int,
     *,
     chunk_size: int = PROCESS_OUTPUT_CHUNK_BYTES,
+    stream_name: str | None = None,
 ) -> CapturedStream:
     if reader is None:
         return CapturedStream(text="", truncated=False, bytes_seen=0)
 
     decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
-    parts: list[str] = []
-    chars_kept = 0
+    buffer = HeadTailTextBuffer(max_chars)
     bytes_seen = 0
     truncated = False
 
@@ -191,19 +249,18 @@ async def read_limited_stream(
 
         bytes_seen += len(chunk)
         text = decoder.decode(chunk)
-        chars_kept, chunk_truncated = append_limited_text(
-            parts, text, max_chars, chars_kept
-        )
-        truncated = truncated or chunk_truncated
+        if stream_name in {"stdout", "stderr"}:
+            await emit_tool_output(stream_name, text)  # type: ignore[arg-type]
+        buffer.append(text)
 
     tail = decoder.decode(b"", final=True)
-    chars_kept, tail_truncated = append_limited_text(
-        parts, tail, max_chars, chars_kept
-    )
-    truncated = truncated or tail_truncated
+    if stream_name in {"stdout", "stderr"}:
+        await emit_tool_output(stream_name, tail)  # type: ignore[arg-type]
+    buffer.append(tail)
+    truncated = buffer.truncated
 
     return CapturedStream(
-        text="".join(parts),
+        text=buffer.text,
         truncated=truncated,
         bytes_seen=bytes_seen,
     )
@@ -1473,6 +1530,12 @@ def truncate_content(content: str, limit: int) -> tuple[str, bool]:
     return content[:limit], True
 
 
+def truncate_head_tail_content(content: str, limit: int) -> tuple[str, bool]:
+    buffer = HeadTailTextBuffer(limit)
+    buffer.append(content)
+    return buffer.text, buffer.truncated
+
+
 def file_error_result(
     tool_name: str,
     arguments: dict[str, Any],
@@ -1502,6 +1565,7 @@ async def run_exec_command(arguments: dict[str, Any], workspace: str) -> ToolRes
     shell_name = shell_argument(arguments)
     timeout_seconds = timeout_argument(arguments)
     max_output_chars = max_output_chars_argument(arguments)
+    yield_time_ms = yield_time_ms_argument(arguments)
     requested_workdir = string_argument(arguments, "workdir", ".")
     workspace_path = Path(workspace).expanduser().resolve()
     cwd_result = resolve_tool_cwd(workspace_path, arguments.get("workdir"))
@@ -1550,6 +1614,7 @@ async def run_exec_command(arguments: dict[str, Any], workspace: str) -> ToolRes
             cwd=str(cwd_result),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            stdin=asyncio.subprocess.PIPE if yield_time_ms is not None else None,
             **subprocess_group_kwargs(),
         )
     except OSError as error:
@@ -1564,6 +1629,50 @@ async def run_exec_command(arguments: dict[str, Any], workspace: str) -> ToolRes
             error=f"Failed to start command: {error}",
             shell_path=shell_resolution.path,
             duration_seconds=duration_seconds,
+        )
+
+    if yield_time_ms is not None:
+        try:
+            process_session_id = await process_session_manager.start(
+                process,
+                timeout_seconds=timeout_seconds,
+                pending_limit=max_output_chars,
+            )
+            session_output = await process_session_manager.interact(
+                process_session_id,
+                chars="",
+                yield_time_ms=yield_time_ms,
+            )
+        except ProcessSessionError as error:
+            return exec_command_error_result(
+                arguments=arguments,
+                cmd=cmd,
+                shell=shell_name,
+                workdir=requested_workdir,
+                cwd=str(cwd_result),
+                timeout_seconds=timeout_seconds,
+                error=str(error),
+                shell_path=shell_resolution.path,
+                duration_seconds=round(time.monotonic() - started_at, 3),
+                error_code=error.code,
+            )
+        await emit_process_session_output(session_output)
+        duration_seconds = round(time.monotonic() - started_at, 3)
+        return process_session_tool_result(
+            name="exec_command",
+            arguments=arguments,
+            snapshot=session_output,
+            max_output_chars=max_output_chars,
+            extra={
+                "cmd": cmd,
+                "shell": shell_name,
+                "workdir": requested_workdir,
+                "cwd": str(cwd_result),
+                "shell_path": shell_resolution.path,
+                "timeout_seconds": timeout_seconds,
+                "duration_seconds": duration_seconds,
+            },
+            include_session_id=session_output.running,
         )
 
     output = await capture_process_output(
@@ -1619,6 +1728,7 @@ def exec_command_error_result(
     shell_path: str | None = None,
     duration_seconds: float = 0.0,
     supported_shells: tuple[str, ...] | None = None,
+    error_code: str | None = None,
 ) -> ToolResult:
     output, output_truncated = truncate_content(
         build_exec_output("", error), DEFAULT_EXEC_OUTPUT_CHARS
@@ -1645,6 +1755,8 @@ def exec_command_error_result(
     }
     if supported_shells is not None:
         payload["supported_shells"] = list(supported_shells)
+    if error_code is not None:
+        payload["error_code"] = error_code
     return ToolResult(
         name="exec_command",
         arguments=arguments,
@@ -1659,6 +1771,153 @@ def build_exec_output(stdout: str, stderr: str) -> str:
     if stderr:
         return f"stderr:\n{stderr}"
     return stdout
+
+
+async def run_write_stdin(
+    arguments: dict[str, Any],
+    workspace: str,
+) -> ToolResult:
+    del workspace
+    session_id = string_argument(arguments, "session_id", "")
+    chars_value = arguments.get("chars", "")
+    if not session_id:
+        return process_session_error_result(
+            "write_stdin",
+            arguments,
+            "missing_session_id",
+            "Missing required session_id.",
+        )
+    if not isinstance(chars_value, str):
+        return process_session_error_result(
+            "write_stdin",
+            arguments,
+            "invalid_chars",
+            "chars must be a string.",
+        )
+    yield_time_ms = yield_time_ms_argument(
+        arguments,
+        default=DEFAULT_STDIN_YIELD_MILLISECONDS,
+    )
+    assert yield_time_ms is not None
+    max_output_chars = max_output_chars_argument(arguments)
+    try:
+        snapshot = await process_session_manager.interact(
+            session_id,
+            chars=chars_value,
+            yield_time_ms=yield_time_ms,
+        )
+    except ProcessSessionError as error:
+        return process_session_error_result(
+            "write_stdin",
+            arguments,
+            error.code,
+            str(error),
+        )
+    snapshot = bound_process_session_snapshot(snapshot, max_output_chars)
+    await emit_process_session_output(snapshot)
+    return process_session_tool_result(
+        name="write_stdin",
+        arguments=arguments,
+        snapshot=snapshot,
+        max_output_chars=max_output_chars,
+        extra={"chars_written": len(chars_value)},
+        include_session_id=True,
+    )
+
+
+async def emit_process_session_output(snapshot: ProcessSessionSnapshot) -> None:
+    await emit_tool_output("stdout", snapshot.stdout)
+    await emit_tool_output("stderr", snapshot.stderr)
+
+
+def process_session_tool_result(
+    *,
+    name: str,
+    arguments: dict[str, Any],
+    snapshot: ProcessSessionSnapshot,
+    max_output_chars: int,
+    extra: dict[str, Any],
+    include_session_id: bool,
+) -> ToolResult:
+    combined_output, combined_output_truncated = truncate_head_tail_content(
+        build_exec_output(snapshot.stdout, snapshot.stderr),
+        max_output_chars,
+    )
+    payload: dict[str, Any] = {
+        "simulated": False,
+        "ok": snapshot.running
+        or (snapshot.exit_code == 0 and not snapshot.timed_out),
+        "tool": name,
+        "running": snapshot.running,
+        "exit_code": snapshot.exit_code,
+        "timed_out": snapshot.timed_out,
+        "stdout": snapshot.stdout,
+        "stderr": snapshot.stderr,
+        "output": combined_output,
+        "stdout_truncated": snapshot.stdout_truncated,
+        "stderr_truncated": snapshot.stderr_truncated,
+        "output_truncated": (
+            combined_output_truncated
+            or snapshot.stdout_truncated
+            or snapshot.stderr_truncated
+        ),
+        **extra,
+    }
+    if include_session_id:
+        payload["session_id"] = snapshot.session_id
+    return ToolResult(
+        name=name,
+        arguments=arguments,
+        content=json_response(payload),
+        success=bool(payload["ok"]),
+    )
+
+
+def bound_process_session_snapshot(
+    snapshot: ProcessSessionSnapshot,
+    max_output_chars: int,
+) -> ProcessSessionSnapshot:
+    stdout, stdout_truncated = truncate_head_tail_content(
+        snapshot.stdout,
+        max_output_chars,
+    )
+    stderr, stderr_truncated = truncate_head_tail_content(
+        snapshot.stderr,
+        max_output_chars,
+    )
+    return ProcessSessionSnapshot(
+        session_id=snapshot.session_id,
+        running=snapshot.running,
+        exit_code=snapshot.exit_code,
+        timed_out=snapshot.timed_out,
+        stdout=stdout,
+        stderr=stderr,
+        stdout_truncated=snapshot.stdout_truncated or stdout_truncated,
+        stderr_truncated=snapshot.stderr_truncated or stderr_truncated,
+    )
+
+
+def process_session_error_result(
+    name: str,
+    arguments: dict[str, Any],
+    error_code: str,
+    message: str,
+) -> ToolResult:
+    return ToolResult(
+        name=name,
+        arguments=arguments,
+        content=json_response(
+            {
+                "simulated": False,
+                "ok": False,
+                "tool": name,
+                "running": False,
+                "error_code": error_code,
+                "error": message,
+            }
+        ),
+        success=False,
+    )
 
 
 async def run_bash(arguments: dict[str, Any], workspace: str) -> ToolResult:
@@ -1894,6 +2153,30 @@ def max_output_chars_argument(arguments: dict[str, Any]) -> int:
         return DEFAULT_EXEC_OUTPUT_CHARS
 
     return min(max_output_chars, MAX_EXEC_OUTPUT_CHARS)
+
+
+def yield_time_ms_argument(
+    arguments: dict[str, Any],
+    *,
+    default: int | None = None,
+) -> int | None:
+    if "yield_time_ms" not in arguments:
+        return default
+    raw_value = arguments.get("yield_time_ms")
+    if isinstance(raw_value, bool):
+        return default
+    if isinstance(raw_value, int):
+        yield_time_ms = raw_value
+    elif isinstance(raw_value, float):
+        yield_time_ms = int(raw_value)
+    elif isinstance(raw_value, str):
+        try:
+            yield_time_ms = int(raw_value)
+        except ValueError:
+            return default
+    else:
+        return default
+    return min(max(0, yield_time_ms), MAX_PROCESS_YIELD_MILLISECONDS)
 
 
 def bash_error_result(

@@ -1,148 +1,138 @@
 /* ==========================================================================
-   Automata — Material 3 design tokens
-   Canonical M3 baseline palette (seed #6750A4), light + dark schemes.
+   Automata — professional tool design tokens
+   Neutral graphite surfaces + a single restrained indigo accent.
+   Light + dark schemes. Fills are subtle, structure comes from hairlines.
    ========================================================================== */
 
 :root {
   /* Typography -----------------------------------------------------------
      CSP (font-src 'self') forbids webfonts, so we stack the platform's
-     Material-adjacent faces: Roboto where installed, Segoe UI on Windows. */
+     professional faces: Segoe UI on Windows, SF on macOS. */
   --md-font:
-    "Roboto", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system,
+    "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto,
     "Helvetica Neue", Arial, sans-serif;
   --md-font-mono:
-    "Roboto Mono", "Cascadia Code", "Cascadia Mono", "SFMono-Regular", Consolas,
-    "Liberation Mono", monospace;
+    "Cascadia Code", "Cascadia Mono", "JetBrains Mono", "SFMono-Regular",
+    Consolas, "Liberation Mono", monospace;
 
-  /* Type scale (root font-size: 14px) */
-  --md-type-headline-small: 1.714rem; /* 24px */
-  --md-type-title-large: 1.571rem; /* 22px */
-  --md-type-title-medium: 1.143rem; /* 16px */
-  --md-type-title-small: 1rem; /* 14px */
-  --md-type-body-large: 1.143rem; /* 16px */
-  --md-type-body-medium: 1rem; /* 14px */
+  /* Type scale (root font-size: 14px) — compact, information-dense */
+  --md-type-headline-small: 1.429rem; /* 20px */
+  --md-type-title-large: 1.143rem; /* 16px */
+  --md-type-title-medium: 1rem; /* 14px */
+  --md-type-title-small: 0.929rem; /* 13px */
+  --md-type-body-large: 1rem; /* 14px */
+  --md-type-body-medium: 0.929rem; /* 13px */
   --md-type-body-small: 0.857rem; /* 12px */
-  --md-type-label-large: 1rem; /* 14px */
+  --md-type-label-large: 0.929rem; /* 13px */
   --md-type-label-medium: 0.857rem; /* 12px */
   --md-type-label-small: 0.786rem; /* 11px */
 
-  /* Shape */
-  --md-shape-xs: 4px;
-  --md-shape-sm: 8px;
-  --md-shape-md: 12px;
-  --md-shape-lg: 16px;
-  --md-shape-xl: 28px;
+  /* Shape — squared, precise */
+  --md-shape-xs: 3px;
+  --md-shape-sm: 6px;
+  --md-shape-md: 8px;
+  --md-shape-lg: 10px;
+  --md-shape-xl: 12px;
   --md-shape-full: 999px;
 
-  /* Motion — M3 emphasized easing */
+  /* Motion */
   --md-easing: cubic-bezier(0.2, 0, 0, 1);
   --md-easing-emphasized: cubic-bezier(0.05, 0.7, 0.1, 1);
-  --md-duration-short: 150ms;
-  --md-duration-medium: 250ms;
-  --md-duration-long: 400ms;
+  --md-duration-short: 120ms;
+  --md-duration-medium: 200ms;
+  --md-duration-long: 320ms;
 
   color-scheme: light;
 }
 
 :root,
 :root[data-theme="light"] {
-  /* Color — light scheme */
-  --md-primary: #6750a4;
+  /* Accent — deep indigo, used sparingly */
+  --md-primary: #4338ca;
   --md-on-primary: #ffffff;
-  --md-primary-container: #eaddff;
-  --md-on-primary-container: #21005d;
-  --md-secondary: #625b71;
-  --md-on-secondary: #ffffff;
-  --md-secondary-container: #e8def8;
-  --md-on-secondary-container: #1e192b;
-  --md-tertiary-container: #ffd8e4;
-  --md-on-tertiary-container: #31111d;
-  --md-error: #b3261e;
-  --md-on-error: #ffffff;
-  --md-error-container: #f9dedc;
-  --md-on-error-container: #410e0b;
-  --md-surface: #fef7ff;
-  --md-surface-dim: #ded8e1;
+  --md-primary-container: #e0e7ff;
+  --md-on-primary-container: #1e1b4b;
+
+  /* Neutral active/selected fills */
+  --md-secondary-container: #e4e4e7;
+  --md-on-secondary-container: #18181b;
+
+  /* Surfaces — zinc neutrals */
+  --md-surface: #ffffff;
+  --md-surface-dim: #e4e4e7;
   --md-surface-container-lowest: #ffffff;
-  --md-surface-container-low: #f7f2fa;
-  --md-surface-container: #f3edf7;
-  --md-surface-container-high: #ece6f0;
-  --md-surface-container-highest: #e6e0e9;
-  --md-on-surface: #1d1b20;
-  --md-on-surface-variant: #49454f;
-  --md-outline: #79747e;
-  --md-outline-variant: #cac4d0;
-  --md-inverse-surface: #322f35;
-  --md-inverse-on-surface: #f5eff7;
-  --md-inverse-primary: #d0bcff;
-  --md-scrim: rgba(0, 0, 0, 0.32);
+  --md-surface-container-low: #fafafa;
+  --md-surface-container: #f4f4f5;
+  --md-surface-container-high: #ececee;
+  --md-surface-container-highest: #e4e4e7;
+  --md-on-surface: #18181b;
+  --md-on-surface-variant: #52525b;
+  --md-outline: #a1a1aa;
+  --md-outline-variant: #e4e4e7;
+  --md-inverse-surface: #27272a;
+  --md-inverse-on-surface: #f4f4f5;
+  --md-inverse-primary: #a5b4fc;
+  --md-scrim: rgba(9, 9, 11, 0.4);
 
-  /* Extension: warning tones for approval / risk surfaces */
-  --md-warning: #825500;
-  --md-warning-container: #ffddb2;
-  --md-on-warning-container: #2b1700;
+  /* Semantic — muted, functional */
+  --md-error: #dc2626;
+  --md-on-error: #ffffff;
+  --md-error-container: #fee2e2;
+  --md-on-error-container: #7f1d1d;
+  --md-warning: #b45309;
+  --md-warning-container: #fef3c7;
+  --md-on-warning-container: #78350f;
+  --md-success: #15803d;
+  --md-success-container: #dcfce7;
+  --md-on-success-container: #14532d;
 
-  /* Extension: success tones for healthy status */
-  --md-success: #386a20;
-  --md-success-container: #b7f397;
-  --md-on-success-container: #042100;
-
-  /* Elevation (umbra + penumbra per M3) */
-  --md-elev-1:
-    0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 3px 1px rgba(0, 0, 0, 0.15);
-  --md-elev-2:
-    0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 6px 2px rgba(0, 0, 0, 0.15);
-  --md-elev-3:
-    0 1px 3px rgba(0, 0, 0, 0.3), 0 4px 8px 3px rgba(0, 0, 0, 0.15);
+  /* Elevation — nearly flat; borders do the work */
+  --md-elev-1: 0 1px 2px rgba(9, 9, 11, 0.06);
+  --md-elev-2: 0 2px 8px rgba(9, 9, 11, 0.08);
+  --md-elev-3: 0 8px 24px rgba(9, 9, 11, 0.12);
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --md-primary: #d0bcff;
-  --md-on-primary: #381e72;
-  --md-primary-container: #4f378b;
-  --md-on-primary-container: #eaddff;
-  --md-secondary: #ccc2dc;
-  --md-on-secondary: #332d41;
-  --md-secondary-container: #4a4458;
-  --md-on-secondary-container: #e8def8;
-  --md-tertiary-container: #633b48;
-  --md-on-tertiary-container: #ffd8e4;
-  --md-error: #f2b8b5;
-  --md-on-error: #601410;
-  --md-error-container: #8c1d18;
-  --md-on-error-container: #f9dedc;
-  --md-surface: #141218;
-  --md-surface-dim: #141218;
-  --md-surface-container-lowest: #0f0d13;
-  --md-surface-container-low: #1d1b20;
-  --md-surface-container: #211f26;
-  --md-surface-container-high: #2b2930;
-  --md-surface-container-highest: #36343b;
-  --md-on-surface: #e6e0e9;
-  --md-on-surface-variant: #cac4d0;
-  --md-outline: #938f99;
-  --md-outline-variant: #49454f;
-  --md-inverse-surface: #e6e0e9;
-  --md-inverse-on-surface: #322f35;
-  --md-inverse-primary: #6750a4;
-  --md-scrim: rgba(0, 0, 0, 0.5);
+  --md-primary: #a5b4fc;
+  --md-on-primary: #1e1b4b;
+  --md-primary-container: #2d2a6e;
+  --md-on-primary-container: #e0e7ff;
 
-  --md-warning: #ffb95c;
-  --md-warning-container: #624000;
-  --md-on-warning-container: #ffddb2;
+  --md-secondary-container: #27272a;
+  --md-on-secondary-container: #f4f4f5;
 
-  --md-success: #9cd67d;
-  --md-success-container: #205107;
-  --md-on-success-container: #b7f397;
+  --md-surface: #0c0c0e;
+  --md-surface-dim: #0c0c0e;
+  --md-surface-container-lowest: #0c0c0e;
+  --md-surface-container-low: #111113;
+  --md-surface-container: #17171a;
+  --md-surface-container-high: #1e1e22;
+  --md-surface-container-highest: #26262b;
+  --md-on-surface: #f4f4f5;
+  --md-on-surface-variant: #a1a1aa;
+  --md-outline: #52525b;
+  --md-outline-variant: #26262b;
+  --md-inverse-surface: #e4e4e7;
+  --md-inverse-on-surface: #27272a;
+  --md-inverse-primary: #4338ca;
+  --md-scrim: rgba(0, 0, 0, 0.6);
 
-  --md-elev-1:
-    0 1px 2px rgba(0, 0, 0, 0.5), 0 1px 3px 1px rgba(0, 0, 0, 0.3);
-  --md-elev-2:
-    0 1px 2px rgba(0, 0, 0, 0.5), 0 2px 6px 2px rgba(0, 0, 0, 0.3);
-  --md-elev-3:
-    0 1px 3px rgba(0, 0, 0, 0.5), 0 4px 8px 3px rgba(0, 0, 0, 0.3);
+  --md-error: #f87171;
+  --md-on-error: #450a0a;
+  --md-error-container: #450a0a;
+  --md-on-error-container: #fecaca;
+  --md-warning: #fbbf24;
+  --md-warning-container: #451a03;
+  --md-on-warning-container: #fde68a;
+  --md-success: #4ade80;
+  --md-success-container: #052e16;
+  --md-on-success-container: #bbf7d0;
+
+  --md-elev-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --md-elev-2: 0 2px 8px rgba(0, 0, 0, 0.45);
+  --md-elev-3: 0 8px 24px rgba(0, 0, 0, 0.5);
 }
 
 /* ==========================================================================
@@ -183,7 +173,7 @@ button {
 button:focus-visible,
 input:focus-visible {
   outline: 2px solid var(--md-primary);
-  outline-offset: 2px;
+  outline-offset: 1px;
 }
 
 button:disabled {
@@ -191,14 +181,14 @@ button:disabled {
 }
 
 ::selection {
-  color: var(--md-on-primary-container);
-  background: var(--md-primary-container);
+  color: var(--md-on-surface);
+  background: color-mix(in srgb, var(--md-primary) 22%, transparent);
 }
 
-/* Slim, tonal scrollbars */
+/* Slim, neutral scrollbars */
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--md-outline-variant) transparent;
+  scrollbar-color: var(--md-surface-container-highest) transparent;
 }
 
 *::-webkit-scrollbar {
@@ -207,7 +197,7 @@ button:disabled {
 }
 
 *::-webkit-scrollbar-thumb {
-  background: var(--md-outline-variant);
+  background: var(--md-surface-container-highest);
   border-radius: var(--md-shape-full);
 }
 

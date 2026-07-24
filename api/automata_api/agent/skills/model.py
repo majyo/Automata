@@ -7,12 +7,20 @@ from typing import Any, Literal
 
 SkillScope = Literal["repo", "user", "packaged", "extra", "plugin"]
 AgentMode = Literal["act", "plan"]
+SkillDiagnosticStatus = Literal[
+    "available",
+    "deferred",
+    "not_granted",
+    "not_found",
+    "unknown",
+]
 
 
 @dataclass(frozen=True)
 class SkillRoot:
     path: Path
     scope: SkillScope
+    root_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -57,12 +65,28 @@ class SkillMetadata:
     interface: SkillInterface | None = None
     dependencies: SkillDependencies | None = None
     policy: SkillPolicy = field(default_factory=SkillPolicy)
+    skill_id: str = ""
+    root_id: str = ""
+    relative_dir: str = ""
+    fingerprint: str = ""
 
 
 @dataclass(frozen=True)
 class SkillError:
     path: Path
     message: str
+    severity: Literal["warning", "error"] = "error"
+
+
+@dataclass(frozen=True)
+class SkillDependencyDiagnostic:
+    dependency_type: str
+    status: SkillDiagnosticStatus
+    message: str
+    value: str | None = None
+    query: str | None = None
+    server: str | None = None
+    tool: str | None = None
 
 
 @dataclass(frozen=True)
@@ -70,12 +94,14 @@ class SkillLoadOutcome:
     skills: tuple[SkillMetadata, ...] = ()
     errors: tuple[SkillError, ...] = ()
     disabled_paths: frozenset[Path] = frozenset()
+    disabled_skill_ids: frozenset[str] = frozenset()
 
     def enabled_skills(self, *, mode: AgentMode | None = None) -> tuple[SkillMetadata, ...]:
         return tuple(
             skill
             for skill in self.skills
             if skill.path not in self.disabled_paths
+            and skill.skill_id not in self.disabled_skill_ids
             and (mode is None or mode in skill.policy.modes)
         )
 

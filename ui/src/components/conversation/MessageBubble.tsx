@@ -18,7 +18,7 @@ export function MessageBubble({ message, isStreaming, onApprovePlan }: MessageBu
     >
       {message.role === "agent" && message.kind !== "plan" && (
         <div className="avatar">
-          <Bot size={17} />
+          <Bot size={15} />
         </div>
       )}
       {message.kind === "tool_run" ? (

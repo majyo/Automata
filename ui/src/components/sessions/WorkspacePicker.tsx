@@ -39,7 +39,7 @@ export function WorkspacePicker({
           aria-label="Choose working directory"
           title="Choose working directory"
         >
-          <FolderOpen size={18} />
+          <FolderOpen size={16} />
         </button>
       </div>
       <span className="field-helper">

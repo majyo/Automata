@@ -22,6 +22,7 @@ export type ChatState = {
 };
 
 type ToolCallPayload = Extract<SocketPayload, { type: "tool_call" }>;
+type ToolOutputPayload = Extract<SocketPayload, { type: "tool_output_delta" }>;
 type ToolResultPayload = Extract<SocketPayload, { type: "tool_result" }>;
 type PlanReadyPayload = Extract<SocketPayload, { type: "plan_ready" }>;
 
@@ -51,6 +52,13 @@ export type ChatAction =
       type: "toolCallCompleted";
       sessionId: string;
       payload: ToolResultPayload;
+      messageId: string;
+      toolCallId: string;
+    }
+  | {
+      type: "toolOutputReceived";
+      sessionId: string;
+      payload: ToolOutputPayload;
       messageId: string;
       toolCallId: string;
     }
@@ -410,6 +418,64 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     });
   }
 
+  if (action.type === "toolOutputReceived") {
+    return updateSessionMessages(state, action.sessionId, (messages) => {
+      const current = messages.find((message) => message.id === action.messageId);
+      const previousOutput = current?.metadata?.live_output ?? {
+        stdout: "",
+        stderr: "",
+      };
+      const liveOutput = {
+        ...previousOutput,
+        [action.payload.stream]: appendLiveOutput(
+          previousOutput[action.payload.stream],
+          action.payload.content,
+        ),
+        truncated:
+          previousOutput.truncated === true ||
+          action.payload.truncated === true,
+      };
+
+      if (!current) {
+        return [
+          ...messages,
+          {
+            id: action.messageId,
+            session_id: action.sessionId,
+            role: "tool",
+            text: "",
+            kind: "tool_run",
+            metadata: {
+              tool_call_id: action.toolCallId,
+              tool: action.payload.tool ?? "unknown_tool",
+              arguments: "{}",
+              result: null,
+              live_output: liveOutput,
+            },
+          },
+        ];
+      }
+
+      return messages.map((message) =>
+        message.id === action.messageId
+          ? {
+              ...message,
+              metadata: {
+                ...(message.metadata ?? {}),
+                tool_call_id: action.toolCallId,
+                tool:
+                  message.metadata?.tool ??
+                  action.payload.tool ??
+                  "unknown_tool",
+                arguments: message.metadata?.arguments ?? "{}",
+                live_output: liveOutput,
+              },
+            }
+          : message,
+      );
+    });
+  }
+
   if (action.type === "streamingFailed") {
     if (!action.messageId) {
       return state;
@@ -471,6 +537,20 @@ function appendMessage(
   message: ChatMessage,
 ): ChatState {
   return updateSessionMessages(state, sessionId, (messages) => [...messages, message]);
+}
+
+const LIVE_OUTPUT_MAX_CHARS = 64 * 1024;
+const LIVE_OUTPUT_TRUNCATION_MARKER = "\n... live output truncated ...\n";
+
+function appendLiveOutput(previous: string, content: string): string {
+  const combined = `${previous}${content}`;
+  if (combined.length <= LIVE_OUTPUT_MAX_CHARS) {
+    return combined;
+  }
+  const available = LIVE_OUTPUT_MAX_CHARS - LIVE_OUTPUT_TRUNCATION_MARKER.length;
+  const headLength = Math.ceil(available / 2);
+  const tailLength = Math.floor(available / 2);
+  return `${combined.slice(0, headLength)}${LIVE_OUTPUT_TRUNCATION_MARKER}${combined.slice(-tailLength)}`;
 }
 
 function updateSessionMessages(

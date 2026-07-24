@@ -22,8 +22,9 @@ def test_tool_specs_include_expected_tool_names():
     assert names == {
         "rg",
         "grep",
-        "exec_command",
-        "run_bash",
+            "exec_command",
+            "write_stdin",
+            "run_bash",
         "read_file",
         "write_file",
         "apply_patch",
@@ -164,7 +165,7 @@ def test_read_limited_stream_handles_split_utf8_sequence():
 
     result = asyncio.run(run())
 
-    assert result.text == "éa"
+    assert result.text == "éc"
     assert result.truncated is True
     assert result.bytes_seen == len("éabc".encode("utf-8"))
 

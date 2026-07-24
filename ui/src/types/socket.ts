@@ -29,6 +29,14 @@ export type SocketPayload =
       message_id?: string;
     } & SequencedRunEvent)
   | ({
+      type: "tool_output_delta";
+      tool_call_id?: string;
+      tool?: string;
+      stream: "stdout" | "stderr";
+      content: string;
+      truncated?: boolean;
+    } & SequencedRunEvent)
+  | ({
       type: "tool_result";
       tool_call_id?: string;
       tool?: string;
@@ -36,6 +44,20 @@ export type SocketPayload =
       content?: string;
       message_id?: string;
       content_truncated?: boolean;
+    } & SequencedRunEvent)
+  | ({
+      type: "skills_loaded";
+      count: number;
+      enabled_count: number;
+    } & SequencedRunEvent)
+  | ({
+      type: "skills_warning";
+      message: string;
+    } & SequencedRunEvent)
+  | ({
+      type: "skill_injected";
+      name: string;
+      path: string;
     } & SequencedRunEvent)
   | ({
       type: "plan_ready";
@@ -104,6 +126,10 @@ export type SocketPayload =
     };
 
 export type SequencedSocketPayload = Extract<SocketPayload, { seq: number }>;
+export type SkillSocketPayload = Extract<
+  SocketPayload,
+  { type: "skills_loaded" | "skills_warning" | "skill_injected" }
+>;
 
 export function isSequencedRunEvent(
   payload: SocketPayload,

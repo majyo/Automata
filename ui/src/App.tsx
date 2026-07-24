@@ -5,6 +5,7 @@ import { useAgentSocket } from "./hooks/useAgentSocket";
 import { useApiConfig } from "./hooks/useApiConfig";
 import { useAutoScroll } from "./hooks/useAutoScroll";
 import { useSessions } from "./hooks/useSessions";
+import { useSkills } from "./hooks/useSkills";
 import { useTauriBridge } from "./hooks/useTauriBridge";
 import {
   chatReducer,
@@ -29,6 +30,15 @@ function App() {
     chatDispatch,
   });
 
+  const skills = useSkills({
+    apiConfigRef,
+    workspace: sessions.displayedWorkingDirectory,
+    sessionKey:
+      sessions.activeSessionId ??
+      `draft:${sessions.isNewSessionDraft}:${sessions.displayedWorkingDirectory}`,
+    enabled: isConfigReady,
+  });
+
   const agentSocket = useAgentSocket({
     apiConfigRef,
     activeSessionIdRef: sessions.activeSessionIdRef,
@@ -36,6 +46,7 @@ function App() {
     ensureActiveSession: sessions.actions.ensureActiveSession,
     refreshSessionList: sessions.actions.refreshSessionList,
     reloadSessionMessages: sessions.actions.reloadSessionMessages,
+    onSkillEvent: skills.handleRuntimeEvent,
   });
 
   const messages = selectMessages(chatState, sessions.activeSessionId);
@@ -95,9 +106,14 @@ function App() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const sent = await agentSocket.sendPrompt(prompt, sendMode);
+    const sent = await agentSocket.sendPrompt(
+      prompt,
+      sendMode,
+      skills.selectedSkills,
+    );
     if (sent) {
       setPrompt("");
+      skills.clearSelection();
     }
   }
 
@@ -120,6 +136,11 @@ function App() {
       isStreaming={agentSocket.isStreaming}
       canSend={canSend}
       approvals={approvals}
+      skills={skills.skills}
+      selectedSkillIds={skills.selectedIds}
+      skillErrors={skills.errors}
+      skillNotices={skills.notices}
+      skillsLoading={skills.isLoading}
       activeRunIdBySession={agentSocket.activeRunIdBySession}
       runStatusBySession={runStatusBySession}
       onCreateSession={handleCreateSession}
@@ -138,6 +159,9 @@ function App() {
       onApprovePlan={agentSocket.approvePlan}
       onRespondToApproval={agentSocket.respondToApproval}
       onCancelRun={agentSocket.cancelRun}
+      onToggleSkill={skills.toggleSelected}
+      onToggleSkillEnabled={skills.toggleEnabled}
+      onRefreshSkills={() => void skills.refresh(true)}
     />
   );
 }

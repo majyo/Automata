@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from collections import deque
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -47,13 +49,15 @@ def load_skills_from_roots(
                 continue
             seen_paths.add(resolved_path)
             try:
-                skills.append(
-                    parse_skill_file(
-                        resolved_path,
-                        scope=root.scope,
-                        body_budget_chars=body_budget_chars,
-                    )
+                metadata_warnings: list[SkillError] = []
+                skill = parse_skill_file(
+                    resolved_path,
+                    scope=root.scope,
+                    body_budget_chars=body_budget_chars,
+                    metadata_warnings=metadata_warnings,
                 )
+                skills.append(with_skill_identity(skill, root))
+                errors.extend(metadata_warnings)
             except SkillParseError as error:
                 errors.append(SkillError(path=resolved_path, message=str(error)))
 
@@ -99,10 +103,11 @@ def parse_skill_file(
     *,
     scope: str,
     body_budget_chars: int = MAX_BODY_CHARS,
+    metadata_warnings: list[SkillError] | None = None,
 ) -> SkillMetadata:
     try:
         contents = path.read_text(encoding="utf-8")
-    except OSError as error:
+    except (OSError, UnicodeError) as error:
         raise SkillParseError(f"failed to read file: {error}") from error
     if len(contents) > body_budget_chars:
         raise SkillParseError(
@@ -130,7 +135,7 @@ def parse_skill_file(
         metadata.get("short-description") if isinstance(metadata, dict) else None,
         MAX_DESCRIPTION_LEN,
     )
-    extra = load_openai_metadata(path)
+    extra = load_openai_metadata(path, warnings=metadata_warnings)
 
     return SkillMetadata(
         name=name,
@@ -144,21 +149,74 @@ def parse_skill_file(
     )
 
 
-def load_openai_metadata(path: Path) -> dict[str, Any]:
+def load_openai_metadata(
+    path: Path,
+    *,
+    warnings: list[SkillError] | None = None,
+) -> dict[str, Any]:
     metadata_path = path.parent / "agents" / "openai.yaml"
     if not metadata_path.is_file():
         return {}
     try:
         parsed = parse_simple_yaml(metadata_path.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, UnicodeError, SkillParseError) as error:
+        if warnings is not None:
+            warnings.append(
+                SkillError(
+                    path=metadata_path,
+                    message=f"Invalid agents/openai.yaml: {error}",
+                    severity="warning",
+                )
+            )
         return {}
     if not isinstance(parsed, dict):
+        if warnings is not None:
+            warnings.append(
+                SkillError(
+                    path=metadata_path,
+                    message="Invalid agents/openai.yaml: root must be a YAML object",
+                    severity="warning",
+                )
+            )
         return {}
     return {
         "interface": resolve_interface(parsed.get("interface"), path.parent),
         "dependencies": resolve_dependencies(parsed.get("dependencies")),
         "policy": resolve_policy(parsed.get("policy")),
     }
+
+
+def with_skill_identity(skill: SkillMetadata, root: SkillRoot) -> SkillMetadata:
+    root_path = canonicalize(root.path)
+    try:
+        relative_dir = skill.path.parent.relative_to(root_path).as_posix() or "."
+    except ValueError:
+        relative_dir = skill.path.parent.name
+    root_id = root.root_id or f"{root.scope}-default"
+    identity = "\0".join((root.scope, root_id, relative_dir, skill.name))
+    skill_id = f"skill_{hashlib.sha256(identity.encode('utf-8')).hexdigest()[:24]}"
+    fingerprint = skill_fingerprint(skill.path)
+    return replace(
+        skill,
+        skill_id=skill_id,
+        root_id=root_id,
+        relative_dir=relative_dir,
+        fingerprint=fingerprint,
+    )
+
+
+def skill_fingerprint(path: Path) -> str:
+    digest = hashlib.sha256()
+    for candidate in (path, path.parent / "agents" / "openai.yaml"):
+        try:
+            contents = candidate.read_bytes()
+        except OSError:
+            continue
+        digest.update(candidate.name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(contents)
+        digest.update(b"\0")
+    return f"sha256:{digest.hexdigest()}"
 
 
 def resolve_interface(value: Any, skill_dir: Path) -> SkillInterface | None:

@@ -1,6 +1,8 @@
 import { Send, Square } from "lucide-react";
 import { SendModeToggle } from "./SendModeToggle";
+import { SkillPicker } from "./SkillPicker";
 import type { SendMode } from "../../types/chat";
+import type { SkillRecord, SkillRuntimeNotice } from "../../types/skills";
 
 type PromptComposerProps = {
   prompt: string;
@@ -9,9 +11,17 @@ type PromptComposerProps = {
   canSend: boolean;
   autoFocus?: boolean;
   draft?: boolean;
+  skills: SkillRecord[];
+  selectedSkillIds: Set<string>;
+  skillErrors: string[];
+  skillNotices: SkillRuntimeNotice[];
+  skillsLoading: boolean;
   onPromptChange(prompt: string): void;
   onSendModeChange(sendMode: SendMode): void;
   onCancel(): void;
+  onToggleSkill(skillId: string): void;
+  onToggleSkillEnabled(skill: SkillRecord): Promise<void>;
+  onRefreshSkills(): void;
 };
 
 export function PromptComposer({
@@ -21,9 +31,17 @@ export function PromptComposer({
   canSend,
   autoFocus,
   draft,
+  skills,
+  selectedSkillIds,
+  skillErrors,
+  skillNotices,
+  skillsLoading,
   onPromptChange,
   onSendModeChange,
   onCancel,
+  onToggleSkill,
+  onToggleSkillEnabled,
+  onRefreshSkills,
 }: PromptComposerProps) {
   return (
     <div className={`composer ${draft ? "draft" : ""}`}>
@@ -34,7 +52,20 @@ export function PromptComposer({
         placeholder="Ask the local coding agent..."
       />
       <div className="composer-toolbar">
-        <SendModeToggle sendMode={sendMode} disabled={isStreaming} onChange={onSendModeChange} />
+        <div className="composer-actions">
+          <SendModeToggle sendMode={sendMode} disabled={isStreaming} onChange={onSendModeChange} />
+          <SkillPicker
+            skills={skills}
+            selectedIds={selectedSkillIds}
+            errors={skillErrors}
+            notices={skillNotices}
+            isLoading={skillsLoading}
+            disabled={isStreaming}
+            onToggleSelected={onToggleSkill}
+            onToggleEnabled={onToggleSkillEnabled}
+            onRefresh={onRefreshSkills}
+          />
+        </div>
         <button
           className={`composer-submit ${isStreaming ? "stop" : ""}`}
           type={isStreaming ? "button" : "submit"}
@@ -43,7 +74,7 @@ export function PromptComposer({
           disabled={isStreaming ? false : !canSend}
           onClick={isStreaming ? onCancel : undefined}
         >
-          {isStreaming ? <Square size={15} fill="currentColor" /> : <Send size={17} />}
+          {isStreaming ? <Square size={12} fill="currentColor" /> : <Send size={15} />}
         </button>
       </div>
     </div>

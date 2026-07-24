@@ -18,6 +18,7 @@ from automata_api.agent.execution.model import (
     RunOutcome,
 )
 from automata_api.agent.execution.process import process_supervisor
+from automata_api.agent.execution.process_sessions import process_session_manager
 from automata_api.repositories import runs as run_repository
 
 
@@ -210,6 +211,8 @@ class RunCoordinator:
                 target="running",
             )
             outcome = await execute(handle)
+            await process_session_manager.terminate_run(handle.run_id)
+            await process_supervisor.terminate_run(handle.run_id)
             await handle.event_sink.flush()
             previous = await asyncio.to_thread(
                 run_repository.get_run, handle.run_id
@@ -230,6 +233,7 @@ class RunCoordinator:
             for event in committed_events:
                 await handle.event_sink.broadcast_persisted(event)
         except asyncio.CancelledError:
+            await process_session_manager.terminate_run(handle.run_id)
             await process_supervisor.terminate_run(handle.run_id)
             await handle.event_sink.flush()
             status = (
@@ -259,6 +263,7 @@ class RunCoordinator:
             )
             await handle.event_sink.broadcast_persisted(terminal)
         except PublicRunError as error:
+            await process_session_manager.terminate_run(handle.run_id)
             await process_supervisor.terminate_run(handle.run_id)
             await handle.event_sink.flush()
             terminal = await asyncio.to_thread(
@@ -275,6 +280,7 @@ class RunCoordinator:
             )
             await handle.event_sink.broadcast_persisted(terminal)
         except Exception as error:
+            await process_session_manager.terminate_run(handle.run_id)
             await process_supervisor.terminate_run(handle.run_id)
             await handle.event_sink.flush()
             public_message = f"Agent run failed: {error.__class__.__name__}"

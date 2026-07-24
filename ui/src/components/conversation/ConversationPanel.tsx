@@ -5,6 +5,7 @@ import { PromptComposer } from "../composer/PromptComposer";
 import { WorkspacePicker } from "../sessions/WorkspacePicker";
 import { ToolApprovalCard } from "./ToolApprovalCard";
 import type { ApprovalDecision, ChatMessage, SendMode, ToolApprovalRequest } from "../../types/chat";
+import type { SkillRecord, SkillRuntimeNotice } from "../../types/skills";
 
 type ConversationPanelProps = {
   isNewSessionDraft: boolean;
@@ -17,6 +18,11 @@ type ConversationPanelProps = {
   isStreaming: boolean;
   canSend: boolean;
   approvals: ToolApprovalRequest[];
+  skills: SkillRecord[];
+  selectedSkillIds: Set<string>;
+  skillErrors: string[];
+  skillNotices: SkillRuntimeNotice[];
+  skillsLoading: boolean;
   onChooseDirectory(): void;
   onWorkingDirectoryChange(workingDirectory: string): void;
   onSubmit(event: FormEvent<HTMLFormElement>): void;
@@ -25,6 +31,9 @@ type ConversationPanelProps = {
   onApprovePlan(message: ChatMessage): void;
   onRespondToApproval(approval: ToolApprovalRequest, decision: ApprovalDecision): void;
   onCancelRun(): void;
+  onToggleSkill(skillId: string): void;
+  onToggleSkillEnabled(skill: SkillRecord): Promise<void>;
+  onRefreshSkills(): void;
 };
 
 export function ConversationPanel({
@@ -38,6 +47,11 @@ export function ConversationPanel({
   isStreaming,
   canSend,
   approvals,
+  skills,
+  selectedSkillIds,
+  skillErrors,
+  skillNotices,
+  skillsLoading,
   onChooseDirectory,
   onWorkingDirectoryChange,
   onSubmit,
@@ -46,6 +60,9 @@ export function ConversationPanel({
   onApprovePlan,
   onRespondToApproval,
   onCancelRun,
+  onToggleSkill,
+  onToggleSkillEnabled,
+  onRefreshSkills,
 }: ConversationPanelProps) {
   return (
     <section className="conversation-panel" aria-label="Agent conversation">
@@ -53,7 +70,7 @@ export function ConversationPanel({
         <div className="new-session-stage">
           <form className="new-session-dialog" onSubmit={onSubmit}>
             <div className="new-session-icon">
-              <Sparkles size={22} />
+              <Sparkles size={18} />
             </div>
             <h2>输入一条消息来开始新的会话</h2>
             <WorkspacePicker
@@ -71,9 +88,17 @@ export function ConversationPanel({
               sendMode={sendMode}
               isStreaming={isStreaming}
               canSend={canSend}
+              skills={skills}
+              selectedSkillIds={selectedSkillIds}
+              skillErrors={skillErrors}
+              skillNotices={skillNotices}
+              skillsLoading={skillsLoading}
               onPromptChange={onPromptChange}
               onSendModeChange={onSendModeChange}
               onCancel={onCancelRun}
+              onToggleSkill={onToggleSkill}
+              onToggleSkillEnabled={onToggleSkillEnabled}
+              onRefreshSkills={onRefreshSkills}
             />
           </form>
         </div>
@@ -95,9 +120,17 @@ export function ConversationPanel({
               sendMode={sendMode}
               isStreaming={isStreaming}
               canSend={canSend}
+              skills={skills}
+              selectedSkillIds={selectedSkillIds}
+              skillErrors={skillErrors}
+              skillNotices={skillNotices}
+              skillsLoading={skillsLoading}
               onPromptChange={onPromptChange}
               onSendModeChange={onSendModeChange}
               onCancel={onCancelRun}
+              onToggleSkill={onToggleSkill}
+              onToggleSkillEnabled={onToggleSkillEnabled}
+              onRefreshSkills={onRefreshSkills}
             />
           </form>
         </>

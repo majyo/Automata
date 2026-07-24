@@ -17,17 +17,27 @@ from automata_api.agent.execution.windows_job import WindowsJob
 logger = logging.getLogger(__name__)
 
 
-_process_scope: ContextVar[tuple[str, str] | None] = ContextVar(
-    "automata_process_scope", default=None
-)
-
-
 @dataclass(eq=False)
 class ManagedProcess:
     process: Any
     run_id: str | None
+    session_id: str | None
     tool_call_id: str | None
+    workspace: str | None
     windows_job: WindowsJob | None = None
+
+
+@dataclass(frozen=True)
+class ProcessExecutionScope:
+    run_id: str
+    tool_call_id: str
+    session_id: str | None = None
+    workspace: str | None = None
+
+
+_process_scope: ContextVar[ProcessExecutionScope | None] = ContextVar(
+    "automata_process_scope", default=None
+)
 
 
 def subprocess_group_kwargs() -> dict[str, Any]:
@@ -37,12 +47,29 @@ def subprocess_group_kwargs() -> dict[str, Any]:
 
 
 @contextmanager
-def process_execution_scope(run_id: str, tool_call_id: str) -> Iterator[None]:
-    token = _process_scope.set((run_id, tool_call_id))
+def process_execution_scope(
+    run_id: str,
+    tool_call_id: str,
+    *,
+    session_id: str | None = None,
+    workspace: str | None = None,
+) -> Iterator[None]:
+    token = _process_scope.set(
+        ProcessExecutionScope(
+            run_id=run_id,
+            tool_call_id=tool_call_id,
+            session_id=session_id,
+            workspace=workspace,
+        )
+    )
     try:
         yield
     finally:
         _process_scope.reset(token)
+
+
+def current_process_scope() -> ProcessExecutionScope | None:
+    return _process_scope.get()
 
 
 class ProcessSupervisor:
@@ -61,8 +88,10 @@ class ProcessSupervisor:
             )
         managed = ManagedProcess(
             process=process,
-            run_id=scope[0] if scope else None,
-            tool_call_id=scope[1] if scope else None,
+            run_id=scope.run_id if scope else None,
+            session_id=scope.session_id if scope else None,
+            tool_call_id=scope.tool_call_id if scope else None,
+            workspace=scope.workspace if scope else None,
             windows_job=windows_job,
         )
         async with self._lock:

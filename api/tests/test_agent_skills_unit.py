@@ -1,17 +1,19 @@
 import asyncio
 import json
 from dataclasses import dataclass
+from dataclasses import replace
 from pathlib import Path
 
 from automata_api.agent import llm, runtime
 from automata_api.agent.skills.config import SkillsConfig
 from automata_api.agent.skills.loader import load_skills_from_roots
-from automata_api.agent.skills.manager import SkillManager
+from automata_api.agent.skills.manager import SkillManager, reset_skill_manager
 from automata_api.agent.skills.model import SkillRoot, SkillTurnContext
 from automata_api.agent.skills.runtime import (
     create_skill_turn_context,
     skill_selections_from_payload,
 )
+from automata_api.agent.skills.settings import SkillSettingsStore
 from automata_api.config import AgentConfig, ContextCompressionConfig
 
 
@@ -113,6 +115,91 @@ def test_loader_reports_invalid_skill_without_blocking_valid_skill(tmp_path):
     assert [skill.name for skill in outcome.skills] == ["valid"]
     assert len(outcome.errors) == 1
     assert "missing YAML frontmatter" in outcome.errors[0].message
+
+
+def test_loader_warns_for_invalid_openai_metadata_without_dropping_skill(tmp_path):
+    skills_root = tmp_path / "skills"
+    skill_path = write_skill(skills_root)
+    metadata_path = skill_path.parent / "agents" / "openai.yaml"
+    metadata_path.write_text(
+        "interface:\n  display_name: Review\n    invalid: value\n",
+        encoding="utf-8",
+    )
+
+    outcome = load_skills_from_roots((SkillRoot(skills_root, "repo"),))
+
+    assert [skill.name for skill in outcome.skills] == ["code-review"]
+    assert len(outcome.errors) == 1
+    assert outcome.errors[0].severity == "warning"
+    assert "openai.yaml" in outcome.errors[0].message
+
+
+def test_skill_id_survives_workspace_move(tmp_path):
+    workspace = tmp_path / "original"
+    workspace.mkdir()
+    write_skill(workspace / ".automata" / "skills")
+    manager = SkillManager(make_test_config(tmp_path / "data"))
+
+    before = manager.skills_for_workspace(workspace).skills[0]
+    moved_workspace = tmp_path / "moved"
+    workspace.rename(moved_workspace)
+    after = manager.skills_for_workspace(moved_workspace, force_reload=True).skills[0]
+
+    assert before.skill_id == after.skill_id
+    assert before.path != after.path
+
+
+def test_skill_manager_cache_and_force_reload_have_observable_behavior(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    skill_path = write_skill(workspace / ".automata" / "skills")
+    config = replace(
+        make_test_config(tmp_path / "data"),
+        cache_ttl_seconds=3600,
+    )
+    manager = SkillManager(config)
+
+    before = manager.skills_for_workspace(workspace).skills[0]
+    skill_path.write_text(
+        skill_path.read_text(encoding="utf-8").replace(
+            "Review code changes and tests.",
+            "Review current changes safely.",
+        ),
+        encoding="utf-8",
+    )
+
+    cached = manager.skills_for_workspace(workspace).skills[0]
+    reloaded = manager.skills_for_workspace(
+        workspace,
+        force_reload=True,
+    ).skills[0]
+    assert cached.description == before.description
+    assert reloaded.description == "Review current changes safely."
+
+
+def test_disabled_skill_is_excluded_from_explicit_selection(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    write_skill(workspace / ".automata" / "skills")
+    manager = SkillManager(
+        make_test_config(tmp_path / "data"),
+        SkillSettingsStore(tmp_path / "skills-config.json"),
+    )
+    skill = manager.skills_for_workspace(workspace).skills[0]
+    manager.set_enabled(workspace, skill.skill_id, enabled=False)
+
+    context = asyncio.run(
+        create_skill_turn_context(
+            workspace=str(workspace),
+            mode="act",
+            prompt="$code-review review this change",
+            manager=manager,
+        )
+    )
+
+    assert context.enabled_count == 0
+    assert context.selected == ()
+    assert context.injected_messages == ()
 
 
 def test_create_skill_turn_context_renders_and_injects_selected_skill(tmp_path):
@@ -273,7 +360,52 @@ def test_skills_api_lists_workspace_skills(client, tmp_path):
     payload = response.json()
     assert payload["workspace"] == str(workspace.resolve())
     assert payload["skills"][0]["name"] == "code-review"
+    assert payload["skills"][0]["skill_id"].startswith("skill_")
     assert payload["skills"][0]["dependencies"]["tools"][2]["server"] == "github"
+    assert payload["skills"][0]["diagnostics"][0]["status"] == "available"
+
+
+def test_skills_api_persists_enabled_state(client, tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    write_skill(workspace / ".automata" / "skills")
+    listed = client.get("/skills", params={"workspace": str(workspace)}).json()
+    skill_id = listed["skills"][0]["skill_id"]
+
+    disabled = client.put(
+        f"/skills/{skill_id}/enabled",
+        json={"workspace": str(workspace), "enabled": False},
+    )
+
+    assert disabled.status_code == 200
+    assert disabled.json()["enabled"] is False
+    reset_skill_manager()
+    reloaded = client.get("/skills", params={"workspace": str(workspace)}).json()
+    assert reloaded["skills"][0]["enabled"] is False
+    settings = json.loads((tmp_path / "skills-config.json").read_text(encoding="utf-8"))
+    assert settings["disabled"][0]["skill_id"] == skill_id
+
+
+def test_skills_diagnostics_endpoint_is_advisory(client, tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    write_skill(workspace / ".automata" / "skills")
+    listed = client.get("/skills", params={"workspace": str(workspace)}).json()
+    skill_id = listed["skills"][0]["skill_id"]
+
+    response = client.get(
+        f"/skills/{skill_id}/diagnostics",
+        params={"workspace": str(workspace)},
+    )
+
+    assert response.status_code == 200
+    statuses = {
+        item["dependency_type"]: item["status"]
+        for item in response.json()["diagnostics"]
+    }
+    assert statuses["builtin"] == "available"
+    assert statuses["tool_search"] in {"not_found", "deferred"}
+    assert statuses["mcp"] in {"not_found", "not_granted"}
 
 
 async def collect_events(events):

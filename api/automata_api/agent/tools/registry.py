@@ -14,12 +14,14 @@ from .patch import (
     apply_patch_tool,
 )
 from .search import GrepTool, RgTool, grep_tool, rg_tool
+from .write_stdin import WriteStdinTool, write_stdin_tool
 
 
 REGISTERED_TOOLS: tuple[AgentTool, ...] = (
     rg_tool,
     grep_tool,
     exec_command_tool,
+    write_stdin_tool,
     run_bash_tool,
     read_file_tool,
     write_file_tool,
@@ -118,6 +120,7 @@ def default_tools(backend: Backend) -> tuple[AgentTool, ...]:
         RgTool(backend),
         GrepTool(backend),
         ExecCommandTool(backend),
+        WriteStdinTool(backend),
         RunBashTool(backend),
         ReadFileTool(backend),
         WriteFileTool(backend),

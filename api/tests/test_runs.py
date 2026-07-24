@@ -44,6 +44,51 @@ def test_run_repository_persists_state_and_ordered_events(client):
     assert runs.get_run(run["id"])["status"] == "completed"
 
 
+def test_durable_event_sink_bounds_total_tool_output_per_run(
+    client,
+    monkeypatch,
+):
+    monkeypatch.setenv("AUTOMATA_RUN_TOOL_OUTPUT_MAX_CHARS", "5")
+    session = client.post("/sessions", json={"title": "Tool output budget"}).json()
+    run = runs.create_run(
+        session_id=session["id"],
+        kind="chat_act",
+        mode="act",
+        owner_instance_id="instance-a",
+    )
+    runs.transition_run(run["id"], expected=("queued",), target="running")
+
+    async def emit():
+        sink = DurableRunEventSink(run_id=run["id"])
+        await sink.send_json(
+            {
+                "type": "tool_output_delta",
+                "tool_call_id": "call-1",
+                "content": "abc",
+            }
+        )
+        await sink.send_json(
+            {
+                "type": "tool_output_delta",
+                "tool_call_id": "call-1",
+                "content": "defg",
+            }
+        )
+        await sink.send_json(
+            {
+                "type": "tool_output_delta",
+                "tool_call_id": "call-1",
+                "content": "ignored",
+            }
+        )
+        await sink.close()
+
+    asyncio.run(emit())
+    events = runs.list_events(run["id"])
+    assert [event["content"] for event in events] == ["abc", "de"]
+    assert events[-1]["truncated"] is True
+
+
 def test_final_message_and_run_terminal_state_commit_atomically(
     client, monkeypatch
 ):

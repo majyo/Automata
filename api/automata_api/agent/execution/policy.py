@@ -53,6 +53,8 @@ class ToolPolicyEngine:
 def dynamic_risk(
     descriptor: ToolDescriptor, arguments: dict[str, Any]
 ) -> ToolRisk:
+    if descriptor.name == "write_stdin" and not arguments.get("chars"):
+        return "read"
     if descriptor.name == "apply_patch":
         patch = arguments.get("patch")
         if isinstance(patch, str) and (

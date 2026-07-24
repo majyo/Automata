@@ -125,30 +125,62 @@ class SkillToolDependencyRecord(BaseModel):
     read_only: bool | None = None
 
 
+class SkillDependencyDiagnosticRecord(BaseModel):
+    dependency_type: str
+    status: Literal[
+        "available",
+        "deferred",
+        "not_granted",
+        "not_found",
+        "unknown",
+    ]
+    message: str
+    value: str | None = None
+    query: str | None = None
+    server: str | None = None
+    tool: str | None = None
+
+
 class SkillDependenciesRecord(BaseModel):
     tools: list[SkillToolDependencyRecord] = Field(default_factory=list)
 
 
 class SkillRecord(BaseModel):
+    skill_id: str
     name: str
     description: str
     short_description: str | None = None
     path: str
     scope: Literal["repo", "user", "packaged", "extra", "plugin"]
     enabled: bool
+    root_id: str
+    relative_dir: str
+    fingerprint: str
     interface: SkillInterfaceRecord | None = None
     dependencies: SkillDependenciesRecord | None = None
+    diagnostics: list[SkillDependencyDiagnosticRecord] = Field(default_factory=list)
 
 
 class SkillErrorRecord(BaseModel):
     path: str
     message: str
+    severity: Literal["warning", "error"] = "error"
 
 
 class SkillsListResponse(BaseModel):
     workspace: str
     skills: list[SkillRecord]
     errors: list[SkillErrorRecord] = Field(default_factory=list)
+
+
+class SkillEnabledRequest(BaseModel):
+    workspace: str
+    enabled: bool
+
+
+class SkillDiagnosticsResponse(BaseModel):
+    skill_id: str
+    diagnostics: list[SkillDependencyDiagnosticRecord] = Field(default_factory=list)
 
 
 class ChatPayload(TypedDict):

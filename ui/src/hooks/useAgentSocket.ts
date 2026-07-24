@@ -11,6 +11,8 @@ import type {
 } from "../types/chat";
 import { isSequencedRunEvent } from "../types/socket";
 import type { SequencedSocketPayload, SocketPayload } from "../types/socket";
+import type { SkillSocketPayload } from "../types/socket";
+import type { SkillSelection } from "../types/skills";
 import { formatContextCompressed } from "../utils/format";
 
 const RECONNECT_DELAYS_MS = [500, 1_000, 2_000, 5_000];
@@ -22,6 +24,7 @@ type UseAgentSocketOptions = {
   ensureActiveSession(): Promise<string>;
   refreshSessionList(): Promise<unknown>;
   reloadSessionMessages(sessionId: string): Promise<unknown>;
+  onSkillEvent?(payload: SkillSocketPayload): void;
 };
 
 type RunRuntime = {
@@ -41,6 +44,7 @@ export function useAgentSocket({
   ensureActiveSession,
   refreshSessionList,
   reloadSessionMessages,
+  onSkillEvent,
 }: UseAgentSocketOptions) {
   const [socketStatus, setSocketStatus] = useState("Connecting");
   const [activeRunIdBySession, setActiveRunIdBySession] = useState<Record<string, string>>({});
@@ -185,6 +189,18 @@ export function useAgentSocket({
         return;
       }
 
+      if (
+        payload.type === "skills_loaded" ||
+        payload.type === "skills_warning" ||
+        payload.type === "skill_injected"
+      ) {
+        onSkillEvent?.(payload);
+        if (payload.type === "skills_warning") {
+          setSocketStatus(payload.message);
+        }
+        return;
+      }
+
       if (payload.type === "tool_call") {
         runtime.agentSegment += 1;
         const toolCallId = payload.tool_call_id || `tool-${payload.seq}`;
@@ -210,6 +226,18 @@ export function useAgentSocket({
           toolCallId,
         });
         setSocketStatus(payload.tool ? `Tool complete: ${payload.tool}` : "Tool complete");
+        return;
+      }
+
+      if (payload.type === "tool_output_delta") {
+        const toolCallId = payload.tool_call_id || `tool-${payload.seq}`;
+        chatDispatch({
+          type: "toolOutputReceived",
+          sessionId: payload.session_id,
+          payload,
+          messageId: `${payload.run_id}:tool:${toolCallId}`,
+          toolCallId,
+        });
         return;
       }
 
@@ -356,6 +384,7 @@ export function useAgentSocket({
       refreshCompletedRun,
       requestResume,
       runtimeFor,
+      onSkillEvent,
       updateActiveRun,
     ],
   );
@@ -523,7 +552,11 @@ export function useAgentSocket({
   );
 
   const sendPrompt = useCallback(
-    async (prompt: string, sendMode: SendMode) => {
+    async (
+      prompt: string,
+      sendMode: SendMode,
+      skills: SkillSelection[] = [],
+    ) => {
       const trimmedPrompt = prompt.trim();
       const socket = socketRef.current;
       if (!trimmedPrompt || socket?.readyState !== WebSocket.OPEN) {
@@ -553,13 +586,13 @@ export function useAgentSocket({
       };
       chatDispatch({ type: "userMessageQueued", message: userMessage });
       setSocketStatus("Starting");
-      socket.send(
-        JSON.stringify(
-          sendMode === "plan"
-            ? { type: "prompt", session_id: sessionId, prompt: trimmedPrompt, mode: "plan" }
-            : { type: "prompt", session_id: sessionId, prompt: trimmedPrompt },
-        ),
-      );
+      socket.send(JSON.stringify({
+        type: "prompt",
+        session_id: sessionId,
+        prompt: trimmedPrompt,
+        ...(sendMode === "plan" ? { mode: "plan" } : {}),
+        ...(skills.length ? { skills } : {}),
+      }));
       return true;
     },
     [chatDispatch, ensureActiveSession, scheduleReconnect],

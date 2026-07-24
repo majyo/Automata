@@ -29,6 +29,8 @@ from automata_api.config import (
 
 MAX_AGENT_STEPS = 6
 PLAN_TOOL_NAMES = {tool.name for tool in registered_tools() if tool.read_only}
+MAX_TOOL_OUTPUT_EVENT_CHARS = 8_192
+MAX_TOOL_OUTPUT_CHARS_PER_CALL = 262_144
 
 
 class EventCollector:
@@ -315,19 +317,61 @@ async def stream_execute_tool_call(
         and session_id is not None
         and cancellation is not None
     ):
-        result = await orchestrator.execute(
-            router=router,
-            tool_name=name,
-            raw_arguments=arguments,
-            context=ToolExecutionContext(
-                run_id=run_id,
-                session_id=session_id,
-                tool_call_id=call_id,
-                workspace=workspace or "",
-                mode="plan" if mode == "plan" else "act",
-                cancellation=cancellation,
-            ),
+        output_events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        output_chars = 0
+
+        async def emit_output(event: dict[str, Any]) -> None:
+            nonlocal output_chars
+            content = event.get("content")
+            if not isinstance(content, str) or not content:
+                return
+            remaining = MAX_TOOL_OUTPUT_CHARS_PER_CALL - output_chars
+            if remaining <= 0:
+                return
+            bounded = content[: min(remaining, MAX_TOOL_OUTPUT_EVENT_CHARS)]
+            output_chars += len(bounded)
+            await output_events.put(
+                {
+                    **event,
+                    "content": bounded,
+                    "truncated": len(bounded) < len(content),
+                }
+            )
+
+        execution_task = asyncio.create_task(
+            orchestrator.execute(
+                router=router,
+                tool_name=name,
+                raw_arguments=arguments,
+                context=ToolExecutionContext(
+                    run_id=run_id,
+                    session_id=session_id,
+                    tool_call_id=call_id,
+                    workspace=workspace or "",
+                    mode="plan" if mode == "plan" else "act",
+                    cancellation=cancellation,
+                    emit_event=emit_output,
+                ),
+            )
         )
+        try:
+            while not execution_task.done():
+                try:
+                    output_event = await asyncio.wait_for(
+                        output_events.get(),
+                        timeout=0.05,
+                    )
+                except TimeoutError:
+                    continue
+                yield output_event
+            while not output_events.empty():
+                yield output_events.get_nowait()
+            result = await execution_task
+        except BaseException:
+            if not execution_task.done():
+                execution_task.cancel()
+            await asyncio.gather(execution_task, return_exceptions=True)
+            raise
     elif router is not None:
         result = await router.dispatch(name, arguments, mode=mode)
     elif allowed_tool_names is not None and name not in allowed_tool_names:
