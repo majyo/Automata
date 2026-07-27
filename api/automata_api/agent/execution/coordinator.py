@@ -19,8 +19,10 @@ from automata_api.agent.execution.model import (
     RunOutcome,
 )
 from automata_api.agent.execution.permissions import (
+    CompiledPermissionProfile,
     PermissionPreset,
     normalize_permission_preset,
+    permission_profile_from_json,
 )
 from automata_api.agent.execution.process import process_supervisor
 from automata_api.agent.execution.process_sessions import process_session_manager
@@ -41,6 +43,7 @@ class RunHandle:
     run_id: str
     session_id: str
     permission_preset: PermissionPreset
+    permission_profile: CompiledPermissionProfile
     cancellation: CancellationToken
     approval_broker: ApprovalBroker
     event_sink: DurableRunEventSink
@@ -200,6 +203,9 @@ class RunCoordinator:
             session_id=str(run["session_id"]),
             permission_preset=normalize_permission_preset(
                 run["permission_preset"]
+            ),
+            permission_profile=permission_profile_from_json(
+                str(run["permission_profile_json"])
             ),
             cancellation=cancellation,
             approval_broker=broker,

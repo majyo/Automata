@@ -27,7 +27,8 @@
     "active": true,
     "targets": "all",
     "externalBin": [
-      "binaries/automata-api"
+      "binaries/automata-api",
+      "binaries/automata-sandbox-host"
     ],
     "icon": [
       "icons/32x32.png",

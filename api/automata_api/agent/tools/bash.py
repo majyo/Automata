@@ -83,6 +83,7 @@ class RunBashTool(AgentTool):
                 timeout_seconds=timeout_seconds,
                 error=str(error),
                 shell=error.shell,
+                error_code=error.error_code,
             )
 
         payload = {
@@ -98,12 +99,16 @@ class RunBashTool(AgentTool):
             "stderr": result.stderr,
             "stdout_truncated": result.stdout_truncated,
             "stderr_truncated": result.stderr_truncated,
+            "error_code": result.error_code,
+            "sandbox": result.sandbox,
         }
         return ToolResult(
             name="run_bash",
             arguments=arguments,
             content=json_response(payload),
             success=payload["ok"],
+            error_code=result.error_code,
+            sandbox=result.sandbox,
         )
 
 

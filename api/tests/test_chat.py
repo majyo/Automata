@@ -179,7 +179,11 @@ def test_chat_websocket_discovers_activates_and_calls_stdio_mcp_tool(
     assert grant.status_code == 200
     session = client.post(
         "/sessions",
-        json={"title": "MCP Agent", "working_directory": str(workspace)},
+        json={
+            "title": "MCP Agent",
+            "working_directory": str(workspace),
+            "permission_preset": "full_access",
+        },
     ).json()
     calls = []
     alias = None
@@ -284,7 +288,11 @@ def test_chat_websocket_runs_agent_loop_with_read_file_tool(client, monkeypatch,
     (session_workspace / "README.md").write_text("workspace details\n", encoding="utf-8")
     session = client.post(
         "/sessions",
-        json={"title": "Agent", "working_directory": str(session_workspace)},
+        json={
+            "title": "Agent",
+            "working_directory": str(session_workspace),
+            "permission_preset": "full_access",
+        },
     ).json()
     calls = []
 
@@ -387,7 +395,10 @@ def test_chat_websocket_keeps_agent_text_before_and_after_tool_separate(
     monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
     monkeypatch.setenv("AUTOMATA_WORKSPACE_DIR", str(tmp_path))
     (tmp_path / "README.md").write_text("workspace details\n", encoding="utf-8")
-    session = client.post("/sessions", json={"title": "Segmented Agent"}).json()
+    session = client.post(
+        "/sessions",
+        json={"title": "Segmented Agent", "permission_preset": "full_access"},
+    ).json()
     calls = []
 
     async def fake_stream_chat_completion(messages, tools=None):
@@ -475,7 +486,10 @@ def test_chat_websocket_restores_persisted_tool_protocol_context(
     monkeypatch.setenv("AUTOMATA_WORKSPACE_DIR", str(tmp_path))
     (tmp_path / "README.md").write_text("readme details\n", encoding="utf-8")
     (tmp_path / "NOTES.md").write_text("notes details\n", encoding="utf-8")
-    session = client.post("/sessions", json={"title": "Restored Agent"}).json()
+    session = client.post(
+        "/sessions",
+        json={"title": "Restored Agent", "permission_preset": "full_access"},
+    ).json()
     calls = []
 
     async def fake_create_llm_response(messages, tools=None):
@@ -648,7 +662,10 @@ def test_chat_websocket_runs_agent_loop_with_real_bash_tool(client, monkeypatch)
         pytest.skip("bash is not available")
 
     monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
-    session = client.post("/sessions", json={"title": "Bash Agent"}).json()
+    session = client.post(
+        "/sessions",
+        json={"title": "Bash Agent", "permission_preset": "full_access"},
+    ).json()
     calls = []
 
     async def fake_create_llm_response(messages, tools=None):
@@ -745,7 +762,10 @@ def test_chat_websocket_runs_agent_loop_with_exec_command_tool(client, monkeypat
         pytest.skip("bash is not available")
 
     monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
-    session = client.post("/sessions", json={"title": "Exec Agent"}).json()
+    session = client.post(
+        "/sessions",
+        json={"title": "Exec Agent", "permission_preset": "full_access"},
+    ).json()
     calls = []
 
     async def fake_create_llm_response(messages, tools=None):
@@ -847,7 +867,10 @@ def test_chat_websocket_runs_agent_loop_with_exec_command_tool(client, monkeypat
 
 def test_chat_websocket_runs_agent_loop_with_rg_tool(client, monkeypatch):
     monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
-    session = client.post("/sessions", json={"title": "Search Agent"}).json()
+    session = client.post(
+        "/sessions",
+        json={"title": "Search Agent", "permission_preset": "full_access"},
+    ).json()
     calls = []
 
     async def fake_create_llm_response(messages, tools=None):
@@ -945,7 +968,10 @@ def test_chat_websocket_runs_agent_loop_with_rg_tool(client, monkeypatch):
 def test_chat_websocket_runs_agent_loop_with_file_tools(client, monkeypatch, tmp_path):
     monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
     monkeypatch.setenv("AUTOMATA_WORKSPACE_DIR", str(tmp_path))
-    session = client.post("/sessions", json={"title": "File Agent"}).json()
+    session = client.post(
+        "/sessions",
+        json={"title": "File Agent", "permission_preset": "full_access"},
+    ).json()
     calls = []
 
     async def fake_create_llm_response(messages, tools=None):
@@ -1065,7 +1091,10 @@ def test_chat_websocket_runs_agent_loop_with_apply_patch_tool(client, monkeypatc
     monkeypatch.setenv("AUTOMATA_WORKSPACE_DIR", str(tmp_path))
     source = tmp_path / "sample.txt"
     source.write_text("one\ntwo\nthree\n", encoding="utf-8")
-    session = client.post("/sessions", json={"title": "Patch Agent"}).json()
+    session = client.post(
+        "/sessions",
+        json={"title": "Patch Agent", "permission_preset": "full_access"},
+    ).json()
     patch = patch_text(
         "*** Begin Patch",
         "*** Update File: sample.txt",

@@ -448,7 +448,7 @@ def test_init_db_preserves_and_upgrades_legacy_messages_schema(
         ).fetchone()[0] == "legacy prompt"
         assert db.execute(
             "SELECT COUNT(*) FROM schema_migrations"
-        ).fetchone()[0] == 4
+            ).fetchone()[0] == 5
     assert list_messages("session-1")[0]["content"] == "legacy prompt"
     assert list(tmp_path.glob("automata.db.backup.*"))
 
@@ -538,7 +538,7 @@ def test_init_db_removes_orphaned_legacy_messages_shadow_table_after_backup(
         ).fetchone()[0] == "keep me"
         assert db.execute(
             "SELECT COUNT(*) FROM schema_migrations"
-        ).fetchone()[0] == 4
+            ).fetchone()[0] == 5
 
     backup_file = next(tmp_path.glob("automata.db.backup.*"))
     with sqlite3.connect(backup_file) as backup:
@@ -750,7 +750,7 @@ def test_init_db_is_idempotent_and_backup_is_readable(tmp_path, monkeypatch):
     init_db()
 
     with sqlite3.connect(db_file) as db:
-        assert db.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 4
+        assert db.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 5
         assert db.execute("SELECT title FROM sessions").fetchone()[0] == "Keep me"
     with sqlite3.connect(first_backup) as backup:
         assert backup.execute("PRAGMA quick_check").fetchone()[0] == "ok"

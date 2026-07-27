@@ -9,6 +9,7 @@ from automata_api.db.migrations import (
     v0002_runs,
     v0003_plan_attempts,
     v0004_permission_presets,
+    v0005_permission_profiles,
 )
 
 
@@ -24,4 +25,5 @@ MIGRATIONS = (
     Migration(2, "add_durable_runs", v0002_runs.apply),
     Migration(3, "add_plan_attempts", v0003_plan_attempts.apply),
     Migration(4, "add_permission_presets", v0004_permission_presets.apply),
+    Migration(5, "add_permission_profiles", v0005_permission_profiles.apply),
 )

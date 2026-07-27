@@ -8,9 +8,13 @@ from typing import Protocol
 
 import httpx
 from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
+from mcp.client.stdio import get_default_environment
 from mcp.client.streamable_http import streamable_http_client
 
+from automata_api.agent.execution.permissions import (
+    CompiledPermissionProfile,
+    compile_permission_profile,
+)
 from automata_api.agent.mcp.config import (
     McpServerDefinition,
     McpStdioTransportDefinition,
@@ -18,6 +22,7 @@ from automata_api.agent.mcp.config import (
     resolve_stdio_transport,
     resolve_streamable_http_transport,
 )
+from automata_api.agent.mcp.sandbox_stdio import sandboxed_stdio_client
 from automata_api.agent.mcp.schema import (
     McpCallResult,
     McpListToolsPage,
@@ -38,12 +43,22 @@ class McpClient(Protocol):
 
 
 class McpSdkClientAdapter:
-    def __init__(self, definition: McpServerDefinition, workspace: str) -> None:
+    def __init__(
+        self,
+        definition: McpServerDefinition,
+        workspace: str,
+        *,
+        permission_profile: CompiledPermissionProfile | None = None,
+    ) -> None:
         self.definition = definition
         self.workspace = workspace
         self._stack: AsyncExitStack | None = None
         self._session: ClientSession | None = None
         self._start_lock = asyncio.Lock()
+        self.permission_profile = permission_profile or compile_permission_profile(
+            "full_access",
+            workspace=workspace,
+        )
 
     async def start(self) -> None:
         if self._session is not None:
@@ -80,14 +95,19 @@ class McpSdkClientAdapter:
             parameters = StdioServerParameters(
                 command=transport.command,
                 args=list(transport.args),
-                env=dict(transport.env),
+                env={**get_default_environment(), **transport.env},
                 cwd=transport.cwd,
             )
             errlog = stack.enter_context(
                 open(os.devnull, "w", encoding="utf-8")
             )
             return await stack.enter_async_context(
-                stdio_client(parameters, errlog=errlog)
+                sandboxed_stdio_client(
+                    parameters,
+                    profile=self.permission_profile,
+                    errlog=errlog,
+                    explicit_env_names=tuple(transport.env),
+                )
             )
 
         if isinstance(

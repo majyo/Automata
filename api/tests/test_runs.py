@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sqlite3
 
 import pytest
@@ -20,6 +21,15 @@ def test_run_repository_persists_state_and_ordered_events(client):
 
     assert run["status"] == "queued"
     assert run["permission_preset"] == "default"
+    assert run["permission_profile_version"] == 1
+    assert run["sandbox_backend"] in {
+        "windows-appcontainer",
+        "linux-bwrap",
+        "macos-seatbelt",
+    }
+    profile = json.loads(run["permission_profile_json"])
+    assert profile["profile_hash"]
+    assert profile["preset"] == "default"
     assert run["request_message_id"] == prompt["id"]
     assert client.get(f"/sessions/{session['id']}/messages").json()[0]["content"] == "hello"
 
@@ -65,6 +75,10 @@ def test_run_snapshots_session_permission_preset(client):
     assert updated.status_code == 200
     assert updated.json()["permission_preset"] == "default"
     assert runs.get_run(run["id"])["permission_preset"] == "full_access"
+    assert (
+        json.loads(runs.get_run(run["id"])["permission_profile_json"])["preset"]
+        == "full_access"
+    )
 
 
 def test_durable_event_sink_bounds_total_tool_output_per_run(

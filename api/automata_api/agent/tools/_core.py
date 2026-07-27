@@ -10,14 +10,19 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from automata_api.agent.execution.process import (
-    process_supervisor,
-    subprocess_group_kwargs,
-)
+from automata_api.agent.execution.process import process_supervisor
 from automata_api.agent.execution.process_sessions import (
     ProcessSessionError,
     ProcessSessionSnapshot,
     process_session_manager,
+)
+from automata_api.agent.execution.sandbox import process_launcher
+from automata_api.agent.execution.sandbox.errors import SandboxError
+from automata_api.agent.execution.sandbox.launcher import emit_sandbox_event
+from automata_api.agent.execution.sandbox.model import SandboxMetadata
+from automata_api.agent.execution.sandbox.protocol import (
+    SandboxFailure,
+    classify_sandbox_failure,
 )
 from automata_api.agent.execution.tool_output import emit_tool_output
 
@@ -46,6 +51,8 @@ class ToolResult:
     arguments: dict[str, Any]
     content: str
     success: bool
+    error_code: str | None = None
+    sandbox: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -61,6 +68,8 @@ class CapturedProcessOutput:
     stderr: CapturedStream
     exit_code: int | None
     timed_out: bool
+    sandbox: SandboxMetadata | None
+    sandbox_failure: SandboxFailure | None
 
 
 class HeadTailTextBuffer:
@@ -225,11 +234,33 @@ async def capture_process_output(
             raise
 
         stdout, stderr = await asyncio.gather(stdout_task, stderr_task)
+        metadata = getattr(process, "automata_sandbox", None)
+        if not isinstance(metadata, SandboxMetadata):
+            metadata = None
+        sandbox_failure = classify_sandbox_failure(
+            exit_code=exit_code,
+            stderr=stderr.text,
+            metadata=metadata,
+        )
+        if sandbox_failure is not None:
+            await emit_sandbox_event(
+                {
+                    "type": "sandbox_denied",
+                    "backend": metadata.backend if metadata is not None else "unknown",
+                    "profile_hash": (
+                        metadata.profile_hash if metadata is not None else None
+                    ),
+                    "attempt": metadata.attempt if metadata is not None else 1,
+                    "error_code": sandbox_failure.code,
+                }
+            )
         return CapturedProcessOutput(
             stdout=stdout,
             stderr=stderr,
             exit_code=exit_code,
             timed_out=timed_out,
+            sandbox=metadata,
+            sandbox_failure=sandbox_failure,
         )
     finally:
         await process_supervisor.unregister(managed)
@@ -509,13 +540,23 @@ async def run_process(
     command: list[str], cwd_path: Path, timeout_seconds: float
 ) -> dict[str, Any]:
     try:
-        process = await asyncio.create_subprocess_exec(
+        process = await process_launcher.spawn(
             *command,
             cwd=str(cwd_path),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            **subprocess_group_kwargs(),
+            scope_name="tool-search",
         )
+    except SandboxError as error:
+        return {
+            "exit_code": None,
+            "timed_out": False,
+            "stdout": "",
+            "stderr": error.public_message,
+            "stdout_truncated": False,
+            "stderr_truncated": False,
+            "error_code": error.code,
+        }
     except OSError as error:
         return {
             "exit_code": None,
@@ -539,6 +580,12 @@ async def run_process(
         "stderr": output.stderr.text,
         "stdout_truncated": output.stdout.truncated,
         "stderr_truncated": output.stderr.truncated,
+        "error_code": (
+            output.sandbox_failure.code
+            if output.sandbox_failure is not None
+            else None
+        ),
+        "sandbox": output.sandbox.to_dict() if output.sandbox is not None else None,
     }
 
 
@@ -575,12 +622,16 @@ def search_tool_result(
         "stdout_truncated": process_result["stdout_truncated"],
         "stderr_truncated": process_result["stderr_truncated"],
         "attempts": attempts,
+        "error_code": process_result.get("error_code"),
+        "sandbox": process_result.get("sandbox"),
     }
     return ToolResult(
         name=tool_name,
         arguments=arguments,
         content=json_response(payload),
         success=ok,
+        error_code=process_result.get("error_code"),
+        sandbox=process_result.get("sandbox"),
     )
 
 
@@ -1454,6 +1505,7 @@ def patch_error_result(
     error: str,
     path: str = "",
     syntax: str | None = None,
+    error_code: str | None = None,
 ) -> ToolResult:
     payload = {
         "simulated": False,
@@ -1462,6 +1514,7 @@ def patch_error_result(
         "dry_run": dry_run,
         "path": path,
         "error": error,
+        "error_code": error_code,
     }
     if syntax is not None:
         payload["syntax"] = syntax
@@ -1470,6 +1523,7 @@ def patch_error_result(
         arguments=arguments,
         content=json_response(payload),
         success=False,
+        error_code=error_code,
     )
 
 
@@ -1548,6 +1602,7 @@ def file_error_result(
     *,
     error: str,
     path: Path | None = None,
+    error_code: str | None = None,
 ) -> ToolResult:
     return ToolResult(
         name=tool_name,
@@ -1560,9 +1615,11 @@ def file_error_result(
                 "absolute_path": str(path) if path else "",
                 "encoding": "utf-8",
                 "error": error,
+                "error_code": error_code,
             }
         ),
         success=False,
+        error_code=error_code,
     )
 
 
@@ -1615,13 +1672,27 @@ async def run_exec_command(arguments: dict[str, Any], workspace: str) -> ToolRes
 
     started_at = time.monotonic()
     try:
-        process = await asyncio.create_subprocess_exec(
+        process = await process_launcher.spawn(
             *shell_resolution.argv(cmd),
             cwd=str(cwd_result),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             stdin=asyncio.subprocess.PIPE if yield_time_ms is not None else None,
-            **subprocess_group_kwargs(),
+            scope_name="exec-command",
+        )
+    except SandboxError as error:
+        duration_seconds = round(time.monotonic() - started_at, 3)
+        return exec_command_error_result(
+            arguments=arguments,
+            cmd=cmd,
+            shell=shell_name,
+            workdir=requested_workdir,
+            cwd=str(cwd_result),
+            timeout_seconds=timeout_seconds,
+            error=error.public_message,
+            shell_path=shell_resolution.path,
+            duration_seconds=duration_seconds,
+            error_code=error.code,
         )
     except OSError as error:
         duration_seconds = round(time.monotonic() - started_at, 3)
@@ -1713,12 +1784,20 @@ async def run_exec_command(arguments: dict[str, Any], workspace: str) -> ToolRes
         "stdout_truncated": output.stdout.truncated,
         "stderr_truncated": output.stderr.truncated,
         "output_truncated": output_truncated,
+        "error_code": (
+            output.sandbox_failure.code
+            if output.sandbox_failure is not None
+            else None
+        ),
+        "sandbox": output.sandbox.to_dict() if output.sandbox is not None else None,
     }
     return ToolResult(
         name="exec_command",
         arguments=arguments,
         content=json_response(payload),
         success=payload["ok"],
+        error_code=payload["error_code"],
+        sandbox=payload["sandbox"],
     )
 
 
@@ -1768,6 +1847,7 @@ def exec_command_error_result(
         arguments=arguments,
         content=json_response(payload),
         success=False,
+        error_code=error_code,
     )
 
 
@@ -1862,6 +1942,8 @@ def process_session_tool_result(
         "output": combined_output,
         "stdout_truncated": snapshot.stdout_truncated,
         "stderr_truncated": snapshot.stderr_truncated,
+        "error_code": snapshot.error_code,
+        "sandbox": snapshot.sandbox,
         "output_truncated": (
             combined_output_truncated
             or snapshot.stdout_truncated
@@ -1876,6 +1958,8 @@ def process_session_tool_result(
         arguments=arguments,
         content=json_response(payload),
         success=bool(payload["ok"]),
+        error_code=snapshot.error_code,
+        sandbox=snapshot.sandbox,
     )
 
 
@@ -1900,6 +1984,8 @@ def bound_process_session_snapshot(
         stderr=stderr,
         stdout_truncated=snapshot.stdout_truncated or stdout_truncated,
         stderr_truncated=snapshot.stderr_truncated or stderr_truncated,
+        error_code=snapshot.error_code,
+        sandbox=snapshot.sandbox,
     )
 
 
@@ -1923,6 +2009,7 @@ def process_session_error_result(
             }
         ),
         success=False,
+        error_code=error_code,
     )
 
 
@@ -1961,14 +2048,24 @@ async def run_bash(arguments: dict[str, Any], workspace: str) -> ToolResult:
         )
 
     try:
-        process = await asyncio.create_subprocess_exec(
+        process = await process_launcher.spawn(
             bash_path,
             "-lc",
             command,
             cwd=str(cwd_result),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            **subprocess_group_kwargs(),
+            scope_name="bash-command",
+        )
+    except SandboxError as error:
+        return bash_error_result(
+            arguments=arguments,
+            command=command,
+            cwd=str(cwd_result),
+            timeout_seconds=timeout_seconds,
+            error=error.public_message,
+            shell=bash_path,
+            error_code=error.code,
         )
     except OSError as error:
         return bash_error_result(
@@ -1999,12 +2096,20 @@ async def run_bash(arguments: dict[str, Any], workspace: str) -> ToolResult:
         "stderr": output.stderr.text,
         "stdout_truncated": output.stdout.truncated,
         "stderr_truncated": output.stderr.truncated,
+        "error_code": (
+            output.sandbox_failure.code
+            if output.sandbox_failure is not None
+            else None
+        ),
+        "sandbox": output.sandbox.to_dict() if output.sandbox is not None else None,
     }
     return ToolResult(
         name="run_bash",
         arguments=arguments,
         content=json_response(payload),
         success=payload["ok"],
+        error_code=payload["error_code"],
+        sandbox=payload["sandbox"],
     )
 
 
@@ -2193,6 +2298,7 @@ def bash_error_result(
     timeout_seconds: float,
     error: str,
     shell: str | None = None,
+    error_code: str | None = None,
 ) -> ToolResult:
     return ToolResult(
         name="run_bash",
@@ -2211,9 +2317,11 @@ def bash_error_result(
                 "stderr": error,
                 "stdout_truncated": False,
                 "stderr_truncated": False,
+                "error_code": error_code,
             }
         ),
         success=False,
+        error_code=error_code,
     )
 
 

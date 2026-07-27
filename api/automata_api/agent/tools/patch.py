@@ -176,6 +176,7 @@ async def run_codex_apply_patch(
                 error=error["error"],
                 path=error.get("path", ""),
                 syntax="codex_patch",
+                error_code=error.get("error_code"),
             )
 
         assert plan is not None
@@ -201,6 +202,7 @@ async def run_codex_apply_patch(
             error=parent_error["error"],
             path=parent_error.get("path", ""),
             syntax="codex_patch",
+            error_code=parent_error.get("error_code"),
         )
 
     if not dry_run:
@@ -213,6 +215,7 @@ async def run_codex_apply_patch(
                 error=apply_error["error"],
                 path=apply_error.get("path", ""),
                 syntax="codex_patch",
+                error_code=apply_error.get("error_code"),
             )
 
     payload = {
@@ -263,6 +266,7 @@ async def run_unified_apply_patch(
                 error=error["error"],
                 path=error.get("path", ""),
                 syntax="unified_diff",
+                error_code=error.get("error_code"),
             )
 
         assert plan is not None
@@ -288,6 +292,7 @@ async def run_unified_apply_patch(
             error=parent_error["error"],
             path=parent_error.get("path", ""),
             syntax="unified_diff",
+            error_code=parent_error.get("error_code"),
         )
 
     if not dry_run:
@@ -300,6 +305,7 @@ async def run_unified_apply_patch(
                 error=apply_error["error"],
                 path=apply_error.get("path", ""),
                 syntax="unified_diff",
+                error_code=apply_error.get("error_code"),
             )
 
     payload = {
@@ -321,11 +327,15 @@ async def run_unified_apply_patch(
 
 async def plan_codex_patch_file(
     file_patch: CodexPatchFile, backend: Backend
-) -> tuple[dict[str, Any] | None, dict[str, str] | None]:
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     try:
         stat = await backend.stat(file_patch.path)
     except BackendError as error:
-        return None, {"path": file_patch.path, "error": str(error)}
+        return None, {
+            "path": file_patch.path,
+            "error": str(error),
+            "error_code": error.error_code,
+        }
 
     if file_patch.kind == "added":
         if stat.exists:
@@ -365,7 +375,11 @@ async def plan_codex_patch_file(
             "error": f"File is not valid UTF-8 text: {stat.absolute_path}",
         }
     except BackendError as error:
-        return None, {"path": file_patch.path, "error": str(error)}
+        return None, {
+            "path": file_patch.path,
+            "error": str(error),
+            "error_code": error.error_code,
+        }
 
     if file_patch.kind == "deleted":
         return (
@@ -393,7 +407,11 @@ async def plan_codex_patch_file(
         try:
             move_stat = await backend.stat(file_patch.move_path)
         except BackendError as error:
-            return None, {"path": file_patch.move_path, "error": str(error)}
+            return None, {
+                "path": file_patch.move_path,
+                "error": str(error),
+                "error_code": error.error_code,
+            }
         if move_stat.exists and move_stat.absolute_path != stat.absolute_path:
             return None, {
                 "path": file_patch.move_path,
@@ -418,7 +436,7 @@ async def plan_codex_patch_file(
 
 async def plan_patch_file(
     file_patch: core.PatchFile, backend: Backend
-) -> tuple[dict[str, Any] | None, dict[str, str] | None]:
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     status = core.patch_file_status(file_patch)
     if status is None:
         return None, {
@@ -436,7 +454,11 @@ async def plan_patch_file(
     try:
         stat = await backend.stat(relative_path)
     except BackendError as error:
-        return None, {"path": relative_path, "error": str(error)}
+        return None, {
+            "path": relative_path,
+            "error": str(error),
+            "error_code": error.error_code,
+        }
 
     if status == "added":
         if stat.exists:
@@ -464,7 +486,11 @@ async def plan_patch_file(
                 "error": f"File is not valid UTF-8 text: {stat.absolute_path}",
             }
         except BackendError as error:
-            return None, {"path": relative_path, "error": str(error)}
+            return None, {
+                "path": relative_path,
+                "error": str(error),
+                "error_code": error.error_code,
+            }
 
     new_content, apply_error = core.apply_hunks_to_content(
         original_content, file_patch.hunks, relative_path
@@ -491,7 +517,7 @@ async def validate_patch_parent_dirs(
     planned_changes: list[dict[str, Any]],
     *,
     create_dirs: bool,
-) -> dict[str, str] | None:
+) -> dict[str, Any] | None:
     if create_dirs:
         return None
     for plan in planned_changes:
@@ -507,13 +533,17 @@ async def validate_patch_parent_dirs(
                     ),
                 }
         except BackendError as error:
-            return {"path": plan["path"], "error": str(error)}
+            return {
+                "path": plan["path"],
+                "error": str(error),
+                "error_code": error.error_code,
+            }
     return None
 
 
 async def apply_planned_changes(
     backend: Backend, planned_changes: list[dict[str, Any]]
-) -> dict[str, str] | None:
+) -> dict[str, Any] | None:
     for plan in planned_changes:
         try:
             if plan["status"] == "deleted":
@@ -531,7 +561,11 @@ async def apply_planned_changes(
             if plan["status"] == "moved" and plan["delete_path"] != plan["write_path"]:
                 await backend.delete_file(plan["delete_path"])
         except BackendError as error:
-            return {"path": plan["path"], "error": f"Failed to apply patch: {error}"}
+            return {
+                "path": plan["path"],
+                "error": f"Failed to apply patch: {error}",
+                "error_code": error.error_code,
+            }
     return None
 
 

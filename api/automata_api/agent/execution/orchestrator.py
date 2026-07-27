@@ -6,7 +6,9 @@ from automata_api.agent.execution.approval import ApprovalBroker
 from automata_api.agent.execution.model import ToolExecutionContext
 from automata_api.agent.execution.permissions import (
     DEFAULT_PERMISSION_PRESET,
+    CompiledPermissionProfile,
     PermissionPreset,
+    compile_permission_profile,
     permissions_for_preset,
 )
 from automata_api.agent.execution.policy import ToolPolicyEngine
@@ -24,10 +26,12 @@ class ToolExecutionOrchestrator:
         approval_broker: ApprovalBroker,
         policy: ToolPolicyEngine | None = None,
         permission_preset: PermissionPreset = DEFAULT_PERMISSION_PRESET,
+        permission_profile: CompiledPermissionProfile | None = None,
     ) -> None:
         self.approval_broker = approval_broker
         self.policy = policy or ToolPolicyEngine()
         self.permissions = permissions_for_preset(permission_preset)
+        self.permission_profile = permission_profile
 
     async def execute(
         self,
@@ -108,12 +112,113 @@ class ToolExecutionOrchestrator:
                     "User denied this tool call.",
                 )
 
+        profile = self.permission_profile or compile_permission_profile(
+            self.permissions.preset,
+            workspace=context.workspace,
+        )
+        result = await self._dispatch_authorized(
+            router=router,
+            tool_name=tool_name,
+            arguments=arguments,
+            context=context,
+            source=descriptor.source,
+            profile=profile,
+            attempt=1,
+        )
+        if (
+            result.error_code != "sandbox_denied"
+            or profile.sandbox_enforcement == "disabled"
+        ):
+            return result
+        if profile.deny_read_paths:
+            await emit_context_event(
+                context,
+                {
+                    "type": "sandbox_retry_blocked",
+                    "tool_call_id": context.tool_call_id,
+                    "profile_hash": profile.profile_hash,
+                    "reason": "deny_read_profile",
+                },
+            )
+            return result
+
+        await emit_context_event(
+            context,
+            {
+                "type": "sandbox_retry_requested",
+                "tool_call_id": context.tool_call_id,
+                "profile_hash": profile.profile_hash,
+            },
+        )
+        retry_decision = replace(
+            decision,
+            action="prompt",
+            reason="sandbox_denied_requires_unsandboxed_retry",
+            approval_scope=None,
+            allow_for_run=False,
+        )
+        approval = await self.approval_broker.request(
+            tool=tool_name,
+            tool_identity=descriptor.identity
+            or f"{descriptor.source}:{descriptor.name}",
+            arguments=arguments,
+            decision=retry_decision,
+            context=context,
+        )
+        if approval == "deny":
+            await emit_context_event(
+                context,
+                {
+                    "type": "sandbox_retry_resolved",
+                    "tool_call_id": context.tool_call_id,
+                    "decision": "deny",
+                },
+            )
+            return result
+
+        retry_profile = compile_permission_profile(
+            "full_access",
+            workspace=context.workspace,
+        )
+        await emit_context_event(
+            context,
+            {
+                "type": "sandbox_retry_started",
+                "tool_call_id": context.tool_call_id,
+                "attempt": 2,
+                "profile_hash": retry_profile.profile_hash,
+            },
+        )
+        return await self._dispatch_authorized(
+            router=router,
+            tool_name=tool_name,
+            arguments=arguments,
+            context=context,
+            source=descriptor.source,
+            profile=retry_profile,
+            attempt=2,
+        )
+
+    async def _dispatch_authorized(
+        self,
+        *,
+        router: ToolRouter,
+        tool_name: str,
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        source: str,
+        profile: CompiledPermissionProfile,
+        attempt: int,
+    ) -> ToolResult:
         context.cancellation.raise_if_cancelled()
         with process_execution_scope(
             context.run_id,
             context.tool_call_id,
             session_id=context.session_id,
             workspace=context.workspace,
+            permission_profile=profile,
+            emit_event=context.emit_event,
+            sandbox_attempt=attempt,
         ):
             with tool_output_execution_scope(
                 tool_call_id=context.tool_call_id,
@@ -124,7 +229,8 @@ class ToolExecutionOrchestrator:
                     "tool.execute",
                     attributes={
                         "tool": tool_name,
-                        "source": descriptor.source,
+                        "source": source,
+                        "sandbox_attempt": attempt,
                         **tool_operation_attributes(
                             tool_name,
                             arguments,
@@ -163,6 +269,14 @@ def failed_result(
         ),
         success=False,
     )
+
+
+async def emit_context_event(
+    context: ToolExecutionContext,
+    payload: dict[str, Any],
+) -> None:
+    if context.emit_event is not None:
+        await context.emit_event(payload)
 
 
 def tool_operation_attributes(

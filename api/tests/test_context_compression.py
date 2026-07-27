@@ -366,7 +366,10 @@ def test_chat_websocket_emits_loop_compression_event(client, monkeypatch):
     monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
     monkeypatch.setenv("AUTOMATA_CONTEXT_COMPRESSION_THRESHOLD_CHARS", "500")
     monkeypatch.setenv("AUTOMATA_CONTEXT_COMPRESSION_TARGET_CHARS", "100")
-    session = client.post("/sessions", json={"title": "Loop Event"}).json()
+    session = client.post(
+        "/sessions",
+        json={"title": "Loop Event", "permission_preset": "full_access"},
+    ).json()
     agent_calls = []
 
     async def fake_create_llm_response(messages, tools=None):

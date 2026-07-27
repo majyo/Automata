@@ -28,6 +28,9 @@ export type ApiRun = {
   kind: "chat_act" | "chat_plan" | "plan_execution";
   mode: "act" | "plan";
   permission_preset: PermissionPreset;
+  permission_profile_version?: number | null;
+  permission_profile?: Record<string, unknown> | null;
+  sandbox_backend?: string | null;
   status: PersistedRunStatus;
   request_message_id?: string | null;
   response_message_id?: string | null;

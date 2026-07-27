@@ -5,6 +5,10 @@ import sqlite3
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
+from automata_api.agent.execution.permissions import (
+    compile_run_permission_profile,
+    sandbox_backend_for_profile,
+)
 from automata_api.db.connection import connect_db, db_lock
 from automata_api.utils import new_id, now_iso
 
@@ -843,11 +847,20 @@ def insert_run(
 ) -> None:
     now = now_iso()
     session = db.execute(
-        "SELECT permission_preset FROM sessions WHERE id = ?",
+        """
+        SELECT permission_preset, working_directory
+        FROM sessions
+        WHERE id = ?
+        """,
         (session_id,),
     ).fetchone()
     if session is None:
         raise RunNotFoundError("Session not found")
+    profile = compile_run_permission_profile(
+        session["permission_preset"],
+        workspace=str(session["working_directory"]),
+        run_id=run_id,
+    )
     db.execute(
         """
         INSERT INTO agent_runs (
@@ -856,6 +869,9 @@ def insert_run(
             kind,
             mode,
             permission_preset,
+            permission_profile_version,
+            permission_profile_json,
+            sandbox_backend,
             status,
             request_message_id,
             plan_id,
@@ -863,7 +879,7 @@ def insert_run(
             created_at,
             heartbeat_at
         )
-        VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)
         """,
         (
             run_id,
@@ -871,6 +887,9 @@ def insert_run(
             kind,
             mode,
             str(session["permission_preset"]),
+            profile.version,
+            profile.to_json(),
+            sandbox_backend_for_profile(profile),
             request_message_id,
             plan_id,
             owner_instance_id,

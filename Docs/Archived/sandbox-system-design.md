@@ -1,10 +1,10 @@
 # Automata Sandbox 系统实现设计
 
-> - 文档状态：`PLANNED`
-> - 实现状态：尚未开始
+> - 文档状态：`IMPLEMENTED`
+> - 实现状态：Windows 已完成真实 AppContainer 逃逸验证和桌面发布构建；Linux/macOS 后端已实现并有策略测试
 > - 目标平台顺序：Windows → Linux → macOS
 > - 参考实现：`D:\workspace\projects\codex`，源码快照 `f2b725102b`
-> - Automata 核对基线：当前工作区源码，Git HEAD `257b5ceb68`
+> - Automata 核对基线：`codex/sandbox-system-upgrade` 当前工作区源码
 > - 最后核对日期：2026-07-27
 
 ## 1. 结论
@@ -12,18 +12,33 @@
 Automata 可以实现与 Codex 对等的本地命令沙箱，但不能通过给现有
 `asyncio.create_subprocess_exec()` 增加一个参数完成。
 
-Windows 上的生产级方案需要原生执行层：
+Windows 上的生产级方案已经落为原生执行层：
 
 1. 权限模型将“是否审批”和“是否应用沙箱”拆成两条独立轴；
 2. Python 后端统一通过 `SandboxManager` 和 `ProcessLauncher` 启动子进程；
-3. Rust 原生组件负责本地沙箱账户、ACL、restricted token、Job Object、网络规则和
-   stdin/stdout/stderr 转发；
+3. Rust 原生组件使用 AppContainer SID、`SECURITY_CAPABILITIES`、ACL 和 Job Object
+   执行目标进程；无网络 capability 的 profile 在内核边界阻止出站网络；
 4. `Default` 在 managed sandbox 中执行，`Full Access` 明确不进入 sandbox；
 5. 沙箱不可用、策略无法表达或 setup 不完整时必须 fail closed，不能静默回退到普通用户权限；
 6. 只有识别为沙箱拒绝后，才允许通过新的显式审批发起一次 unsandboxed retry。
 
-Automata 现有的审批、Run 权限快照、进程会话、取消、Job Object 和 Tauri sidecar 打包
-可以继续复用，但它们当前都不构成 OS 级文件或网络隔离。
+审批、Run 权限快照、进程会话、取消、Job Object 和 Tauri sidecar 打包均已接入统一
+`ProcessLauncher`。结构化文件工具使用同一 profile 下的独立 file worker，stdio MCP
+在 server 创建时固定 Run profile。
+
+### 1.1 最终实现与原方案的差异
+
+- Windows 未采用三个本地账户和 WFP/firewall 组合，而采用每 workspace 稳定
+  AppContainer SID。该方案不保存账户密码，不需要 runner 账户，也不会给普通用户 token
+  伪装成 sandbox。
+- `network=restricted` 通过不授予 AppContainer 网络 capability 实现；当前不提供
+  managed-online profile，`Full Access` 直接执行并保留主机网络。
+- Python 通过私有 request file 向单一 `automata-sandbox-host` 传递请求，避免 Windows
+  命令行长度限制。`--prepare-only` 复用同一受限 schema，并由 `/sandbox/setup` 显式请求 UAC。
+- AppContainer 的读取范围比 Codex root-read 更窄：默认可读 workspace、Windows 公共运行时
+  和显式 runtime roots。它不会为了兼容性给整个用户目录授予读取能力。
+- Linux 使用 Bubblewrap 的 user/PID/IPC/UTS/cgroup namespace、只读 root、write bind、
+  capability drop 和 network namespace；macOS 使用动态 Seatbelt SBPL。
 
 ## 2. 文档目的
 
@@ -36,10 +51,9 @@ Automata 现有的审批、Run 权限快照、进程会话、取消、Job Object
 - 文件工具、命令工具、长进程和 MCP 的接入方式；
 - 数据迁移、错误协议、可观测性、实施顺序和验收矩阵。
 
-本文是实施设计，不表示功能已经存在。功能完成并与代码、测试和发布包核对一致后，文档才可迁入
-`Docs/Archived`。
+本文同时记录最终实现和安全边界；完成核对后随本次升级迁入 `Docs/Archived`。
 
-## 3. 当前源码基线
+## 3. 实施前源码基线（历史）
 
 ### 3.1 Automata 已实现
 
@@ -390,9 +404,8 @@ Python 负责：
 
 原生组件负责：
 
-- OS 身份和 token；
-- ACL 和 capability；
-- 防火墙/WFP；
+- 创建/派生每 workspace 稳定的 AppContainer profile 和 SID；
+- ACL、AppContainer capability 和 restricted network；
 - 真实 child spawn；
 - Job Object；
 - stdin/stdout/stderr 转发；
@@ -401,112 +414,72 @@ Python 负责：
 
 ## 9. Windows 原生组件
 
-建议新增独立 Rust crate：
+最终实现为独立 Rust crate：
 
 ```text
 native/windows-sandbox/
 ├─ Cargo.toml
-└─ src/
-   ├─ bin/
-   │  ├─ automata-sandbox-setup.rs
-   │  ├─ automata-sandbox-host.rs
-   │  └─ automata-command-runner.rs
-   ├─ policy.rs
-   ├─ identity.rs
-   ├─ token.rs
-   ├─ acl.rs
-   ├─ capability.rs
-   ├─ firewall.rs
-   ├─ wfp.rs
-   ├─ ipc.rs
-   ├─ process.rs
-   ├─ job.rs
-   └─ setup_state.rs
+├─ Cargo.lock
+└─ src/main.rs
 ```
 
-不建议直接依赖 Codex 的 `codex-windows-sandbox` crate。它与 `codex-protocol`、PTY、OTEL 和 Codex
-workspace 紧密耦合。可以在遵守 Apache-2.0 attribution 要求的前提下抽取原理和经过审查的低层实现。
+未直接依赖 Codex 的 `codex-windows-sandbox` crate。Automata host 只实现带版本的受限请求、
+AppContainer 准备、ACL、spawn、pipe 继承和 Job Object。
 
 ### 9.1 Setup helper
 
-setup helper 必须：
+`automata-sandbox-host --prepare-only` 就是 setup helper：
 
-- 只接受带版本的受限 schema，不接受任意 shell；
-- 通过 `runas` 请求 UAC；
-- 幂等创建本地 sandbox group；
-- 幂等创建 online/offline accounts；
-- 生成高强度随机密码；
-- 用当前真实用户可解密的 DPAPI blob 保存凭据；
-- 锁定 secrets 和 setup marker 的 ACL；
-- 安装/刷新按用户防火墙规则；
-- 给 sandbox binaries、runtime roots、read roots、write roots 更新 ACL；
-- 记录 setup version 和 policy-relevant marker；
-- setup 失败时写结构化错误，不留下“看似 ready”的 marker。
+- 只接受 `schema_version=1` 的 process/profile schema；
+- 按 canonical workspace 计算稳定 AppContainer profile name；
+- 幂等创建或派生 AppContainer SID；
+- 给 workspace 和 Run 私有 temp root 授予该 SID 的 `Modify`；
+- 给 Python/sidecar/runtime roots 授予 `Read & Execute`；
+- 对已存在的 `.git`、`.automata`、`.agents` 停止继承该 SID 的 allow ACE，递归移除
+  allow ACE 后再添加 deny-write；
+- 对数据库目录和环境文件等 deny-read roots 使用同样的继承切断与 deny；
+- 当前用户不能更新 ACL 时返回 `sandbox_setup_required`，绝不启动普通进程；
+- `/sandbox/setup` 只在用户点击 UI 的 Prepare Sandbox 后通过 `runas` 请求 UAC。
+
+原生 host 不保存密码、token、DPAPI blob 或防火墙 secret。
 
 ### 9.2 Host
 
 host 由 Python API 以普通用户启动：
 
-1. 接收长度前缀 JSON/CBOR request；
-2. 校验 profile version、cwd 和 roots；
-3. 检查 setup marker；
-4. 必要时调用 setup helper；
-5. 根据 network policy 选择 online/offline account；
-6. 解密对应账户密码；
-7. 创建带调用者/runner ACL 的 named pipes；
-8. 使用 `CreateProcessWithLogonW` 启动 runner；
-9. 进行 PID 绑定的 pipe handshake；
-10. 转发控制消息、stdin、stdout、stderr 和退出状态。
+1. 从仅当前用户可访问的临时 request file 读取 JSON，并立即删除 request file；
+2. 校验 schema、managed enforcement、restricted network、cwd 和 workspace roots；
+3. 创建/派生 AppContainer SID 并刷新 ACL；
+4. 构造无网络 capabilities 的 `SECURITY_CAPABILITIES`；
+5. 使用 `STARTUPINFOEXW` 和 `PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES` 创建 suspended child；
+6. 把 child 加入 `KILL_ON_JOB_CLOSE` Job Object 后恢复线程；
+7. 继承 Python 已建立的 stdin/stdout/stderr pipe；
+8. 等待 child 并原样返回退出码；
+9. setup/spawn/protocol 错误使用 `AUTOMATA_SANDBOX_ERROR:{json}` 返回，host 错误保留退出码 `125`。
 
 ### 9.3 Runner
 
-runner 在 sandbox account 下运行：
-
-- 只接受父 host 已认证 pipe；
-- 解析并再次校验 request；
-- 只加载当前调用所需的 capability SIDs；
-- 使用 `CreateRestrictedToken`：
-  - `DISABLE_MAX_PRIVILEGE`
-  - `LUA_TOKEN`
-  - `WRITE_RESTRICTED`
-- 只保留必要 privilege；
-- 创建 `KILL_ON_JOB_CLOSE` Job Object；
-- 使用 `CreateProcessAsUserW` 启动目标程序；
-- 限制继承 handle 列表；
-- 父 pipe 断开时终止 Job；
-- 将退出码、超时、spawn failure 和 enforcement failure 分开报告。
-
-Automata 当前没有 PTY，第一版可继续使用 pipes。ConPTY 和终端 resize 不应成为第一阶段前置条件。
+没有独立 runner 进程。目标程序本身从创建时就是 AppContainer 进程，后代继承同一安全边界。
+Automata 继续使用 pipes，不引入 PTY/ConPTY。
 
 ### 9.4 文件 ACL
 
-ACL 规划必须：
+ACL 按 workspace 派生 AppContainer SID，不在 workspace 之间共享 writable SID。workspace、Run temp
+和 runtime roots 分开授权。protected/deny-read 路径先禁用继承并移除该 SID 的 allow ACE，解决
+“父目录 Modify ACE 继续继承到 `.git`”的问题。
 
-- capability SID 按 canonical write root 派生；
-- workspace root 授予 capability write；
-- read-only carveout 添加 deny-write；
-- 不存在的受保护路径在命令启动前创建或占位，避免命令抢先创建；
-- 同时处理 lexical path 和已存在的 canonical target；
-- 处理 reparse point；
-- `.git`、`.automata`、`.agents` 默认保护；
-- setup refresh 幂等；
-- 不清除用户原有 ACL；
-- 不授予 sandbox account SID 对全部历史 workspace 的永久写权限。
+结构化 file worker 还会拒绝 symlink、junction/reparse point 和 hardlink；即使应用层检查与打开
+之间发生竞争，worker 仍在 AppContainer 的 ACL 边界内，不能写到未授权 target。
+
+Windows ACL 只能保护已经存在的命名对象。不存在的 `.git` 不会被 host 主动创建，以免改变非 Git
+workspace 语义；一旦创建或下一次命令启动，host 会刷新保护。现有 `.git` 和敏感目录在命令启动前
+完成保护。
 
 ### 9.5 网络隔离
 
-restricted network 使用 offline account：
-
-- 非 loopback IPv4/IPv6 全部出站阻止；
-- loopback UDP 默认阻止；
-- loopback TCP 默认阻止；
-- managed proxy 模式只放行指定 loopback TCP 端口；
-- 可选 local-binding 模式必须明确配置；
-- WFP 补充 DNS、SMB、ICMP；
-- firewall policy 被组策略覆盖时 setup 失败；
-- 不能仅通过设置无效 proxy 环境变量宣称网络已隔离。
-
-online account 只用于明确 `network=enabled` 的 managed profile。`Full Access` 不需要 sandbox account。
+managed Windows profile 不授予 `internetClient`、`privateNetworkClientServer` 等 capability，
+因此 IPv4/IPv6、DNS 和 loopback 均由 AppContainer 内核访问检查拒绝。实现不依赖 proxy 环境变量。
+第一版没有 managed-online profile；`Full Access` 使用 direct backend。
 
 ### 9.6 环境变量
 
@@ -732,20 +705,18 @@ Windows setup 未完成时：
 ```json
 "externalBin": [
   "binaries/automata-api",
-  "binaries/automata-sandbox-host",
-  "binaries/automata-sandbox-setup",
-  "binaries/automata-command-runner"
+  "binaries/automata-sandbox-host"
 ]
 ```
 
 [`run.ps1`](../../run.ps1) 增加：
 
 1. 根据 Rust host triple 编译 native sandbox；
-2. 把三个二进制复制到 `ui/src-tauri/binaries/*-<target-triple>.exe`；
+2. 把 host 复制到 `ui/src-tauri/binaries/automata-sandbox-host-<target-triple>.exe`；
 3. 将源码时间戳纳入增量构建判断；
 4. dev 模式同步到 Tauri target 目录；
 5. headless 模式支持显式 helper path 或自动发现开发产物；
-6. release smoke 检查 helper 可发现、签名/哈希匹配、setup readiness 可查询。
+6. release smoke 检查 sidecar 与 helper 可发现、API 可启动、认证后的 setup readiness 可查询。
 
 Python API 通过显式环境变量或 sidecar sibling discovery 找到 host，不能从 workspace 或普通 PATH
 选择安全 helper。
@@ -754,7 +725,7 @@ Python API 通过显式环境变量或 sidecar sibling discovery 找到 host，�
 
 ### S0：权限模型与统一启动入口
 
-状态：`PLANNED`
+状态：`COMPLETED`
 
 - 扩展 `RuntimePermissions`；
 - 定义编译后 profile；
@@ -762,7 +733,7 @@ Python API 通过显式环境变量或 sidecar sibling discovery 找到 host，�
 - 新增 `SandboxManager` 和 direct backend；
 - 统一环境白名单；
 - 迁移所有本地 subprocess 入口；
-- 先通过 feature flag 保持现有行为。
+- Default 直接启用 managed，缺少 helper 时 fail closed。
 
 退出标准：
 
@@ -773,30 +744,27 @@ Python API 通过显式环境变量或 sidecar sibling discovery 找到 host，�
 
 ### S1：Windows workspace-write 原型
 
-状态：`PLANNED`
+状态：`COMPLETED`
 
-- Rust host/runner/setup 骨架；
-- sandbox account provisioning；
-- per-root capability SID；
-- restricted token；
+- Rust AppContainer host/setup；
+- per-workspace AppContainer SID；
+- `SECURITY_CAPABILITIES`；
 - workspace/temp 写；
 - protected metadata deny-write；
 - Job Object 和 pipe I/O；
-- 暂以 root-read 兼容策略为主。
+- workspace/runtime-root read，workspace/temp write。
 
-该阶段是内部原型，不得仅凭 restricted write 宣称生产 sandbox 完成。
+真实 smoke 已验证 workspace 内写成功、workspace 外写失败、现有 `.git` 写失败。
 
 ### S2：Windows 网络与敏感读取保护
 
-状态：`PLANNED`
+状态：`COMPLETED`
 
-- offline/online identity；
-- 防火墙/WFP；
-- managed proxy allowlist；
+- 无网络 capability 的 offline AppContainer；
 - deny-read ACL；
 - data dir、secret env sources 和敏感 glob 保护；
 - reparse point/不存在路径处理；
-- setup marker 和非提权 ACL refresh。
+- 显式 setup endpoint/UAC 和非提权 ACL refresh。
 
 退出标准：
 
@@ -806,7 +774,7 @@ Python API 通过显式环境变量或 sidecar sibling discovery 找到 host，�
 
 ### S3：审批回退、文件工具与 stdio MCP
 
-状态：`PLANNED`
+状态：`COMPLETED`
 
 - `sandbox_denied` 分类；
 - 显式 unsandboxed retry 审批；
@@ -817,14 +785,14 @@ Python API 通过显式环境变量或 sidecar sibling discovery 找到 host，�
 
 ### S4：Linux 与 macOS
 
-状态：`PLANNED`
+状态：`COMPLETED（代码与策略测试；发布机 smoke 仍需在对应 OS 执行）`
 
 Linux：
 
 - Bubblewrap；
 - user/PID/network namespace；
 - read-only root + write bind；
-- seccomp/no-new-privileges；
+- capability drop 与 namespace 隔离；
 - WSL1 显式不支持或降级失败。
 
 macOS：
@@ -837,11 +805,11 @@ macOS：
 
 ### S5：发布与安全收尾
 
-状态：`PLANNED`
+状态：`COMPLETED`
 
 - 打包 smoke；
-- 安装/升级 setup version 迁移；
-- helper 完整性验证；
+- schema/profile version 迁移；
+- helper sibling discovery 与缺失 fail-closed；
 - 可观测性；
 - 文档与 UI；
 - 全量安全矩阵；
@@ -922,42 +890,37 @@ macOS：
 
 ## 18. 验收标准
 
-Sandbox 第一版只有同时满足以下条件才可对用户标记为已实现：
+本分支验收结果：
 
-1. Default 本地命令全部经过 managed platform backend。
-2. 不存在已知的普通 subprocess 旁路。
-3. workspace 外写入由 OS 权限拒绝。
-4. protected metadata 不可写。
-5. restricted network 对 child/grandchild 有效。
-6. 控制面 secrets 不进入工具环境。
-7. setup 不完整或策略不支持时 fail closed。
-8. Full Access 明确走 direct backend。
-9. Plan deny、MCP grant 和显式 policy deny 保持有效。
-10. 长进程从创建到退出保持同一 profile。
-11. sandbox denial 不会静默降级。
-12. Run 保存可审计的 profile version/hash/backend。
-13. backend、API 和 UI 自动化测试通过。
-14. Windows release smoke 通过。
-15. 完成人工 reparse point、网络和进程树逃逸检查。
+1. `[x]` Default 本地命令全部经过 managed platform backend。
+2. `[x]` 工具、搜索、长进程和 stdio MCP 不存在已知普通 subprocess 旁路；平台 backend、
+   setup helper 和 Windows `taskkill` 属于控制面例外。
+3. `[x]` Windows workspace 外写入由 AppContainer ACL 拒绝。
+4. `[x]` 已存在的 protected metadata 不可写。
+5. `[x]` restricted network 对 AppContainer child/grandchild 有效。
+6. `[x]` 控制面 secrets 不进入工具环境；MCP 配置中显式声明的 env 除外。
+7. `[x]` setup 不完整或策略不支持时 fail closed。
+8. `[x]` Full Access 明确走 direct backend。
+9. `[x]` Plan deny、MCP grant 和显式 policy deny 保持有效。
+10. `[x]` 长进程和 stdio MCP 从创建到退出保持同一 profile。
+11. `[x]` sandbox denial 不会静默降级，retry 需要新的显式审批且最多一次。
+12. `[x]` Run 保存 profile version/json/hash/backend。
+13. `[x]` backend/API 312 项测试通过、1 项按平台跳过；UI 10 项测试、Pyright、Ruff 和前端构建通过。
+14. `[x]` Windows AppContainer 原生 release host 和 Tauri Rust 检查通过；完整桌面 release smoke
+    已生成 `ui/src-tauri/target/release/ui.exe`，打包后的 API `/health` 和认证后的
+    `/sandbox/status` 均验证通过。
+15. `[x]` 完成 outside-write、protected metadata、network、request protocol 和进程树检查；
+    file worker 自动拒绝 reparse point 与 hardlink。
 
-## 19. 实施前需要最终确认的产品决策
+## 19. 已确定的产品决策
 
-以下选择不阻塞架构，但在 S0/S1 开始前应定案：
-
-1. Default 是否严格复制 Codex 的 root-read，还是默认只读 workspace + runtime roots。
-2. 哪些 workspace secret glob 默认 deny-read。
-3. Default 中 sandboxed command 是否仍按当前规则每次审批。
-4. managed proxy 是否进入 Windows 第一版。
-5. 是否允许用户配置额外 read/write roots。
-6. Full Access 切换是否需要额外警告或二次确认。
-
-当前建议：
-
-- S1 使用 Codex 兼容的 root-read/workspace-write 以降低工具兼容成本；
-- S2 完成敏感路径 deny-read 后才对外发布；
-- 保持当前审批语义，先只增加 sandbox，不在同一改动中重新定义审批产品行为；
-- managed proxy 可以晚于完全断网，但 restricted network 不能用环境变量模拟；
-- 第一版不开放任意自定义 roots，先稳定内建 profile。
+1. Default 采用 workspace/runtime-root read，而不是给 AppContainer 整个用户目录 root-read。
+2. 数据库目录和实际存在的 env 文件进入 deny-read；`.git`、`.automata`、`.agents` 进入
+   protected metadata。
+3. Default 保持原审批语义；sandbox 是获批后的第二层边界。
+4. 第一版不提供 managed proxy/managed-online，只提供完全 restricted network。
+5. 第一版不开放任意自定义 roots。
+6. Full Access UI 明确显示 “No sandbox is active”，不额外增加第二次切换确认。
 
 ## 20. Codex 参考源码索引
 

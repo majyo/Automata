@@ -17,6 +17,8 @@ $SrcTauriDir = Join-Path $UiDir "src-tauri"
 $UvCacheDir = Join-Path $RootDir ".uv-cache"
 $BuildDir = Join-Path $RootDir ".build"
 $SidecarName = "automata-api"
+$SandboxHostName = "automata-sandbox-host"
+$SandboxCrateDir = Join-Path $RootDir "native\windows-sandbox"
 
 function Write-Step {
   param([string]$Message)
@@ -186,6 +188,49 @@ function Build-ApiSidecar {
   return $SidecarPath
 }
 
+function Build-SandboxHost {
+  $TargetTriple = Get-RustHostTriple
+  $BinariesDir = Join-Path $SrcTauriDir "binaries"
+  $PackagedPath = Join-Path $BinariesDir "$SandboxHostName-$TargetTriple.exe"
+  $ManifestPath = Join-Path $SandboxCrateDir "Cargo.toml"
+  $LockPath = Join-Path $SandboxCrateDir "Cargo.lock"
+  $SourceDir = Join-Path $SandboxCrateDir "src"
+  $SourceFiles = @($ManifestPath)
+  if (Test-Path $LockPath) {
+    $SourceFiles += $LockPath
+  }
+  $SourceFiles += Get-ChildItem -Path $SourceDir -Recurse -File |
+    Select-Object -ExpandProperty FullName
+
+  $ShouldBuild = $ForceSidecarBuild -or -not (Test-Path $PackagedPath)
+  if (-not $ShouldBuild) {
+    $PackagedTimestamp = (Get-Item $PackagedPath).LastWriteTimeUtc
+    $ShouldBuild = @(
+      $SourceFiles | Where-Object { (Get-Item $_).LastWriteTimeUtc -gt $PackagedTimestamp }
+    ).Count -gt 0
+  }
+  if (-not $ShouldBuild) {
+    Write-Step "Sandbox host already built for $TargetTriple"
+    return $PackagedPath
+  }
+
+  Write-Step "Building Windows AppContainer sandbox host for $TargetTriple"
+  New-Item -ItemType Directory -Force -Path $BinariesDir | Out-Null
+  Invoke-CheckedCommand "cargo" @(
+    "build",
+    "--locked",
+    "--release",
+    "--manifest-path", $ManifestPath
+  )
+  $BuiltHost = Join-Path $SandboxCrateDir "target\release\$SandboxHostName.exe"
+  if (-not (Test-Path $BuiltHost)) {
+    throw "Cargo did not produce $BuiltHost."
+  }
+  Copy-Item -Force -LiteralPath $BuiltHost -Destination $PackagedPath
+  Write-Host "Sandbox host: $PackagedPath" -ForegroundColor DarkGray
+  return $PackagedPath
+}
+
 function Sync-DevSidecar {
   $TargetTriple = Get-RustHostTriple
   $SourcePath = Join-Path $SrcTauriDir "binaries\$SidecarName-$TargetTriple.exe"
@@ -206,6 +251,19 @@ function Sync-DevSidecar {
   if ($ShouldCopy) {
     Write-Step "Syncing development sidecar"
     Copy-Item -Force -LiteralPath $SourcePath -Destination $DebugPath
+  }
+
+  $SandboxSource = Join-Path $SrcTauriDir "binaries\$SandboxHostName-$TargetTriple.exe"
+  $SandboxDebugPath = Join-Path $DebugDir "$SandboxHostName.exe"
+  if (-not (Test-Path $SandboxSource)) {
+    throw "Missing sandbox host binary at $SandboxSource."
+  }
+  if (
+    -not (Test-Path $SandboxDebugPath) -or
+    (Get-Item $SandboxSource).LastWriteTimeUtc -gt (Get-Item $SandboxDebugPath).LastWriteTimeUtc
+  ) {
+    Write-Step "Syncing development sandbox host"
+    Copy-Item -Force -LiteralPath $SandboxSource -Destination $SandboxDebugPath
   }
 }
 
@@ -297,6 +355,9 @@ if ($Profile) {
 }
 
 if ($Mode -eq "headless") {
+  Require-Command "cargo" "Install Rust/Cargo so the sandbox host can be built."
+  Require-Command "rustc" "Install Rust/Cargo so the sandbox host can be built."
+  Build-SandboxHost | Out-Null
   Invoke-HeadlessApi
   exit 0
 }
@@ -307,6 +368,7 @@ Require-Command "cargo" "Install Rust/Cargo for Tauri desktop builds."
 Require-Command "rustc" "Install Rust/Cargo for Tauri desktop builds."
 
 Ensure-FrontendDependencies
+Build-SandboxHost | Out-Null
 Build-ApiSidecar | Out-Null
 
 if ($Mode -eq "dev") {

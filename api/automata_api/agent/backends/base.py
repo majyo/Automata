@@ -18,6 +18,8 @@ class ExecResult:
     stderr_truncated: bool
     cwd: str
     shell: str | None
+    error_code: str | None = None
+    sandbox: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -68,11 +70,17 @@ class BackendError(RuntimeError):
     """Primitive-level failure raised by backend implementations."""
 
     def __init__(
-        self, message: str, *, cwd: str | None = None, shell: str | None = None
+        self,
+        message: str,
+        *,
+        cwd: str | None = None,
+        shell: str | None = None,
+        error_code: str | None = None,
     ) -> None:
         super().__init__(message)
         self.cwd = cwd
         self.shell = shell
+        self.error_code = error_code
 
 
 class Backend(ABC):

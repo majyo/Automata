@@ -188,14 +188,24 @@ Sessions accept a persisted permission preset at creation time and through
 
 `permission_preset` defaults to `default`. In `default`, write, command,
 destructive, and policy-defined external actions continue through the approval
-broker. In `full_access`, decisions that would normally prompt are executed
-without approval. The selected preset is copied to each Run when the Run is
-created, so changing a Session does not alter an already active Run.
+broker and approved local execution runs in the managed platform sandbox:
+Windows AppContainer, Linux Bubblewrap, or macOS Seatbelt. Network access is
+restricted and writes are limited to the workspace and Run-private temp root.
+In `full_access`, decisions that would normally prompt are executed without
+approval and use direct execution. The compiled profile, version, hash, and
+backend are copied to each Run when it is created, so changing a Session does
+not alter an already active Run.
 
 Full Access does not override explicit policy denials, MCP connection/grant
 requirements, hidden/deferred tool routing, or the Plan-mode write prohibition.
-It also does not enable a sandbox: commands still run with the API process's OS
-permissions. Structured file tools remain confined to the Session workspace.
+It also does not enable a sandbox: commands run with the API process's OS
+permissions. The environment policy still prevents accidental inheritance of
+Automata control-plane secrets.
+
+On Windows, managed execution requires `automata-sandbox-host.exe`. The desktop
+package includes it. Use `GET /sandbox/status` to inspect availability and
+`POST /sandbox/setup` with `{"workspace":"..."}` to explicitly prepare ACLs;
+Windows may show a UAC prompt. Missing or incomplete setup fails closed.
 
 The WebSocket prompt payload is:
 

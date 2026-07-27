@@ -16,7 +16,10 @@ from automata_api.agent.execution.model import (
     RunOutcome,
 )
 from automata_api.agent.execution.orchestrator import ToolExecutionOrchestrator
-from automata_api.agent.execution.permissions import PermissionPreset
+from automata_api.agent.execution.permissions import (
+    CompiledPermissionProfile,
+    PermissionPreset,
+)
 from automata_api.agent.llm import AgentProviderError
 from automata_api.agent.mcp.runtime import create_mcp_tool_runtime
 from automata_api.agent.runtime import stream_agent_loop, stream_plan_loop
@@ -63,6 +66,7 @@ async def stream_agent_reply(
     cancellation: CancellationToken,
     approval_broker: ApprovalBroker,
     permission_preset: PermissionPreset,
+    permission_profile: CompiledPermissionProfile | None = None,
     selected_skills: object = None,
     approved_plan_content: str | None = None,
     approved_plan_id: str | None = None,
@@ -97,6 +101,9 @@ async def stream_agent_reply(
                 session_id=session_id,
                 workspace=session_config["working_directory"],
                 mode="act",
+                permission_profile=permission_profile,
+                run_id=run_id,
+                emit_event=websocket.send_json,
             ) as mcp_runtime:
                 await send_mcp_runtime_events(websocket, mcp_runtime, run_id)
                 async with observe_span("skills.resolve"):
@@ -127,6 +134,7 @@ async def stream_agent_reply(
                         orchestrator=ToolExecutionOrchestrator(
                             approval_broker=approval_broker,
                             permission_preset=permission_preset,
+                            permission_profile=permission_profile,
                         ),
                     ),
                     run_id=run_id,
@@ -159,6 +167,7 @@ async def stream_plan_reply(
     cancellation: CancellationToken,
     approval_broker: ApprovalBroker,
     permission_preset: PermissionPreset,
+    permission_profile: CompiledPermissionProfile | None = None,
     selected_skills: object = None,
 ) -> RunOutcome:
     await websocket.send_json(
@@ -192,6 +201,9 @@ async def stream_plan_reply(
                 session_id=session_id,
                 workspace=session_config["working_directory"],
                 mode="plan",
+                permission_profile=permission_profile,
+                run_id=run_id,
+                emit_event=websocket.send_json,
             ) as mcp_runtime:
                 await send_mcp_runtime_events(websocket, mcp_runtime, run_id)
                 async with observe_span("skills.resolve"):
@@ -221,6 +233,7 @@ async def stream_plan_reply(
                         orchestrator=ToolExecutionOrchestrator(
                             approval_broker=approval_broker,
                             permission_preset=permission_preset,
+                            permission_profile=permission_profile,
                         ),
                     ),
                     run_id=run_id,
@@ -252,6 +265,7 @@ async def stream_approved_plan_reply(
     cancellation: CancellationToken,
     approval_broker: ApprovalBroker,
     permission_preset: PermissionPreset,
+    permission_profile: CompiledPermissionProfile | None = None,
 ) -> RunOutcome:
     plan_id = str(plan["id"])
     await websocket.send_json(
@@ -270,6 +284,7 @@ async def stream_approved_plan_reply(
         cancellation=cancellation,
         approval_broker=approval_broker,
         permission_preset=permission_preset,
+        permission_profile=permission_profile,
         approved_plan_content=str(plan["content"]),
         approved_plan_id=plan_id,
     )

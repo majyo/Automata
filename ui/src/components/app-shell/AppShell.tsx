@@ -35,6 +35,7 @@ type AppShellProps = {
   sendMode: SendMode;
   permissionPreset: PermissionPreset;
   permissionUpdating: boolean;
+  sandboxSetupStatus: string;
   isStreaming: boolean;
   canSend: boolean;
   approvals: ToolApprovalRequest[];
@@ -59,6 +60,7 @@ type AppShellProps = {
   onPromptChange(prompt: string): void;
   onSendModeChange(sendMode: SendMode): void;
   onPermissionPresetChange(permissionPreset: PermissionPreset): void;
+  onSandboxSetup(): void;
   onApprovePlan(message: ChatMessage): void;
   onRespondToApproval(approval: ToolApprovalRequest, decision: ApprovalDecision): void;
   onCancelRun(): void;
@@ -84,6 +86,7 @@ export function AppShell({
   sendMode,
   permissionPreset,
   permissionUpdating,
+  sandboxSetupStatus,
   isStreaming,
   canSend,
   approvals,
@@ -108,6 +111,7 @@ export function AppShell({
   onPromptChange,
   onSendModeChange,
   onPermissionPresetChange,
+  onSandboxSetup,
   onApprovePlan,
   onRespondToApproval,
   onCancelRun,
@@ -170,6 +174,7 @@ export function AppShell({
             sendMode={sendMode}
             permissionPreset={permissionPreset}
             permissionUpdating={permissionUpdating}
+            sandboxSetupStatus={sandboxSetupStatus}
             isStreaming={isStreaming}
             canSend={canSend}
             approvals={approvals}
@@ -184,6 +189,7 @@ export function AppShell({
             onPromptChange={onPromptChange}
             onSendModeChange={onSendModeChange}
             onPermissionPresetChange={onPermissionPresetChange}
+            onSandboxSetup={onSandboxSetup}
             onApprovePlan={onApprovePlan}
             onRespondToApproval={onRespondToApproval}
             onCancelRun={onCancelRun}

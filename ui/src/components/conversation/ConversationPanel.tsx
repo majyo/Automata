@@ -18,6 +18,7 @@ type ConversationPanelProps = {
   sendMode: SendMode;
   permissionPreset: PermissionPreset;
   permissionUpdating: boolean;
+  sandboxSetupStatus: string;
   isStreaming: boolean;
   canSend: boolean;
   approvals: ToolApprovalRequest[];
@@ -32,6 +33,7 @@ type ConversationPanelProps = {
   onPromptChange(prompt: string): void;
   onSendModeChange(sendMode: SendMode): void;
   onPermissionPresetChange(permissionPreset: PermissionPreset): void;
+  onSandboxSetup(): void;
   onApprovePlan(message: ChatMessage): void;
   onRespondToApproval(approval: ToolApprovalRequest, decision: ApprovalDecision): void;
   onCancelRun(): void;
@@ -50,6 +52,7 @@ export function ConversationPanel({
   sendMode,
   permissionPreset,
   permissionUpdating,
+  sandboxSetupStatus,
   isStreaming,
   canSend,
   approvals,
@@ -64,6 +67,7 @@ export function ConversationPanel({
   onPromptChange,
   onSendModeChange,
   onPermissionPresetChange,
+  onSandboxSetup,
   onApprovePlan,
   onRespondToApproval,
   onCancelRun,
@@ -95,6 +99,7 @@ export function ConversationPanel({
               sendMode={sendMode}
               permissionPreset={permissionPreset}
               permissionUpdating={permissionUpdating}
+              sandboxSetupStatus={sandboxSetupStatus}
               isStreaming={isStreaming}
               canSend={canSend}
               skills={skills}
@@ -105,6 +110,7 @@ export function ConversationPanel({
               onPromptChange={onPromptChange}
               onSendModeChange={onSendModeChange}
               onPermissionPresetChange={onPermissionPresetChange}
+              onSandboxSetup={onSandboxSetup}
               onCancel={onCancelRun}
               onToggleSkill={onToggleSkill}
               onToggleSkillEnabled={onToggleSkillEnabled}
@@ -130,6 +136,7 @@ export function ConversationPanel({
               sendMode={sendMode}
               permissionPreset={permissionPreset}
               permissionUpdating={permissionUpdating}
+              sandboxSetupStatus={sandboxSetupStatus}
               isStreaming={isStreaming}
               canSend={canSend}
               skills={skills}
@@ -140,6 +147,7 @@ export function ConversationPanel({
               onPromptChange={onPromptChange}
               onSendModeChange={onSendModeChange}
               onPermissionPresetChange={onPermissionPresetChange}
+              onSandboxSetup={onSandboxSetup}
               onCancel={onCancelRun}
               onToggleSkill={onToggleSkill}
               onToggleSkillEnabled={onToggleSkillEnabled}

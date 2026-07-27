@@ -60,6 +60,7 @@ coverage/
 target/
 ui/src-tauri/gen/schemas/
 ui/src-tauri/binaries/automata-api-*.exe
+ui/src-tauri/binaries/automata-sandbox-host-*.exe
 
 # Build artifacts
 *.tsbuildinfo

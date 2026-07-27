@@ -4,6 +4,7 @@ import asyncio
 import fnmatch
 import json
 import os
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +17,19 @@ from automata_api.agent.backends.base import (
     FileListResult,
     FileStat,
     SearchResult,
+)
+from automata_api.agent.execution.process import (
+    current_process_scope,
+    process_supervisor,
+)
+from automata_api.agent.execution.sandbox import process_launcher
+from automata_api.agent.execution.sandbox.errors import SandboxError
+from automata_api.agent.execution.sandbox.model import SandboxMetadata
+from automata_api.agent.execution.sandbox.protocol import (
+    classify_sandbox_failure,
+)
+from automata_api.agent.execution.sandbox.runtime_paths import (
+    managed_runtime_roots,
 )
 from automata_api.agent.tools import _core as core
 
@@ -69,6 +83,20 @@ class BoundedPathAccumulator:
         return False
 
 
+def _file_worker_command() -> tuple[tuple[str, ...], tuple[str, ...]]:
+    api_root = Path(__file__).resolve().parents[3]
+    runtime_roots = {str(path) for path in managed_runtime_roots()}
+    if getattr(sys, "frozen", False):
+        argv = (sys.executable, "--sandbox-file-worker")
+    else:
+        argv = (
+            sys.executable,
+            str(api_root / "main.py"),
+            "--sandbox-file-worker",
+        )
+    return argv, tuple(sorted(runtime_roots))
+
+
 class LocalBackend(Backend):
     kind = "local"
 
@@ -81,6 +109,13 @@ class LocalBackend(Backend):
 
     async def read_file(self, path: str, *, errors: str = "strict") -> str:
         path_result = self._resolve_file_path(path)
+        managed_result = await self._managed_file_operation(
+            "read",
+            path=path_result,
+            errors=errors,
+        )
+        if managed_result is not None:
+            return str(managed_result["content"])
         if not path_result.exists():
             raise BackendError(f"File does not exist: {path_result}")
         if not path_result.is_file():
@@ -105,6 +140,15 @@ class LocalBackend(Backend):
             raise BackendError(f"Path is a directory: {path_result}")
         if mode == "create" and path_result.exists():
             raise BackendError(f"File already exists: {path_result}")
+        managed_result = await self._managed_file_operation(
+            "write",
+            path=path_result,
+            content=content,
+            mode=mode,
+            create_dirs=create_dirs,
+        )
+        if managed_result is not None:
+            return int(managed_result["bytes_written"])
         if not path_result.parent.exists():
             if not create_dirs:
                 raise BackendError(
@@ -132,6 +176,12 @@ class LocalBackend(Backend):
 
     async def delete_file(self, path: str) -> None:
         path_result = self._resolve_file_path(path)
+        managed_result = await self._managed_file_operation(
+            "delete",
+            path=path_result,
+        )
+        if managed_result is not None:
+            return
         try:
             path_result.unlink()
         except OSError as error:
@@ -139,6 +189,19 @@ class LocalBackend(Backend):
 
     async def stat(self, path: str) -> FileStat:
         path_result = self._resolve_file_path(path)
+        managed_result = await self._managed_file_operation(
+            "stat",
+            path=path_result,
+        )
+        if managed_result is not None:
+            return FileStat(
+                exists=bool(managed_result["exists"]),
+                is_file=bool(managed_result["is_file"]),
+                is_dir=bool(managed_result["is_dir"]),
+                size_bytes=int(managed_result["size_bytes"]),
+                path=core.path_argument_for_cwd(path_result, self.workspace_path),
+                absolute_path=str(path_result),
+            )
         exists = path_result.exists()
         return FileStat(
             exists=exists,
@@ -151,7 +214,110 @@ class LocalBackend(Backend):
 
     async def parent_exists(self, path: str) -> bool:
         path_result = self._resolve_file_path(path)
+        managed_result = await self._managed_file_operation(
+            "parent_exists",
+            path=path_result,
+        )
+        if managed_result is not None:
+            return bool(managed_result["exists"])
         return path_result.parent.exists()
+
+    async def _managed_file_operation(
+        self,
+        operation: str,
+        *,
+        path: Path,
+        **parameters: Any,
+    ) -> dict[str, Any] | None:
+        scope = current_process_scope()
+        if (
+            scope is None
+            or scope.permission_profile is None
+            or scope.permission_profile.sandbox_enforcement == "disabled"
+        ):
+            return None
+        request = {
+            "operation": operation,
+            "workspace": str(self.workspace_path),
+            "path": str(path),
+            **parameters,
+        }
+        argv, runtime_roots = _file_worker_command()
+        try:
+            process = await process_launcher.spawn(
+                *argv,
+                cwd=self.workspace_path,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                scope_name=f"file-worker:{operation}",
+                runtime_roots=runtime_roots,
+            )
+        except SandboxError as error:
+            raise BackendError(
+                error.public_message,
+                error_code=error.code,
+            ) from error
+
+        managed = await process_supervisor.register(process)
+        try:
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(
+                        json.dumps(
+                            request,
+                            ensure_ascii=True,
+                            separators=(",", ":"),
+                        ).encode("utf-8")
+                    ),
+                    timeout=30.0,
+                )
+            except TimeoutError as error:
+                await process_supervisor.terminate(managed)
+                raise BackendError(
+                    "Sandbox file worker timed out.",
+                    error_code="sandbox_timed_out",
+                ) from error
+        finally:
+            await process_supervisor.unregister(managed)
+
+        metadata = getattr(process, "automata_sandbox", None)
+        if not isinstance(metadata, SandboxMetadata):
+            metadata = None
+        sandbox_failure = classify_sandbox_failure(
+            exit_code=process.returncode,
+            stderr=stderr.decode("utf-8", errors="replace"),
+            metadata=metadata,
+        )
+        if sandbox_failure is not None:
+            raise BackendError(
+                sandbox_failure.message,
+                error_code=sandbox_failure.code,
+            )
+        try:
+            payload = json.loads(stdout)
+        except json.JSONDecodeError as error:
+            raise BackendError(
+                "Sandbox file worker returned invalid JSON.",
+                error_code="sandbox_protocol_error",
+            ) from error
+        if not isinstance(payload, dict) or payload.get("ok") is not True:
+            raise BackendError(
+                str(payload.get("message", "Sandbox file operation failed.")),
+                error_code=(
+                    str(payload["error_code"])
+                    if isinstance(payload, dict)
+                    and isinstance(payload.get("error_code"), str)
+                    else "file_operation_failed"
+                ),
+            )
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            raise BackendError(
+                "Sandbox file worker returned an invalid result.",
+                error_code="sandbox_protocol_error",
+            )
+        return result
 
     def parent_label(self, path: str) -> str:
         path_result = self._resolve_file_path(path)
@@ -424,13 +590,20 @@ class LocalBackend(Backend):
         shell: str | None,
     ) -> ExecResult:
         try:
-            process = await asyncio.create_subprocess_exec(
+            process = await process_launcher.spawn(
                 *command,
                 cwd=str(cwd_path),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                **core.subprocess_group_kwargs(),
+                scope_name="backend-command",
             )
+        except SandboxError as error:
+            raise BackendError(
+                error.public_message,
+                cwd=str(cwd_path),
+                shell=shell,
+                error_code=error.code,
+            ) from error
         except OSError as error:
             raise BackendError(
                 f"Failed to start process: {error}",
@@ -453,6 +626,14 @@ class LocalBackend(Backend):
             stderr_truncated=output.stderr.truncated,
             cwd=str(cwd_path),
             shell=shell,
+            error_code=(
+                output.sandbox_failure.code
+                if output.sandbox_failure is not None
+                else None
+            ),
+            sandbox=(
+                output.sandbox.to_dict() if output.sandbox is not None else None
+            ),
         )
 
     async def _run_path_process(
@@ -467,12 +648,12 @@ class LocalBackend(Backend):
         timeout_seconds: float,
     ) -> PathProcessResult:
         try:
-            process = await asyncio.create_subprocess_exec(
+            process = await process_launcher.spawn(
                 *command,
                 cwd=str(cwd_path),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                **core.subprocess_group_kwargs(),
+                scope_name="backend-file-list",
             )
         except OSError as error:
             return PathProcessResult(
@@ -671,7 +852,7 @@ class LocalBackend(Backend):
         timeout_seconds: float,
     ) -> Path | None:
         try:
-            process = await asyncio.create_subprocess_exec(
+            process = await process_launcher.spawn(
                 executable,
                 "-C",
                 str(cwd_path),
@@ -680,7 +861,7 @@ class LocalBackend(Backend):
                 cwd=str(cwd_path),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                **core.subprocess_group_kwargs(),
+                scope_name="backend-git-root",
             )
         except OSError:
             return None

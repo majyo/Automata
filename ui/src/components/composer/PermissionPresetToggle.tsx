@@ -1,16 +1,20 @@
-import { ShieldAlert, ShieldCheck } from "lucide-react";
+import { Settings2, ShieldAlert, ShieldCheck } from "lucide-react";
 import type { PermissionPreset } from "../../types/session";
 
 type PermissionPresetToggleProps = {
   permissionPreset: PermissionPreset;
   disabled: boolean;
   onChange(permissionPreset: PermissionPreset): void;
+  setupStatus?: string;
+  onSetupSandbox?(): void;
 };
 
 export function PermissionPresetToggle({
   permissionPreset,
   disabled,
   onChange,
+  setupStatus = "",
+  onSetupSandbox,
 }: PermissionPresetToggleProps) {
   return (
     <div className="mode-toggle permission-toggle" role="group" aria-label="Tool permissions">
@@ -20,11 +24,22 @@ export function PermissionPresetToggle({
         onClick={() => onChange("default")}
         disabled={disabled}
         aria-pressed={permissionPreset === "default"}
-        title="Require approval for write, command, destructive, and external tool calls"
+        title="Run approved tools in the managed workspace sandbox with restricted network access"
       >
         <ShieldCheck size={14} />
         Default
       </button>
+      {onSetupSandbox ? (
+        <button
+          type="button"
+          onClick={onSetupSandbox}
+          disabled={disabled}
+          aria-label="Prepare Sandbox"
+          title={setupStatus || "Prepare the managed sandbox; Windows may request elevation"}
+        >
+          <Settings2 size={14} />
+        </button>
+      ) : null}
       <button
         type="button"
         className={permissionPreset === "full_access" ? "active full-access" : "full-access"}

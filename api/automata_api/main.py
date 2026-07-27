@@ -17,7 +17,7 @@ from automata_api.observability import (
     start_observability,
     stop_observability,
 )
-from automata_api.routers import chat, health, mcp, runs, sessions, skills
+from automata_api.routers import chat, health, mcp, runs, sandbox, sessions, skills
 from automata_api.security import (
     bearer_token,
     get_api_token,
@@ -91,6 +91,7 @@ def create_app() -> FastAPI:
     app.include_router(mcp.router)
     app.include_router(skills.router)
     app.include_router(runs.router)
+    app.include_router(sandbox.router)
     app.include_router(chat.router)
     return app
 

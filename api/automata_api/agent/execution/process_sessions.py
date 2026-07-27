@@ -13,6 +13,8 @@ from automata_api.agent.execution.process import (
     current_process_scope,
     process_supervisor,
 )
+from automata_api.agent.execution.sandbox.model import SandboxMetadata
+from automata_api.agent.execution.sandbox.protocol import classify_sandbox_failure
 
 MAX_LIVE_PROCESS_SESSIONS = 8
 PROCESS_SESSION_IDLE_SECONDS = 60.0
@@ -90,6 +92,8 @@ class ProcessSessionSnapshot:
     stderr: str
     stdout_truncated: bool
     stderr_truncated: bool
+    error_code: str | None = None
+    sandbox: dict[str, Any] | None = None
 
 
 @dataclass(eq=False)
@@ -105,6 +109,7 @@ class ProcessSessionEntry:
     last_used_at: float
     timeout_seconds: float
     pending_limit: int
+    sandbox: SandboxMetadata | None
     timed_out: bool = False
     stdout_pending: _HeadTailBuffer = field(init=False)
     stderr_pending: _HeadTailBuffer = field(init=False)
@@ -178,6 +183,20 @@ class ProcessSessionManager:
             managed = await process_supervisor.register(process)
             now = time.monotonic()
             session_id = f"proc_{uuid.uuid4().hex}"
+            sandbox = getattr(process, "automata_sandbox", None)
+            if not isinstance(sandbox, SandboxMetadata):
+                sandbox = None
+            if (
+                scope.permission_profile is not None
+                and sandbox is not None
+                and sandbox.profile_hash != scope.permission_profile.profile_hash
+            ):
+                await process_supervisor.terminate(managed)
+                await process_supervisor.unregister(managed)
+                raise ProcessSessionError(
+                    "process_session_profile_mismatch",
+                    "The process was created with a different permission profile.",
+                )
             entry = ProcessSessionEntry(
                 session_id=session_id,
                 run_id=scope.run_id,
@@ -193,6 +212,7 @@ class ProcessSessionManager:
                     max(1, pending_limit),
                     PROCESS_SESSION_TRANSCRIPT_CHARS,
                 ),
+                sandbox=sandbox,
             )
             self._entries[session_id] = entry
 
@@ -260,6 +280,15 @@ class ProcessSessionManager:
 
         stdout, stderr, stdout_truncated, stderr_truncated = entry.take_pending()
         running = entry.process.returncode is None and not entry.timed_out
+        sandbox_failure = (
+            None
+            if running
+            else classify_sandbox_failure(
+                exit_code=entry.process.returncode,
+                stderr=entry.stderr_transcript.text,
+                metadata=entry.sandbox,
+            )
+        )
         snapshot = ProcessSessionSnapshot(
             session_id=entry.session_id,
             running=running,
@@ -269,6 +298,12 @@ class ProcessSessionManager:
             stderr=stderr,
             stdout_truncated=stdout_truncated,
             stderr_truncated=stderr_truncated,
+            error_code=(
+                sandbox_failure.code if sandbox_failure is not None else None
+            ),
+            sandbox=(
+                entry.sandbox.to_dict() if entry.sandbox is not None else None
+            ),
         )
         if not running:
             await self._remove_entry(entry)
@@ -316,6 +351,16 @@ class ProcessSessionManager:
             raise ProcessSessionError(
                 "process_session_scope_mismatch",
                 "The process session belongs to a different Run, session, or workspace.",
+            )
+        if (
+            scope.permission_profile is not None
+            and entry.sandbox is not None
+            and entry.sandbox.profile_hash
+            != scope.permission_profile.profile_hash
+        ):
+            raise ProcessSessionError(
+                "process_session_profile_mismatch",
+                "The process session permission profile cannot be changed.",
             )
         return entry
 

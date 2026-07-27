@@ -63,7 +63,12 @@ class ReadFileTool(AgentTool):
         try:
             stat = await backend.stat(path)
         except BackendError as error:
-            return file_error_result("read_file", arguments, error=str(error))
+            return file_error_result(
+                "read_file",
+                arguments,
+                error=str(error),
+                error_code=error.error_code,
+            )
 
         if not stat.exists:
             return file_error_result_for_stat(
@@ -87,6 +92,7 @@ class ReadFileTool(AgentTool):
                 "read_file",
                 arguments,
                 error=f"Failed to read file: {error}",
+                error_code=error.error_code,
             )
 
         content, start_line, end_line, total_lines = select_line_range(
@@ -173,7 +179,12 @@ class WriteFileTool(AgentTool):
         try:
             before = await backend.stat(path)
         except BackendError as error:
-            return file_error_result("write_file", arguments, error=str(error))
+            return file_error_result(
+                "write_file",
+                arguments,
+                error=str(error),
+                error_code=error.error_code,
+            )
 
         content = arguments.get("content")
         if not isinstance(content, str):
@@ -221,6 +232,7 @@ class WriteFileTool(AgentTool):
                 "write_file",
                 arguments,
                 error=str(error),
+                error_code=error.error_code,
             )
 
         payload = {
@@ -254,6 +266,7 @@ def file_error_result_for_stat(
     stat,
     *,
     error: str,
+    error_code: str | None = None,
 ) -> ToolResult:
     return ToolResult(
         name=tool_name,
@@ -266,9 +279,11 @@ def file_error_result_for_stat(
                 "absolute_path": stat.absolute_path,
                 "encoding": "utf-8",
                 "error": error,
+                "error_code": error_code,
             }
         ),
         success=False,
+        error_code=error_code,
     )
 
 

@@ -90,6 +90,7 @@ class RunPowershellTool(AgentTool):
                 timeout_seconds=timeout_seconds,
                 error=str(error),
                 shell=error.shell,
+                error_code=error.error_code,
             )
 
         payload = {
@@ -105,12 +106,16 @@ class RunPowershellTool(AgentTool):
             "stderr": result.stderr,
             "stdout_truncated": result.stdout_truncated,
             "stderr_truncated": result.stderr_truncated,
+            "error_code": result.error_code,
+            "sandbox": result.sandbox,
         }
         return ToolResult(
             name=self.name,
             arguments=arguments,
             content=json_response(payload),
             success=payload["ok"],
+            error_code=result.error_code,
+            sandbox=result.sandbox,
         )
 
 
@@ -122,6 +127,7 @@ def powershell_error_result(
     timeout_seconds: float,
     error: str,
     shell: str | None = None,
+    error_code: str | None = None,
 ) -> ToolResult:
     return ToolResult(
         name="run_powershell",
@@ -140,7 +146,9 @@ def powershell_error_result(
                 "stderr": error,
                 "stdout_truncated": False,
                 "stderr_truncated": False,
+                "error_code": error_code,
             }
         ),
         success=False,
+        error_code=error_code,
     )

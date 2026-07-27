@@ -11,6 +11,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
+from automata_api.agent.execution.permissions import CompiledPermissionProfile
 from automata_api.agent.execution.windows_job import WindowsJob
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,9 @@ class ProcessExecutionScope:
     tool_call_id: str
     session_id: str | None = None
     workspace: str | None = None
+    permission_profile: CompiledPermissionProfile | None = None
+    emit_event: Any = None
+    sandbox_attempt: int = 1
 
 
 _process_scope: ContextVar[ProcessExecutionScope | None] = ContextVar(
@@ -52,6 +56,9 @@ def process_execution_scope(
     *,
     session_id: str | None = None,
     workspace: str | None = None,
+    permission_profile: CompiledPermissionProfile | None = None,
+    emit_event: Any = None,
+    sandbox_attempt: int = 1,
 ) -> Iterator[None]:
     token = _process_scope.set(
         ProcessExecutionScope(
@@ -59,6 +66,9 @@ def process_execution_scope(
             tool_call_id=tool_call_id,
             session_id=session_id,
             workspace=workspace,
+            permission_profile=permission_profile,
+            emit_event=emit_event,
+            sandbox_attempt=sandbox_attempt,
         )
     )
     try:

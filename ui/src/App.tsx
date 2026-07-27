@@ -7,6 +7,7 @@ import { useAutoScroll } from "./hooks/useAutoScroll";
 import { useSessions } from "./hooks/useSessions";
 import { useSkills } from "./hooks/useSkills";
 import { useTauriBridge } from "./hooks/useTauriBridge";
+import { setupSandbox } from "./api/sandbox";
 import {
   chatReducer,
   initialChatState,
@@ -22,6 +23,7 @@ function App() {
   const [chatState, chatDispatch] = useReducer(chatReducer, initialChatState);
   const [prompt, setPrompt] = useState("Inspect the API folder and suggest the first FastAPI route.");
   const [sendMode, setSendMode] = useState<SendMode>("execute");
+  const [sandboxSetupStatus, setSandboxSetupStatus] = useState("");
   const { apiConfig, apiConfigRef, isConfigReady } = useApiConfig();
   const { bridgeStatus, runBridgeCheck, chooseDirectory } = useTauriBridge();
 
@@ -118,6 +120,25 @@ function App() {
     }
   }
 
+  async function handleSandboxSetup() {
+    setSandboxSetupStatus("Preparing sandbox...");
+    try {
+      const result = await setupSandbox(
+        apiConfig,
+        sessions.displayedWorkingDirectory,
+      );
+      setSandboxSetupStatus(
+        result.ready
+          ? `Sandbox ready (${result.backend})`
+          : "Sandbox setup did not complete",
+      );
+    } catch (error) {
+      setSandboxSetupStatus(
+        error instanceof Error ? error.message : "Sandbox setup failed",
+      );
+    }
+  }
+
   return (
     <AppShell
       sessions={sessions.sessions}
@@ -136,6 +157,7 @@ function App() {
       sendMode={sendMode}
       permissionPreset={sessions.permissionPreset}
       permissionUpdating={sessions.permissionUpdating}
+      sandboxSetupStatus={sandboxSetupStatus}
       isStreaming={agentSocket.isStreaming}
       canSend={canSend}
       approvals={approvals}
@@ -162,6 +184,7 @@ function App() {
       onPermissionPresetChange={(permissionPreset) =>
         void sessions.actions.setPermissionPreset(permissionPreset)
       }
+      onSandboxSetup={() => void handleSandboxSetup()}
       onApprovePlan={agentSocket.approvePlan}
       onRespondToApproval={agentSocket.respondToApproval}
       onCancelRun={agentSocket.cancelRun}

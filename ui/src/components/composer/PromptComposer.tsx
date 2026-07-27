@@ -11,6 +11,7 @@ type PromptComposerProps = {
   sendMode: SendMode;
   permissionPreset: PermissionPreset;
   permissionUpdating: boolean;
+  sandboxSetupStatus: string;
   isStreaming: boolean;
   canSend: boolean;
   autoFocus?: boolean;
@@ -23,6 +24,7 @@ type PromptComposerProps = {
   onPromptChange(prompt: string): void;
   onSendModeChange(sendMode: SendMode): void;
   onPermissionPresetChange(permissionPreset: PermissionPreset): void;
+  onSandboxSetup(): void;
   onCancel(): void;
   onToggleSkill(skillId: string): void;
   onToggleSkillEnabled(skill: SkillRecord): Promise<void>;
@@ -34,6 +36,7 @@ export function PromptComposer({
   sendMode,
   permissionPreset,
   permissionUpdating,
+  sandboxSetupStatus,
   isStreaming,
   canSend,
   autoFocus,
@@ -46,6 +49,7 @@ export function PromptComposer({
   onPromptChange,
   onSendModeChange,
   onPermissionPresetChange,
+  onSandboxSetup,
   onCancel,
   onToggleSkill,
   onToggleSkillEnabled,
@@ -66,6 +70,8 @@ export function PromptComposer({
             permissionPreset={permissionPreset}
             disabled={isStreaming || permissionUpdating}
             onChange={onPermissionPresetChange}
+            setupStatus={sandboxSetupStatus}
+            onSetupSandbox={onSandboxSetup}
           />
           <SkillPicker
             skills={skills}

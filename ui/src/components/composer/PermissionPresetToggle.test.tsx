@@ -40,4 +40,25 @@ describe("PermissionPresetToggle", () => {
     expect(getByRole("button", { name: "Default" })).toBeDisabled();
     expect(getByRole("button", { name: "Full Access" })).toBeDisabled();
   });
+
+  it("runs explicit sandbox setup and exposes its current status", () => {
+    const onSetupSandbox = vi.fn();
+    const { getByRole } = render(
+      <PermissionPresetToggle
+        permissionPreset="default"
+        disabled={false}
+        onChange={vi.fn()}
+        setupStatus="Sandbox ready (windows-appcontainer)"
+        onSetupSandbox={onSetupSandbox}
+      />,
+    );
+
+    const setup = getByRole("button", { name: "Prepare Sandbox" });
+    expect(setup).toHaveAttribute(
+      "title",
+      "Sandbox ready (windows-appcontainer)",
+    );
+    fireEvent.click(setup);
+    expect(onSetupSandbox).toHaveBeenCalledOnce();
+  });
 });

@@ -77,6 +77,8 @@ class RunRecord(BaseModel):
     kind: Literal["chat_act", "chat_plan", "plan_execution"]
     mode: Literal["act", "plan"]
     permission_preset: PermissionPreset
+    permission_profile_version: int | None = None
+    sandbox_backend: str | None = None
     status: Literal[
         "queued",
         "running",
