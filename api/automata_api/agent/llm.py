@@ -189,10 +189,12 @@ async def stream_chat_completion(
                         if not first_tool_call_seen:
                             first_tool_call_seen = True
                             span.event("first_tool_call_delta")
-                    if isinstance(delta.get("usage"), dict):
-                        usage = dict(delta["usage"])
-                    if isinstance(delta.get("finish_reason"), str):
-                        finish_reason = delta["finish_reason"]
+                    usage_delta = delta.get("usage")
+                    if isinstance(usage_delta, dict):
+                        usage = dict(usage_delta)
+                    finish_reason_delta = delta.get("finish_reason")
+                    if isinstance(finish_reason_delta, str):
+                        finish_reason = finish_reason_delta
 
                     emit_profile_event(
                         "llm.sse_chunk",

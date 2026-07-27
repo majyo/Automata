@@ -10,7 +10,6 @@ from automata_api.agent.skills.model import (
     SkillSelection,
 )
 
-
 MENTION_RE = re.compile(r"(?<![A-Za-z0-9_\\/-])\$([A-Za-z0-9_:-]+)")
 
 
@@ -75,13 +74,14 @@ def build_skill_messages(
                 f"Skill {skill.name} exceeds maximum body length of {body_budget_chars} characters."
             )
             continue
+        normalized_path = str(skill.path).replace("\\", "/")
         messages.append(
             {
                 "role": "user",
                 "content": (
                     "<skill>\n"
                     f"<name>{skill.name}</name>\n"
-                    f"<path>{str(skill.path).replace('\\', '/')}</path>\n"
+                    f"<path>{normalized_path}</path>\n"
                     f"{contents}\n"
                     "</skill>"
                 ),

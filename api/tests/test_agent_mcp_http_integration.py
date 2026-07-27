@@ -18,7 +18,6 @@ from automata_api.agent.mcp.config import (
 from automata_api.agent.mcp.manager import McpConnectionManager
 from automata_api.agent.mcp.schema import McpError
 
-
 FIXTURE = Path(__file__).parent / "fixtures" / "fake_mcp_http_server.py"
 
 

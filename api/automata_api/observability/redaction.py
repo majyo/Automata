@@ -4,7 +4,6 @@ import hashlib
 import re
 from typing import Any
 
-
 SECRET_KEY_MARKERS = (
     "authorization",
     "api_key",

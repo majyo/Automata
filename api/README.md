@@ -123,6 +123,13 @@ Tests use the `dev` dependency group:
 uv run --directory api --group dev --locked pytest
 ```
 
+The same group contains the backend lint and type-check tools:
+
+```bash
+uv run --directory api --group dev --locked ruff check automata_api tests
+uv run --directory api --group dev --locked pyright
+```
+
 ## Observability
 
 The backend writes low-overhead diagnostic JSONL and a separate span index under

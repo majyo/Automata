@@ -12,7 +12,6 @@ from automata_api.agent.mcp.trust import (
 )
 from automata_api.schemas import McpGrantRequest, McpServerStatus
 
-
 router = APIRouter()
 
 

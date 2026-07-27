@@ -10,7 +10,6 @@ from automata_api.config import get_database_config
 
 from .model import SkillMetadata
 
-
 SETTINGS_VERSION = 2
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Protocol, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Protocol
 
 from automata_api.agent.execution.model import ToolRisk
 from automata_api.agent.tools.base import AgentTool
@@ -42,6 +42,7 @@ class ToolDiscoveryContext:
 class ToolProvider(Protocol):
     def discover(self, context: ToolDiscoveryContext) -> tuple[ToolDescriptor, ...]:
         """Return tool descriptors available for this discovery context."""
+        ...
 
 
 class AsyncToolProvider(Protocol):
@@ -49,3 +50,4 @@ class AsyncToolProvider(Protocol):
         self, context: ToolDiscoveryContext
     ) -> tuple[ToolDescriptor, ...]:
         """Asynchronously return descriptors for this discovery context."""
+        ...

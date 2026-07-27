@@ -2,7 +2,6 @@ import os
 
 from automata_api.config import get_system_prompt, workspace_dir
 
-
 DEFAULT_TOOL_NOTES = (
     "Use exec_command to execute real shell commands inside the workspace. "
     "Choose shell=bash for POSIX shell scripts and shell=powershell for "

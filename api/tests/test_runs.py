@@ -3,8 +3,8 @@ import sqlite3
 
 import pytest
 
-from automata_api.db.connection import db_path
 from automata_api.agent.execution.events import DurableRunEventSink
+from automata_api.db.connection import db_path
 from automata_api.repositories import runs
 from automata_api.repositories.sessions import create_plan, save_message
 

@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, cast
 
-
 PermissionPreset = Literal["default", "full_access"]
 ApprovalPolicy = Literal["on_request", "never"]
 

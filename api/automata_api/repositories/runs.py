@@ -8,7 +8,6 @@ from typing import Any, Literal
 from automata_api.db.connection import connect_db, db_lock
 from automata_api.utils import new_id, now_iso
 
-
 RunKind = Literal["chat_act", "chat_plan", "plan_execution"]
 RunMode = Literal["act", "plan"]
 RunStatus = Literal[

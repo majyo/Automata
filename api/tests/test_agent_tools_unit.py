@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 
 from automata_api.agent import tools
-from automata_api.agent.tools.base import AgentTool
 from automata_api.agent.tools import registry
+from automata_api.agent.tools.base import AgentTool
 
 
 def patch_text(*lines):

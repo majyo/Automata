@@ -1,0 +1,12 @@
+{
+  "include": [
+    "api/automata_api"
+  ],
+  "exclude": [
+    "api/tests"
+  ],
+  "venvPath": "api",
+  "venv": ".venv",
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "standard"
+}

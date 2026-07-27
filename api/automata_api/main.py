@@ -1,16 +1,16 @@
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-import logging
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from automata_api.config import get_api_config, load_local_env
-from automata_api.agent.execution.process import process_supervisor
-from automata_api.agent.execution.process_sessions import process_session_manager
 from automata_api.agent.execution.coordinator import run_coordinator
 from automata_api.agent.execution.event_hub import run_event_hub
+from automata_api.agent.execution.process import process_supervisor
+from automata_api.agent.execution.process_sessions import process_session_manager
+from automata_api.config import get_api_config, load_local_env
 from automata_api.db.schema import init_db
 from automata_api.observability import (
     get_observability_manager,
@@ -24,7 +24,6 @@ from automata_api.security import (
     token_is_valid,
     validate_loopback_host,
 )
-
 
 load_local_env()
 logger = logging.getLogger(__name__)

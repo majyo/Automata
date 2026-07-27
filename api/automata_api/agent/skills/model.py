@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-
 SkillScope = Literal["repo", "user", "packaged", "extra", "plugin"]
 AgentMode = Literal["act", "plan"]
 SkillDiagnosticStatus = Literal[

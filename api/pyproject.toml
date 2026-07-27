@@ -21,12 +21,23 @@ build = [
 
 [dependency-groups]
 dev = [
+  "pyright>=1.1.411,<2",
   "pytest>=8.3",
+  "ruff>=0.16,<1",
 ]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+"automata_api/**/__init__.py" = ["F401"]
 
 [tool.uv]
 package = false

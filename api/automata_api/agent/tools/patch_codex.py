@@ -1,8 +1,7 @@
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Literal
-
 
 BEGIN_PATCH_MARKER = "*** Begin Patch"
 END_PATCH_MARKER = "*** End Patch"

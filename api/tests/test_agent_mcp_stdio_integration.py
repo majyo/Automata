@@ -11,7 +11,6 @@ from automata_api.agent.mcp.config import (
 )
 from automata_api.agent.mcp.manager import McpConnectionManager
 
-
 FIXTURE = Path(__file__).parent / "fixtures" / "fake_mcp_server.py"
 
 

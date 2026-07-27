@@ -2,13 +2,6 @@ from typing import Any
 
 from ._core import *  # noqa: F403
 from ._core import ToolResult, json_response, parse_tool_arguments
-from .registry import (
-    REGISTERED_TOOLS,
-    ToolRegistry,
-    default_tools,
-    registered_tools,
-    tool_for_name,
-)
 from .model import (
     AsyncToolProvider,
     ToolDescriptor,
@@ -17,6 +10,13 @@ from .model import (
     ToolProvider,
 )
 from .providers import BackendToolProvider, StaticToolProvider, descriptor_for_tool
+from .registry import (
+    REGISTERED_TOOLS,
+    ToolRegistry,
+    default_tools,
+    registered_tools,
+    tool_for_name,
+)
 from .router import ToolRouter, ToolRouterBuilder
 from .tool_search import TOOL_SEARCH_NAME
 

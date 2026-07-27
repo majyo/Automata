@@ -13,7 +13,6 @@ from typing import Any
 
 from automata_api.agent.execution.windows_job import WindowsJob
 
-
 logger = logging.getLogger(__name__)
 
 

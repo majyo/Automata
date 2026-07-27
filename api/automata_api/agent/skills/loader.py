@@ -18,7 +18,6 @@ from .model import (
     SkillToolDependency,
 )
 
-
 SKILL_FILENAME = "SKILL.md"
 MAX_SCAN_DEPTH = 6
 MAX_SKILL_DIRS_PER_ROOT = 2_000

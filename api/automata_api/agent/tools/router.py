@@ -9,10 +9,10 @@ from typing import Any
 from automata_api.agent.backends.base import Backend
 from automata_api.agent.tools._core import ToolResult
 from automata_api.agent.tools.model import (
+    AsyncToolProvider,
     ToolDescriptor,
     ToolDiscoveryContext,
     ToolExposure,
-    AsyncToolProvider,
     ToolProvider,
 )
 from automata_api.agent.tools.providers import BackendToolProvider
@@ -22,7 +22,6 @@ from automata_api.agent.tools.tool_search import (
     run_tool_search,
     tool_search_spec,
 )
-
 
 logger = logging.getLogger(__name__)
 DEFAULT_MAX_MODEL_TOOLS = 128

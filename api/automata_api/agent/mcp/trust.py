@@ -15,7 +15,6 @@ from automata_api.agent.mcp.config import (
 from automata_api.agent.mcp.schema import CallPolicy, TrustLevel
 from automata_api.config import get_database_config
 
-
 GrantScope = Literal["global", "workspace"]
 
 

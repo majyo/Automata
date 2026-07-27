@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
+
 from jsonschema import Draft202012Validator, SchemaError
 
 from automata_api.agent.mcp.config import (
@@ -20,7 +21,6 @@ from automata_api.agent.tools.model import (
     ToolDiscoveryContext,
     ToolExposure,
 )
-
 
 logger = logging.getLogger(__name__)
 

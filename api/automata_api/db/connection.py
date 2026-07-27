@@ -4,7 +4,6 @@ from threading import Lock
 
 from automata_api.config import get_database_config
 
-
 db_lock = Lock()
 
 

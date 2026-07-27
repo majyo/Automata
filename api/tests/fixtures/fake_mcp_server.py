@@ -10,7 +10,6 @@ from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 from mcp.server.stdio import stdio_server
 
-
 server = Server("automata-test-mcp")
 
 

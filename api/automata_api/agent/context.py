@@ -10,7 +10,6 @@ from automata_api.agent.prompts import agent_system_prompt
 from automata_api.agent.types import AgentContextStore, EventEmitter
 from automata_api.config import MAX_CONTEXT_MESSAGES, ContextCompressionConfig
 
-
 RAW_CONTEXT_TAIL_MESSAGES = 8
 logger = logging.getLogger(__name__)
 

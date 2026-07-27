@@ -16,7 +16,6 @@ from .patch import (
 from .search import GrepTool, RgTool, grep_tool, rg_tool
 from .write_stdin import WriteStdinTool, write_stdin_tool
 
-
 REGISTERED_TOOLS: tuple[AgentTool, ...] = (
     rg_tool,
     grep_tool,

@@ -2,7 +2,12 @@ from typing import Any
 
 from automata_api.agent.backends.base import Backend
 
-from ._core import ToolResult, exec_command_error_result, string_argument, timeout_argument
+from ._core import (
+    ToolResult,
+    exec_command_error_result,
+    string_argument,
+    timeout_argument,
+)
 from .base import AgentTool
 
 

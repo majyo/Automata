@@ -4,10 +4,12 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from automata_api.db.migrations import v0001_baseline
-from automata_api.db.migrations import v0002_runs
-from automata_api.db.migrations import v0003_plan_attempts
-from automata_api.db.migrations import v0004_permission_presets
+from automata_api.db.migrations import (
+    v0001_baseline,
+    v0002_runs,
+    v0003_plan_attempts,
+    v0004_permission_presets,
+)
 
 
 @dataclass(frozen=True)

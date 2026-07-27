@@ -7,8 +7,8 @@ from fastapi import APIRouter, HTTPException
 from automata_api.agent.skills.diagnostics import diagnose_skill_dependencies
 from automata_api.agent.skills.manager import get_skill_manager
 from automata_api.agent.skills.model import (
-    SkillDependencyDiagnostic,
     SkillDependencies,
+    SkillDependencyDiagnostic,
     SkillInterface,
     SkillLoadOutcome,
     SkillMetadata,
@@ -16,17 +16,16 @@ from automata_api.agent.skills.model import (
 )
 from automata_api.agent.tools.router import ToolRouter
 from automata_api.schemas import (
-    SkillDependencyDiagnosticRecord,
     SkillDependenciesRecord,
+    SkillDependencyDiagnosticRecord,
     SkillDiagnosticsResponse,
     SkillEnabledRequest,
     SkillErrorRecord,
     SkillInterfaceRecord,
     SkillRecord,
-    SkillToolDependencyRecord,
     SkillsListResponse,
+    SkillToolDependencyRecord,
 )
-
 
 router = APIRouter()
 

@@ -2,7 +2,6 @@ from fastapi import APIRouter, WebSocket
 
 from automata_api.services.connection import AgentConnection
 
-
 router = APIRouter()
 
 

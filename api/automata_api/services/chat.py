@@ -1,7 +1,7 @@
 import asyncio
 import json
 from collections.abc import AsyncIterator
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 import httpx
 
@@ -9,7 +9,6 @@ from automata_api.agent.backends.factory import (
     BackendConfigurationError,
     create_backend,
 )
-from automata_api.agent.llm import AgentProviderError
 from automata_api.agent.execution.approval import ApprovalBroker
 from automata_api.agent.execution.model import (
     CancellationToken,
@@ -18,12 +17,14 @@ from automata_api.agent.execution.model import (
 )
 from automata_api.agent.execution.orchestrator import ToolExecutionOrchestrator
 from automata_api.agent.execution.permissions import PermissionPreset
+from automata_api.agent.llm import AgentProviderError
 from automata_api.agent.mcp.runtime import create_mcp_tool_runtime
 from automata_api.agent.runtime import stream_agent_loop, stream_plan_loop
 from automata_api.agent.skills.runtime import (
     create_skill_turn_context,
     skill_selections_from_payload,
 )
+from automata_api.agent.types import AgentLoopEvent
 from automata_api.config import AgentConfigurationError
 from automata_api.observability import observe_span
 from automata_api.repositories.agent_store import SessionAgentContextStore
@@ -51,7 +52,7 @@ async def receive_payload(websocket) -> ChatPayload:
     if not isinstance(payload, dict):
         return {"type": "invalid"}
 
-    return payload
+    return cast(ChatPayload, payload)
 
 
 async def stream_agent_reply(
@@ -328,7 +329,7 @@ async def send_skill_runtime_events(
 async def forward_agent_events(
     session_id: str,
     websocket: JsonSender,
-    events: AsyncIterator[dict[str, Any]],
+    events: AsyncIterator[AgentLoopEvent],
     run_id: str,
 ) -> str:
     pending_agent_parts: list[str] = []

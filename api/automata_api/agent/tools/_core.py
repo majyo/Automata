@@ -3,8 +3,8 @@ import codecs
 import json
 import os
 import re
-import shutil
 import shlex
+import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -26,7 +26,6 @@ from .patch_codex import (
     apply_codex_hunks_to_content,
     parse_codex_patch,
 )
-
 
 DEFAULT_BASH_TIMEOUT_SECONDS = 30.0
 MAX_BASH_TIMEOUT_SECONDS = 120.0

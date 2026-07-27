@@ -11,7 +11,6 @@ from automata_api.agent.tools._core import (
 )
 from automata_api.agent.tools.model import ToolDescriptor
 
-
 TOOL_SEARCH_NAME = "tool_search"
 DEFAULT_TOOL_SEARCH_LIMIT = 8
 MAX_TOOL_SEARCH_LIMIT = 20

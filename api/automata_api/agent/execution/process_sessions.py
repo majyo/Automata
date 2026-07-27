@@ -4,6 +4,7 @@ import asyncio
 import codecs
 import time
 import uuid
+from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -12,7 +13,6 @@ from automata_api.agent.execution.process import (
     current_process_scope,
     process_supervisor,
 )
-
 
 MAX_LIVE_PROCESS_SESSIONS = 8
 PROCESS_SESSION_IDLE_SECONDS = 60.0
@@ -382,7 +382,7 @@ class ProcessSessionManager:
             return
 
     async def _finish_readers(self, entry: ProcessSessionEntry) -> None:
-        tasks = [
+        tasks: list[Awaitable[object]] = [
             task
             for task in (entry.stdout_task, entry.stderr_task, entry.wait_task)
             if task is not None

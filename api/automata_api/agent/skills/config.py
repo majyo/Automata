@@ -4,8 +4,12 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from automata_api.config import api_dir, get_database_config, read_bool_env, read_int_env
-
+from automata_api.config import (
+    api_dir,
+    get_database_config,
+    read_bool_env,
+    read_int_env,
+)
 
 DEFAULT_SKILL_METADATA_BUDGET_CHARS = 8_000
 DEFAULT_SKILL_BODY_BUDGET_CHARS = 65_536

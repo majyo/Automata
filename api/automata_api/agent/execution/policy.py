@@ -1,6 +1,7 @@
-from typing import Any
+from typing import Any, cast
 
 from automata_api.agent.execution.model import ToolPolicyDecision, ToolRisk
+from automata_api.agent.mcp.schema import McpPolicyDecision
 from automata_api.agent.tools.model import ToolDescriptor
 
 
@@ -17,7 +18,10 @@ class ToolPolicyEngine:
 
         executor_decision = getattr(descriptor.executor, "policy_decision", None)
         if callable(executor_decision):
-            result = executor_decision(arguments, mode=mode)
+            result = cast(
+                McpPolicyDecision,
+                executor_decision(arguments, mode=mode),
+            )
             if result.action == "deny":
                 return ToolPolicyDecision("deny", descriptor.risk, result.reason)
             if result.action == "prompt":

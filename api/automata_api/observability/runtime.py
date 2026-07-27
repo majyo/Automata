@@ -27,7 +27,6 @@ from automata_api.observability.retention import enforce_retention
 from automata_api.observability.sampler import sample_process_resources
 from automata_api.observability.writer import ObservabilityWriter
 
-
 _trace_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "automata_trace_id", default=None
 )

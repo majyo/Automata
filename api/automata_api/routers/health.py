@@ -4,7 +4,6 @@ from fastapi import APIRouter
 
 from automata_api.agent.status import agent_status
 
-
 router = APIRouter()
 
 

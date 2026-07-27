@@ -1,6 +1,5 @@
 from collections.abc import Awaitable, Callable
-from typing import Any, Literal, Protocol, TypedDict
-
+from typing import Any, Literal, Protocol, TypeAlias, TypedDict
 
 EventEmitter = Callable[[dict[str, Any]], Awaitable[None]]
 
@@ -38,7 +37,7 @@ class AgentFinalEvent(TypedDict):
     mode: Literal["act", "plan"]
 
 
-AgentLoopEvent = (
+AgentLoopEvent: TypeAlias = (
     AgentStepEvent
     | AgentTokenEvent
     | AgentToolCallEvent

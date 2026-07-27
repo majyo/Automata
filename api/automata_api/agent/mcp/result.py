@@ -13,7 +13,6 @@ from automata_api.agent.mcp.schema import (
 )
 from automata_api.agent.tools._core import ToolResult
 
-
 MAX_TEXT_CHARS = 64_000
 MAX_STRUCTURED_CHARS = 32_000
 MAX_CONTENT_BLOCKS = 64

@@ -8,13 +8,13 @@ from automata_api.agent.context import (
     compress_loop_context_if_needed,
     fetch_agent_context,
 )
+from automata_api.agent.execution.model import CancellationToken, ToolExecutionContext
+from automata_api.agent.execution.orchestrator import ToolExecutionOrchestrator
 from automata_api.agent.prompts import (
     agent_system_prompt,
     approved_plan_message,
     plan_system_prompt,
 )
-from automata_api.agent.execution.model import CancellationToken, ToolExecutionContext
-from automata_api.agent.execution.orchestrator import ToolExecutionOrchestrator
 from automata_api.agent.skills.model import SkillTurnContext
 from automata_api.agent.tools import ToolResult, run_tool, tool_specs
 from automata_api.agent.tools.registry import ToolRegistry, registered_tools
@@ -30,7 +30,6 @@ from automata_api.observability import (
     emit_content_record,
     observe_span,
 )
-
 
 PLAN_TOOL_NAMES = {tool.name for tool in registered_tools() if tool.read_only}
 MAX_TOOL_OUTPUT_EVENT_CHARS = 8_192

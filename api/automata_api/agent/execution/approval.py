@@ -15,7 +15,6 @@ from automata_api.agent.execution.model import (
     ToolPolicyDecision,
 )
 
-
 ApprovalEmitter = Callable[[dict[str, Any]], Awaitable[None]]
 
 

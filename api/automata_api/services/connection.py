@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Mapping
 from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
@@ -126,7 +126,7 @@ class AgentConnection:
             await run_event_hub.unregister(self.sender)
             self.sender.close()
 
-    async def _handle_payload(self, payload: dict[str, Any]) -> None:
+    async def _handle_payload(self, payload: Mapping[str, Any]) -> None:
         payload_type = payload.get("type")
         if payload_type == "tool_approval_response":
             await self._resolve_approval(payload)
@@ -169,7 +169,7 @@ class AgentConnection:
         )
 
     async def _start_prompt(
-        self, session_id: str, payload: dict[str, Any]
+        self, session_id: str, payload: Mapping[str, Any]
     ) -> None:
         prompt = str(payload.get("prompt", "")).strip()
         if not prompt:
@@ -223,7 +223,7 @@ class AgentConnection:
     async def _start_plan_execution(
         self,
         session_id: str,
-        payload: dict[str, Any],
+        payload: Mapping[str, Any],
         *,
         retry: bool,
     ) -> None:
@@ -307,7 +307,7 @@ class AgentConnection:
                 }
             )
 
-    async def _resolve_approval(self, payload: dict[str, Any]) -> None:
+    async def _resolve_approval(self, payload: Mapping[str, Any]) -> None:
         run_id = str(payload.get("run_id", "")).strip()
         session_id = await self._session_id_for_run(payload, run_id)
         if session_id is None:
@@ -343,7 +343,7 @@ class AgentConnection:
                 }
             )
 
-    async def _handle_cancel(self, payload: dict[str, Any]) -> None:
+    async def _handle_cancel(self, payload: Mapping[str, Any]) -> None:
         run_id = str(payload.get("run_id", "")).strip()
         session_id = await self._session_id_for_run(payload, run_id)
         if session_id is None:
@@ -369,7 +369,7 @@ class AgentConnection:
                 }
             )
 
-    async def _resume_run(self, payload: dict[str, Any]) -> None:
+    async def _resume_run(self, payload: Mapping[str, Any]) -> None:
         run_id = str(payload.get("run_id", "")).strip()
         session_id = str(payload.get("session_id", "")).strip()
         try:
@@ -433,7 +433,7 @@ class AgentConnection:
         )
 
     async def _session_id_for_run(
-        self, payload: dict[str, Any], run_id: str
+        self, payload: Mapping[str, Any], run_id: str
     ) -> str | None:
         requested_session_id = str(payload.get("session_id", "")).strip()
         try:

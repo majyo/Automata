@@ -6,7 +6,6 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Literal
 
-
 ToolOutputEmitter = Callable[[dict[str, Any]], Awaitable[None]]
 ToolOutputStream = Literal["stdout", "stderr"]
 

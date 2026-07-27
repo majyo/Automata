@@ -4,9 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from automata_api.repositories.sessions import fetch_plan
-from automata_api.repositories.sessions import get_context_messages_after_sequence
 from automata_api.agent import tools
+from automata_api.repositories.sessions import (
+    fetch_plan,
+    get_context_messages_after_sequence,
+)
 
 
 def patch_text(*lines):

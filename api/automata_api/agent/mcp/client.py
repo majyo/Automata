@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import subprocess
+import os
 from contextlib import AsyncExitStack
 from datetime import timedelta
 from typing import Protocol
@@ -83,8 +83,11 @@ class McpSdkClientAdapter:
                 env=dict(transport.env),
                 cwd=transport.cwd,
             )
+            errlog = stack.enter_context(
+                open(os.devnull, "w", encoding="utf-8")
+            )
             return await stack.enter_async_context(
-                stdio_client(parameters, errlog=subprocess.DEVNULL)
+                stdio_client(parameters, errlog=errlog)
             )
 
         if isinstance(

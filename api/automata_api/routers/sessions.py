@@ -18,7 +18,6 @@ from automata_api.schemas import (
     UpdateSessionRequest,
 )
 
-
 router = APIRouter()
 
 

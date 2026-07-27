@@ -3,11 +3,11 @@ from pathlib import Path
 
 import pytest
 
-from automata_api.agent.prompts import agent_workspace
 from automata_api.agent.backends.factory import default_backend_kind
+from automata_api.agent.prompts import agent_workspace
 from automata_api.db.schema import (
-    DatabaseMigrationError,
     DatabaseMigrationChecksumError,
+    DatabaseMigrationError,
     DatabaseSchemaTooNewError,
     init_db,
 )
@@ -18,12 +18,12 @@ from automata_api.repositories.sessions import (
     create_plan,
     fetch_context_summary,
     fetch_plan,
-    list_messages,
-    mark_plan_executed,
     get_context_messages_after_sequence,
     get_recent_context_messages,
-    save_message,
+    list_messages,
+    mark_plan_executed,
     save_context_message,
+    save_message,
     save_tool_run_message,
     update_tool_run_result,
     upsert_context_summary,

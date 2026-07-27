@@ -7,7 +7,6 @@ from typing import Literal
 
 from automata_api.config import get_database_config
 
-
 ObservabilityMode = Literal["diagnostic", "profile"]
 
 

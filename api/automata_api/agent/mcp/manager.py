@@ -16,7 +16,6 @@ from automata_api.agent.mcp.schema import (
 )
 from automata_api.observability import observe_span
 
-
 McpClientFactory = Callable[[McpServerDefinition, str], McpClient]
 logger = logging.getLogger(__name__)
 

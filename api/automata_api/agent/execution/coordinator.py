@@ -27,7 +27,6 @@ from automata_api.agent.execution.process_sessions import process_session_manage
 from automata_api.observability import observe_span
 from automata_api.repositories import runs as run_repository
 
-
 RunExecutor = Callable[["RunHandle"], Awaitable[RunOutcome]]
 PromptRunExecutor = Callable[
     ["RunHandle", dict[str, Any]], Awaitable[RunOutcome]

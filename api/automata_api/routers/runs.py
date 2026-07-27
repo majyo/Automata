@@ -8,7 +8,6 @@ from fastapi import APIRouter, HTTPException, Query
 from automata_api.repositories import runs as run_repository
 from automata_api.schemas import PlanAttemptRecord, RunRecord
 
-
 router = APIRouter()
 
 

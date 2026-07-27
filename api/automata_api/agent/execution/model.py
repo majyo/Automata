@@ -3,7 +3,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-
 ToolRisk = Literal["read", "write", "command", "destructive", "external"]
 PolicyAction = Literal["allow", "prompt", "deny"]
 ApprovalDecision = Literal["allow_once", "allow_for_run", "deny"]

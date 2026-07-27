@@ -9,7 +9,6 @@ from mcp import types
 from mcp.server.fastmcp import FastMCP
 from starlette.responses import RedirectResponse
 
-
 request_log = Path(os.environ["FAKE_MCP_HTTP_REQUEST_LOG"])
 call_log = Path(os.environ["FAKE_MCP_HTTP_CALL_LOG"])
 server = FastMCP(

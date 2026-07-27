@@ -53,8 +53,15 @@ class ReadFileTool(AgentTool):
 
     async def run(self, arguments: dict[str, Any]) -> ToolResult:
         backend = require_backend(self.backend)
+        path = arguments.get("path")
+        if not isinstance(path, str) or not path.strip():
+            return file_error_result(
+                "read_file",
+                arguments,
+                error="Missing required string path.",
+            )
         try:
-            stat = await backend.stat(arguments.get("path"))
+            stat = await backend.stat(path)
         except BackendError as error:
             return file_error_result("read_file", arguments, error=str(error))
 
@@ -156,8 +163,15 @@ class WriteFileTool(AgentTool):
 
     async def run(self, arguments: dict[str, Any]) -> ToolResult:
         backend = require_backend(self.backend)
+        path = arguments.get("path")
+        if not isinstance(path, str) or not path.strip():
+            return file_error_result(
+                "write_file",
+                arguments,
+                error="Missing required string path.",
+            )
         try:
-            before = await backend.stat(arguments.get("path"))
+            before = await backend.stat(path)
         except BackendError as error:
             return file_error_result("write_file", arguments, error=str(error))
 

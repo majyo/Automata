@@ -1,7 +1,6 @@
 import ast
 from pathlib import Path
 
-
 FORBIDDEN_IMPORTS = (
     "automata_api.services",
     "automata_api.routers",

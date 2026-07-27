@@ -12,7 +12,6 @@ from urllib.parse import urlparse
 from automata_api.agent.tools.model import ToolExposure
 from automata_api.config import api_dir, get_database_config
 
-
 McpConfigProvenance = Literal["explicit", "user", "workspace", "packaged"]
 McpTransportType = Literal["stdio", "streamable_http"]
 _WORKSPACE_TOKEN = "${workspace}"

@@ -6,7 +6,6 @@ from collections.abc import Iterable
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-
 API_TOKEN_ENV = "AUTOMATA_API_TOKEN"
 MIN_API_TOKEN_CHARS = 32
 WEBSOCKET_AUTH_TIMEOUT_SECONDS = 3.0
