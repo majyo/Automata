@@ -63,6 +63,36 @@ def test_env_file_candidates_honors_explicit_env_file_first(tmp_path, monkeypatc
     assert config.env_file_candidates()[0] == Path(env_file).resolve()
 
 
+def test_agent_config_defaults_max_steps(monkeypatch):
+    monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
+    monkeypatch.delenv("AUTOMATA_AGENT_MAX_STEPS", raising=False)
+
+    agent = config.get_agent_config()
+
+    assert agent.max_steps == 24
+
+
+def test_agent_config_honors_max_steps_env(monkeypatch):
+    monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
+    monkeypatch.setenv("AUTOMATA_AGENT_MAX_STEPS", "40")
+
+    agent = config.get_agent_config()
+
+    assert agent.max_steps == 40
+
+
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_agent_config_rejects_non_positive_max_steps(monkeypatch, value):
+    monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
+    monkeypatch.setenv("AUTOMATA_AGENT_MAX_STEPS", value)
+
+    with pytest.raises(
+        config.AgentConfigurationError,
+        match="AUTOMATA_AGENT_MAX_STEPS must be greater than 0.",
+    ):
+        config.get_agent_config()
+
+
 def test_context_compression_config_defaults(monkeypatch):
     monkeypatch.delenv("AUTOMATA_CONTEXT_COMPRESSION_ENABLED", raising=False)
     monkeypatch.delenv("AUTOMATA_CONTEXT_MAX_TOKENS", raising=False)

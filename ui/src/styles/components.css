@@ -1803,6 +1803,15 @@ p {
   box-shadow: var(--md-elev-1);
 }
 
+.permission-toggle button {
+  min-width: auto;
+}
+
+.permission-toggle button.full-access.active {
+  color: var(--md-error);
+  background: color-mix(in srgb, var(--md-error) 10%, var(--md-surface));
+}
+
 .mode-toggle button:disabled {
   color: color-mix(in srgb, var(--md-on-surface) 38%, transparent);
   background: transparent;

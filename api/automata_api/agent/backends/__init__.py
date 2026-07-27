@@ -2,6 +2,7 @@ from automata_api.agent.backends.base import (
     Backend,
     BackendError,
     ExecResult,
+    FileListResult,
     FileStat,
     SearchResult,
 )
@@ -19,6 +20,7 @@ __all__ = [
     "BackendConfigurationError",
     "BackendError",
     "ExecResult",
+    "FileListResult",
     "FileStat",
     "LocalBackend",
     "SearchResult",

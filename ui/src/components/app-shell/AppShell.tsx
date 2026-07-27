@@ -11,7 +11,7 @@ import type {
   SendMode,
   ToolApprovalRequest,
 } from "../../types/chat";
-import type { SessionSummary } from "../../types/session";
+import type { PermissionPreset, SessionSummary } from "../../types/session";
 import type { SkillRecord, SkillRuntimeNotice } from "../../types/skills";
 
 type Theme = "light" | "dark";
@@ -33,6 +33,8 @@ type AppShellProps = {
   socketStatus: string;
   prompt: string;
   sendMode: SendMode;
+  permissionPreset: PermissionPreset;
+  permissionUpdating: boolean;
   isStreaming: boolean;
   canSend: boolean;
   approvals: ToolApprovalRequest[];
@@ -56,6 +58,7 @@ type AppShellProps = {
   onSubmit(event: FormEvent<HTMLFormElement>): void;
   onPromptChange(prompt: string): void;
   onSendModeChange(sendMode: SendMode): void;
+  onPermissionPresetChange(permissionPreset: PermissionPreset): void;
   onApprovePlan(message: ChatMessage): void;
   onRespondToApproval(approval: ToolApprovalRequest, decision: ApprovalDecision): void;
   onCancelRun(): void;
@@ -79,6 +82,8 @@ export function AppShell({
   socketStatus,
   prompt,
   sendMode,
+  permissionPreset,
+  permissionUpdating,
   isStreaming,
   canSend,
   approvals,
@@ -102,6 +107,7 @@ export function AppShell({
   onSubmit,
   onPromptChange,
   onSendModeChange,
+  onPermissionPresetChange,
   onApprovePlan,
   onRespondToApproval,
   onCancelRun,
@@ -162,6 +168,8 @@ export function AppShell({
             defaultWorkingDirectory={defaultWorkingDirectory}
             prompt={prompt}
             sendMode={sendMode}
+            permissionPreset={permissionPreset}
+            permissionUpdating={permissionUpdating}
             isStreaming={isStreaming}
             canSend={canSend}
             approvals={approvals}
@@ -175,6 +183,7 @@ export function AppShell({
             onSubmit={onSubmit}
             onPromptChange={onPromptChange}
             onSendModeChange={onSendModeChange}
+            onPermissionPresetChange={onPermissionPresetChange}
             onApprovePlan={onApprovePlan}
             onRespondToApproval={onRespondToApproval}
             onCancelRun={onCancelRun}

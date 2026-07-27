@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from automata_api.agent import llm
+from automata_api.agent import llm, tools
 from automata_api.config import AgentConfig
 from automata_api.observability import (
     emit_content_record,
@@ -180,6 +180,47 @@ def test_profile_writes_samples_and_explicit_redacted_content(tmp_path):
     assert "managed_process_count" in resource_sample["attributes"]
     if os.name == "nt":
         assert resource_sample["attributes"]["rss_bytes"] > 0
+
+
+def test_rg_files_profile_records_summary_without_paths(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    sentinel = "profile-path-sentinel.py"
+    (workspace / sentinel).write_text("", encoding="utf-8")
+
+    async def scenario():
+        await start_observability(
+            observability_config(tmp_path, mode="profile")
+        )
+        result = await tools.run_tool(
+            "rg",
+            {"mode": "files", "path": "."},
+            str(workspace),
+        )
+        await stop_observability()
+        return result
+
+    result = asyncio.run(scenario())
+    assert result.success is True
+
+    profile_dir = next(
+        (tmp_path / "observability" / "profiles").iterdir()
+    )
+    records = read_jsonl_files(profile_dir)
+    span = next(
+        record
+        for record in records
+        if record.get("record_type") == "span_end"
+        and record.get("name") == "rg.files"
+    )
+    assert span["attributes"]["engine"] in {
+        "rg",
+        "git",
+        "filesystem",
+    }
+    assert span["attributes"]["file_count"] == 1
+    assert span["attributes"]["truncated"] is False
+    assert sentinel not in json.dumps(records, ensure_ascii=False)
 
 
 def test_backpressure_drops_normal_events_and_falls_back_for_critical(

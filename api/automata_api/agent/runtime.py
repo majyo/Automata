@@ -21,6 +21,7 @@ from automata_api.agent.tools.registry import ToolRegistry, registered_tools
 from automata_api.agent.tools.router import ToolRouter
 from automata_api.agent.types import AgentContextStore, AgentLoopEvent
 from automata_api.config import (
+    DEFAULT_AGENT_MAX_STEPS,
     ContextCompressionConfig,
     get_agent_config,
     get_context_compression_config,
@@ -31,7 +32,6 @@ from automata_api.observability import (
 )
 
 
-MAX_AGENT_STEPS = 6
 PLAN_TOOL_NAMES = {tool.name for tool in registered_tools() if tool.read_only}
 MAX_TOOL_OUTPUT_EVENT_CHARS = 8_192
 MAX_TOOL_OUTPUT_CHARS_PER_CALL = 262_144
@@ -100,6 +100,7 @@ async def stream_agent_loop(
         tools=tools,
         compression_config=compression_config,
         model=config.model,
+        max_steps=config.max_steps,
         mode="act",
         allowed_tool_names=None,
         workspace=workspace,
@@ -177,6 +178,7 @@ async def stream_plan_loop(
         tools=tools,
         compression_config=compression_config,
         model=config.model,
+        max_steps=config.max_steps,
         mode="plan",
         allowed_tool_names=allowed_tool_names,
         workspace=workspace,
@@ -196,6 +198,7 @@ async def stream_model_loop(
     model: str,
     mode: str,
     allowed_tool_names: set[str] | None,
+    max_steps: int = DEFAULT_AGENT_MAX_STEPS,
     router: ToolRouter | None = None,
     tools: list[dict[str, Any]] | None = None,
     workspace: str | None = None,
@@ -206,7 +209,7 @@ async def stream_model_loop(
     cancellation: CancellationToken | None = None,
     orchestrator: ToolExecutionOrchestrator | None = None,
 ) -> AsyncIterator[AgentLoopEvent]:
-    for step in range(1, MAX_AGENT_STEPS + 1):
+    for step in range(1, max_steps + 1):
         async with observe_span(
             "agent.step",
             attributes={
@@ -323,7 +326,7 @@ async def stream_model_loop(
             )
 
     raise llm.AgentProviderError(
-        f"Agent reached the maximum step limit ({MAX_AGENT_STEPS}) before finishing."
+        f"Agent reached the maximum step limit ({max_steps}) before finishing."
     )
 
 

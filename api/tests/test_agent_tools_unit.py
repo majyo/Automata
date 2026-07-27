@@ -44,6 +44,23 @@ def test_tool_specs_include_expected_tool_names():
         "powershell",
     ]
 
+    rg_spec = next(
+        spec for spec in specs if spec["function"]["name"] == "rg"
+    )
+    rg_parameters = rg_spec["function"]["parameters"]
+    assert rg_parameters["properties"]["mode"]["enum"] == [
+        "search",
+        "files",
+    ]
+    assert "required" not in rg_parameters
+
+    grep_spec = next(
+        spec for spec in specs if spec["function"]["name"] == "grep"
+    )
+    grep_parameters = grep_spec["function"]["parameters"]
+    assert "mode" not in grep_parameters["properties"]
+    assert grep_parameters["required"] == ["pattern"]
+
 
 def test_registered_tool_names_are_unique():
     registered_tools = registry.registered_tools()

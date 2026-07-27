@@ -18,6 +18,10 @@ from automata_api.agent.execution.model import (
     PublicRunError,
     RunOutcome,
 )
+from automata_api.agent.execution.permissions import (
+    PermissionPreset,
+    normalize_permission_preset,
+)
 from automata_api.agent.execution.process import process_supervisor
 from automata_api.agent.execution.process_sessions import process_session_manager
 from automata_api.observability import observe_span
@@ -37,6 +41,7 @@ PlanRunExecutor = Callable[
 class RunHandle:
     run_id: str
     session_id: str
+    permission_preset: PermissionPreset
     cancellation: CancellationToken
     approval_broker: ApprovalBroker
     event_sink: DurableRunEventSink
@@ -194,6 +199,9 @@ class RunCoordinator:
         handle = RunHandle(
             run_id=str(run["id"]),
             session_id=str(run["session_id"]),
+            permission_preset=normalize_permission_preset(
+                run["permission_preset"]
+            ),
             cancellation=cancellation,
             approval_broker=broker,
             event_sink=event_sink,

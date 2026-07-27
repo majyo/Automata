@@ -7,6 +7,11 @@ from automata_api.agent.backends.factory import (
     available_backend_kinds,
     default_backend_kind,
 )
+from automata_api.agent.execution.permissions import (
+    DEFAULT_PERMISSION_PRESET,
+    PermissionPreset,
+    normalize_permission_preset,
+)
 from automata_api.agent.prompts import agent_workspace
 from automata_api.db.connection import connect_db, db_lock
 from automata_api.utils import new_id, normalize_title, now_iso
@@ -21,6 +26,10 @@ class InvalidWorkingDirectoryError(ValueError):
 
 
 class InvalidBackendError(ValueError):
+    pass
+
+
+class InvalidPermissionPresetError(ValueError):
     pass
 
 
@@ -47,6 +56,7 @@ def list_sessions() -> list[dict[str, Any]]:
                 sessions.title,
                 sessions.working_directory,
                 sessions.backend,
+                sessions.permission_preset,
                 sessions.created_at,
                 sessions.updated_at,
                 COUNT(messages.id) AS message_count
@@ -63,10 +73,14 @@ def create_session(
     title: str | None,
     working_directory: str | None = None,
     backend: str | None = None,
+    permission_preset: PermissionPreset = DEFAULT_PERMISSION_PRESET,
 ) -> dict[str, Any]:
     session_title = normalize_title(title)
     resolved_working_directory = normalize_working_directory(working_directory)
     resolved_backend = normalize_backend(backend)
+    resolved_permission_preset = normalize_session_permission_preset(
+        permission_preset
+    )
     session_id = new_id()
     now = now_iso()
 
@@ -74,15 +88,22 @@ def create_session(
         db.execute(
             """
             INSERT INTO sessions (
-                id, title, working_directory, backend, created_at, updated_at
+                id,
+                title,
+                working_directory,
+                backend,
+                permission_preset,
+                created_at,
+                updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session_id,
                 session_title,
                 resolved_working_directory,
                 resolved_backend,
+                resolved_permission_preset,
                 now,
                 now,
             ),
@@ -94,20 +115,38 @@ def create_session(
         "title": session_title,
         "working_directory": resolved_working_directory,
         "backend": resolved_backend,
+        "permission_preset": resolved_permission_preset,
         "created_at": now,
         "updated_at": now,
         "message_count": 0,
     }
 
 
-def update_session(session_id: str, title: str) -> dict[str, Any]:
-    session_title = normalize_title(title)
+def update_session(
+    session_id: str,
+    *,
+    title: str | None = None,
+    permission_preset: PermissionPreset | None = None,
+) -> dict[str, Any]:
+    updates: list[str] = []
+    parameters: list[str] = []
+    if title is not None:
+        updates.append("title = ?")
+        parameters.append(normalize_title(title))
+    if permission_preset is not None:
+        updates.append("permission_preset = ?")
+        parameters.append(normalize_session_permission_preset(permission_preset))
+    if not updates:
+        raise ValueError("At least one session field must be provided.")
     now = now_iso()
+    updates.append("updated_at = ?")
+    parameters.append(now)
+    parameters.append(session_id)
 
     with db_lock, connect_db() as db:
         cursor = db.execute(
-            "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
-            (session_title, now, session_id),
+            f"UPDATE sessions SET {', '.join(updates)} WHERE id = ?",
+            parameters,
         )
         if cursor.rowcount == 0:
             raise SessionNotFoundError("Session not found")
@@ -698,6 +737,7 @@ def fetch_session(
             sessions.title,
             sessions.working_directory,
             sessions.backend,
+            sessions.permission_preset,
             sessions.created_at,
             sessions.updated_at,
             COUNT(messages.id) AS message_count
@@ -753,3 +793,10 @@ def normalize_backend(backend: str | None) -> str:
             f"Backend is invalid: {raw_value}. Available backends: {allowed}"
         )
     return raw_value
+
+
+def normalize_session_permission_preset(value: object) -> PermissionPreset:
+    try:
+        return normalize_permission_preset(value)
+    except ValueError as error:
+        raise InvalidPermissionPresetError(str(error)) from error

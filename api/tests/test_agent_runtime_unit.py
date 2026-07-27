@@ -500,10 +500,60 @@ def test_stream_model_loop_rejects_max_steps(monkeypatch):
                     model="unit-model",
                     mode="act",
                     allowed_tool_names=None,
+                    max_steps=3,
                     workspace="workspace",
                 )
             )
         )
+
+
+def test_stream_model_loop_can_finish_on_configured_last_step(monkeypatch):
+    model_calls = 0
+
+    async def fake_stream_chat_completion(messages, tools=None):
+        nonlocal model_calls
+        model_calls += 1
+        if model_calls < 3:
+            yield {
+                "tool_calls": [
+                    {
+                        "index": 0,
+                        "id": f"call_{model_calls}",
+                        "type": "function",
+                        "function": {"name": "read_file", "arguments": "{}"},
+                    }
+                ]
+            }
+            return
+        yield {"content": "finished"}
+
+    async def fake_run_tool(name, arguments, workspace):
+        return ToolResult(name=name, arguments={}, content="{}", success=True)
+
+    monkeypatch.setattr(llm, "stream_chat_completion", fake_stream_chat_completion)
+    monkeypatch.setattr(runtime, "run_tool", fake_run_tool)
+
+    events = asyncio.run(
+        collect_events(
+            runtime.stream_model_loop(
+                messages=[],
+                tools=[],
+                compression_config=ContextCompressionConfig(False, 1_000, 100),
+                model="unit-model",
+                mode="act",
+                allowed_tool_names=None,
+                max_steps=3,
+                workspace="workspace",
+            )
+        )
+    )
+
+    assert model_calls == 3
+    assert events[-1] == {
+        "type": "final",
+        "content": "finished",
+        "mode": "act",
+    }
 
 
 def test_stream_execute_tool_call_yields_events_and_appends_provider_result(monkeypatch):

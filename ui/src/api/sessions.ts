@@ -1,7 +1,7 @@
 import { requestJson } from "./client";
 import type { ApiMessage, ApiRuntimeConfig } from "../types/api";
 import type { ChatMessage } from "../types/chat";
-import type { SessionSummary } from "../types/session";
+import type { PermissionPreset, SessionSummary } from "../types/session";
 
 export async function fetchSessions(config: ApiRuntimeConfig): Promise<SessionSummary[]> {
   return requestJson<SessionSummary[]>(config, "/sessions");
@@ -12,6 +12,7 @@ export async function createSession(
   title: string,
   workingDirectory?: string,
   backend?: string,
+  permissionPreset: PermissionPreset = "default",
 ): Promise<SessionSummary> {
   return requestJson<SessionSummary>(config, "/sessions", {
     method: "POST",
@@ -19,14 +20,19 @@ export async function createSession(
       title,
       working_directory: workingDirectory?.trim() || undefined,
       backend: backend?.trim() || undefined,
+      permission_preset: permissionPreset,
     }),
   });
 }
 
-export async function updateSession(config: ApiRuntimeConfig, sessionId: string, title: string): Promise<SessionSummary> {
+export async function updateSession(
+  config: ApiRuntimeConfig,
+  sessionId: string,
+  updates: { title?: string; permission_preset?: PermissionPreset },
+): Promise<SessionSummary> {
   return requestJson<SessionSummary>(config, `/sessions/${sessionId}`, {
     method: "PATCH",
-    body: JSON.stringify({ title }),
+    body: JSON.stringify(updates),
   });
 }
 

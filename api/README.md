@@ -35,6 +35,7 @@ AUTOMATA_LLM_BASE_URL=https://api.deepseek.com
 AUTOMATA_LLM_MODEL=deepseek-v4-pro
 AUTOMATA_LLM_TIMEOUT_SECONDS=120
 AUTOMATA_LLM_TEMPERATURE=0.2
+AUTOMATA_AGENT_MAX_STEPS=24
 AUTOMATA_CONTEXT_COMPRESSION_ENABLED=true
 AUTOMATA_CONTEXT_MAX_TOKENS=1000000
 AUTOMATA_CONTEXT_COMPRESSION_TRIGGER_RATIO=0.8
@@ -46,6 +47,10 @@ AUTOMATA_CONTEXT_COMPRESSION_TARGET_CHARS=20000
 `AUTOMATA_LLM_API_KEY` is required. The other values default to the DeepSeek
 settings above. When running as a desktop sidecar, the API also searches upward
 from the sidecar executable for `.env` and `api/.env`.
+
+`AUTOMATA_AGENT_MAX_STEPS` bounds the number of model rounds in one agent run,
+including both tool-calling rounds and the final response round. It defaults to
+24 to allow multi-tool tasks to finish while still stopping runaway loops.
 
 Context compression is enabled by default. The default compression trigger is
 derived from a 1,000,000-token model context limit, a trigger ratio of `0.8`,
@@ -163,6 +168,28 @@ DELETE /sessions/{session_id}
 GET    /sessions/{session_id}/messages
 ```
 
+Sessions accept a persisted permission preset at creation time and through
+`PATCH /sessions/{session_id}`:
+
+```json
+{
+  "title": "Local automation",
+  "working_directory": "D:/workspace/project",
+  "permission_preset": "full_access"
+}
+```
+
+`permission_preset` defaults to `default`. In `default`, write, command,
+destructive, and policy-defined external actions continue through the approval
+broker. In `full_access`, decisions that would normally prompt are executed
+without approval. The selected preset is copied to each Run when the Run is
+created, so changing a Session does not alter an already active Run.
+
+Full Access does not override explicit policy denials, MCP connection/grant
+requirements, hidden/deferred tool routing, or the Plan-mode write prohibition.
+It also does not enable a sandbox: commands still run with the API process's OS
+permissions. Structured file tools remain confined to the Session workspace.
+
 The WebSocket prompt payload is:
 
 ```json
@@ -219,6 +246,31 @@ inside the workspace, supports `shell=bash` and `shell=powershell`, caps
 timeouts at 120 seconds, caps command output, and returns stdout, stderr,
 combined output, exit code, timeout, duration, shell, and truncation metadata.
 `run_bash` remains available as a compatibility bash-only command tool.
+
+The same `rg` tool supports bounded, read-only file enumeration without a shell
+or command approval:
+
+```json
+{
+  "mode": "files",
+  "path": ".",
+  "include_globs": ["*.py"],
+  "exclude_globs": ["api/.venv/**"],
+  "hidden": false,
+  "max_depth": 6,
+  "limit": 500
+}
+```
+
+Files mode returns a compact sorted `files` array and never accepts raw ripgrep
+arguments. It defaults to 500 paths, caps the result at 2,000 paths and 20,000
+characters, does not follow symbolic links, and reports truncation so the agent
+can narrow `path` or `include_globs`. It uses `rg --files` first, then a safe
+Git listing, and finally a non-symlink-following filesystem walk whose degraded
+ignore semantics are explicit in the result. Calls without `mode` retain the
+existing text-search behavior. See the implemented
+[`rg files mode design`](../Docs/Archived/rg-files-mode-design.md) for the
+protocol, safety boundary, fallback semantics, and test matrix.
 
 `apply_patch` and `apply_patch_preview` use Codex-style patches by default:
 

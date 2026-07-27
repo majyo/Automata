@@ -1,6 +1,7 @@
 import asyncio
 import json
 import shlex
+import subprocess
 import sys
 from pathlib import Path
 
@@ -9,6 +10,7 @@ import pytest
 from automata_api.agent import tools
 from automata_api.agent.execution.process import process_execution_scope
 from automata_api.agent.execution.process_sessions import process_session_manager
+from automata_api.agent.tools.search import MAX_FILE_LIST_RESULT_CHARS
 
 
 def patch_text(*lines):
@@ -490,6 +492,251 @@ def test_rg_search_finds_text(tmp_path):
     assert payload["tool"] == "rg"
     assert payload["engine"] in {"rg", "grep", "bash"}
     assert "needle-value" in payload["stdout"]
+
+
+def test_rg_files_mode_lists_compact_bounded_paths(tmp_path):
+    (tmp_path / "root.py").write_text("", encoding="utf-8")
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    (nested / "child.py").write_text("", encoding="utf-8")
+    (nested / "child.txt").write_text("", encoding="utf-8")
+
+    result = asyncio.run(
+        tools.run_tool(
+            "rg",
+            {
+                "mode": "files",
+                "path": ".",
+                "include_globs": ["*.py"],
+            },
+            str(tmp_path),
+        )
+    )
+    payload = json.loads(result.content)
+
+    assert result.success is True
+    assert payload["simulated"] is False
+    assert payload["ok"] is True
+    assert payload["tool"] == "rg"
+    assert payload["mode"] == "files"
+    assert payload["files"] == ["nested/child.py", "root.py"]
+    assert payload["count"] == 2
+    assert payload["truncated"] is False
+    assert payload["engine"] in {"rg", "git", "filesystem"}
+    assert "stdout" not in payload
+    assert "output" not in payload
+    assert len(result.content) <= MAX_FILE_LIST_RESULT_CHARS
+
+
+def test_rg_files_mode_filters_hidden_excluded_and_depth(tmp_path):
+    (tmp_path / "root.py").write_text("", encoding="utf-8")
+    (tmp_path / ".hidden.py").write_text("", encoding="utf-8")
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    (nested / "keep.py").write_text("", encoding="utf-8")
+    (nested / "skip.py").write_text("", encoding="utf-8")
+
+    default_result = asyncio.run(
+        tools.run_tool(
+            "rg",
+            {
+                "mode": "files",
+                "exclude_globs": ["nested/skip.py"],
+                "max_depth": 1,
+            },
+            str(tmp_path),
+        )
+    )
+    default_payload = json.loads(default_result.content)
+    assert default_payload["files"] == ["root.py"]
+
+    hidden_result = asyncio.run(
+        tools.run_tool(
+            "rg",
+            {
+                "mode": "files",
+                "hidden": True,
+                "include_globs": ["*.py"],
+            },
+            str(tmp_path),
+        )
+    )
+    hidden_payload = json.loads(hidden_result.content)
+    assert hidden_payload["files"] == [
+        ".hidden.py",
+        "nested/keep.py",
+        "nested/skip.py",
+        "root.py",
+    ]
+
+
+def test_rg_files_mode_reports_limit_truncation(tmp_path):
+    for index in range(4):
+        (tmp_path / f"{index}.txt").write_text("", encoding="utf-8")
+
+    result = asyncio.run(
+        tools.run_tool(
+            "rg",
+            {"mode": "files", "limit": 2},
+            str(tmp_path),
+        )
+    )
+    payload = json.loads(result.content)
+
+    assert result.success is True
+    assert payload["files"] == ["0.txt", "1.txt"]
+    assert payload["count"] == 2
+    assert payload["truncated"] is True
+    assert payload["truncation_reason"] == "file_limit"
+    assert "Narrow path" in payload["hint"]
+
+
+def test_rg_files_mode_reports_character_truncation(tmp_path):
+    for index in range(350):
+        name = f"{index:03d}-{'x' * 48}.txt"
+        (tmp_path / name).write_text("", encoding="utf-8")
+
+    result = asyncio.run(
+        tools.run_tool(
+            "rg",
+            {"mode": "files", "limit": 500},
+            str(tmp_path),
+        )
+    )
+    payload = json.loads(result.content)
+
+    assert result.success is True
+    assert payload["count"] < 350
+    assert payload["truncated"] is True
+    assert payload["truncation_reason"] == "character_limit"
+    assert len(result.content) <= MAX_FILE_LIST_RESULT_CHARS
+
+
+@pytest.mark.parametrize(
+    ("arguments", "error"),
+    [
+        ({"mode": "unknown"}, "invalid_mode"),
+        (
+            {"mode": "files", "pattern": "needle"},
+            "pattern_not_allowed_in_files_mode",
+        ),
+        ({"mode": "files", "raw_args": ["--pre=write"]}, "unsupported_argument"),
+        ({"mode": "files", "include_globs": ["!secret"]}, "invalid_glob"),
+        ({"mode": "files", "limit": 0}, "invalid_limit"),
+        ({"mode": "files", "max_depth": 65}, "invalid_max_depth"),
+    ],
+)
+def test_rg_files_mode_rejects_invalid_arguments(tmp_path, arguments, error):
+    result = asyncio.run(tools.run_tool("rg", arguments, str(tmp_path)))
+    payload = json.loads(result.content)
+
+    assert result.success is False
+    assert payload["ok"] is False
+    assert payload["error"] == error
+    assert payload["files"] == []
+
+
+def test_rg_files_mode_rejects_path_escape_and_file_root(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "sample.txt").write_text("", encoding="utf-8")
+
+    escape_result = asyncio.run(
+        tools.run_tool(
+            "rg",
+            {"mode": "files", "path": ".."},
+            str(workspace),
+        )
+    )
+    escape_payload = json.loads(escape_result.content)
+    assert escape_result.success is False
+    assert escape_payload["error"] == "path_outside_workspace"
+
+    file_result = asyncio.run(
+        tools.run_tool(
+            "rg",
+            {"mode": "files", "path": "sample.txt"},
+            str(workspace),
+        )
+    )
+    file_payload = json.loads(file_result.content)
+    assert file_result.success is False
+    assert file_payload["error"] == "path_not_directory"
+
+
+def test_rg_files_mode_falls_back_to_git(tmp_path, monkeypatch):
+    git = tools.resolve_executable("git")
+    if git is None:
+        pytest.skip("git is not available")
+
+    subprocess.run(
+        [git, "init", "--quiet", str(tmp_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    (tmp_path / ".gitignore").write_text("ignored.txt\n", encoding="utf-8")
+    (tmp_path / "visible.txt").write_text("", encoding="utf-8")
+    (tmp_path / "ignored.txt").write_text("", encoding="utf-8")
+    original_resolve = tools.resolve_executable
+    monkeypatch.setattr(
+        "automata_api.agent.tools._core.resolve_executable",
+        lambda name: None if name == "rg" else original_resolve(name),
+    )
+
+    result = asyncio.run(
+        tools.run_tool("rg", {"mode": "files"}, str(tmp_path))
+    )
+    payload = json.loads(result.content)
+
+    assert result.success is True
+    assert payload["engine"] == "git"
+    assert payload["ignore_semantics"] == "git"
+    assert payload["degraded"] is False
+    assert payload["files"] == ["visible.txt"]
+
+
+def test_rg_files_mode_falls_back_to_filesystem(tmp_path, monkeypatch):
+    (tmp_path / "visible.txt").write_text("", encoding="utf-8")
+    monkeypatch.setattr(
+        "automata_api.agent.tools._core.resolve_executable",
+        lambda _name: None,
+    )
+
+    result = asyncio.run(
+        tools.run_tool("rg", {"mode": "files"}, str(tmp_path))
+    )
+    payload = json.loads(result.content)
+
+    assert result.success is True
+    assert payload["engine"] == "filesystem"
+    assert payload["ignore_semantics"] == "basic"
+    assert payload["degraded"] is True
+    assert payload["files"] == ["visible.txt"]
+
+
+def test_rg_files_mode_filesystem_fallback_skips_symlinks(
+    tmp_path, monkeypatch
+):
+    outside = tmp_path.parent / f"{tmp_path.name}-outside.txt"
+    outside.write_text("", encoding="utf-8")
+    link = tmp_path / "outside-link.txt"
+    try:
+        link.symlink_to(outside)
+    except OSError:
+        pytest.skip("symbolic links are unavailable")
+    monkeypatch.setattr(
+        "automata_api.agent.tools._core.resolve_executable",
+        lambda _name: None,
+    )
+
+    result = asyncio.run(
+        tools.run_tool("rg", {"mode": "files"}, str(tmp_path))
+    )
+    payload = json.loads(result.content)
+
+    assert result.success is True
+    assert payload["files"] == []
 
 
 def test_grep_search_finds_text(tmp_path):

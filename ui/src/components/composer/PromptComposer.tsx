@@ -1,12 +1,16 @@
 import { Send, Square } from "lucide-react";
+import { PermissionPresetToggle } from "./PermissionPresetToggle";
 import { SendModeToggle } from "./SendModeToggle";
 import { SkillPicker } from "./SkillPicker";
 import type { SendMode } from "../../types/chat";
+import type { PermissionPreset } from "../../types/session";
 import type { SkillRecord, SkillRuntimeNotice } from "../../types/skills";
 
 type PromptComposerProps = {
   prompt: string;
   sendMode: SendMode;
+  permissionPreset: PermissionPreset;
+  permissionUpdating: boolean;
   isStreaming: boolean;
   canSend: boolean;
   autoFocus?: boolean;
@@ -18,6 +22,7 @@ type PromptComposerProps = {
   skillsLoading: boolean;
   onPromptChange(prompt: string): void;
   onSendModeChange(sendMode: SendMode): void;
+  onPermissionPresetChange(permissionPreset: PermissionPreset): void;
   onCancel(): void;
   onToggleSkill(skillId: string): void;
   onToggleSkillEnabled(skill: SkillRecord): Promise<void>;
@@ -27,6 +32,8 @@ type PromptComposerProps = {
 export function PromptComposer({
   prompt,
   sendMode,
+  permissionPreset,
+  permissionUpdating,
   isStreaming,
   canSend,
   autoFocus,
@@ -38,6 +45,7 @@ export function PromptComposer({
   skillsLoading,
   onPromptChange,
   onSendModeChange,
+  onPermissionPresetChange,
   onCancel,
   onToggleSkill,
   onToggleSkillEnabled,
@@ -54,6 +62,11 @@ export function PromptComposer({
       <div className="composer-toolbar">
         <div className="composer-actions">
           <SendModeToggle sendMode={sendMode} disabled={isStreaming} onChange={onSendModeChange} />
+          <PermissionPresetToggle
+            permissionPreset={permissionPreset}
+            disabled={isStreaming || permissionUpdating}
+            onChange={onPermissionPresetChange}
+          />
           <SkillPicker
             skills={skills}
             selectedIds={selectedSkillIds}

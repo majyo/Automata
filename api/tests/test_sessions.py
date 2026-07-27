@@ -35,6 +35,7 @@ def test_session_crud_and_messages(client):
 
     created = client.post("/sessions", json={"title": "Alpha"}).json()
     assert created["title"] == "Alpha"
+    assert created["permission_preset"] == "default"
     assert created["message_count"] == 0
 
     sessions = client.get("/sessions").json()
@@ -49,6 +50,7 @@ def test_session_crud_and_messages(client):
     ).json()
     assert updated["id"] == created["id"]
     assert updated["title"] == "Beta"
+    assert updated["permission_preset"] == "default"
 
     messages = client.get(f"/sessions/{created['id']}/messages")
     assert messages.status_code == 200
@@ -94,6 +96,38 @@ def test_create_session_defaults_backend(client):
     created = client.post("/sessions", json={"title": "Default backend"}).json()
 
     assert created["backend"] == default_backend_kind()
+
+
+def test_session_permission_preset_is_persisted_and_patchable(client):
+    created = client.post(
+        "/sessions",
+        json={"title": "Unsafe", "permission_preset": "full_access"},
+    ).json()
+
+    assert created["permission_preset"] == "full_access"
+    assert client.get("/sessions").json()[0]["permission_preset"] == "full_access"
+
+    updated = client.patch(
+        f"/sessions/{created['id']}",
+        json={"permission_preset": "default"},
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["title"] == "Unsafe"
+    assert updated.json()["permission_preset"] == "default"
+
+
+def test_session_permission_preset_rejects_invalid_and_empty_updates(client):
+    created = client.post("/sessions", json={"title": "Permissions"}).json()
+
+    invalid = client.patch(
+        f"/sessions/{created['id']}",
+        json={"permission_preset": "unrestricted"},
+    )
+    empty = client.patch(f"/sessions/{created['id']}", json={})
+
+    assert invalid.status_code == 422
+    assert empty.status_code == 422
 
 
 def test_create_session_rejects_invalid_backend(client):
@@ -414,7 +448,7 @@ def test_init_db_preserves_and_upgrades_legacy_messages_schema(
         ).fetchone()[0] == "legacy prompt"
         assert db.execute(
             "SELECT COUNT(*) FROM schema_migrations"
-        ).fetchone()[0] == 3
+        ).fetchone()[0] == 4
     assert list_messages("session-1")[0]["content"] == "legacy prompt"
     assert list(tmp_path.glob("automata.db.backup.*"))
 
@@ -504,7 +538,7 @@ def test_init_db_removes_orphaned_legacy_messages_shadow_table_after_backup(
         ).fetchone()[0] == "keep me"
         assert db.execute(
             "SELECT COUNT(*) FROM schema_migrations"
-        ).fetchone()[0] == 3
+        ).fetchone()[0] == 4
 
     backup_file = next(tmp_path.glob("automata.db.backup.*"))
     with sqlite3.connect(backup_file) as backup:
@@ -669,15 +703,25 @@ def test_init_db_migrates_session_backend(tmp_path, monkeypatch):
     init_db()
 
     with sqlite3.connect(db_file) as db:
-        columns = {
+        session_columns = {
             row[1]
             for row in db.execute("PRAGMA table_info(sessions)").fetchall()
+        }
+        run_columns = {
+            row[1]
+            for row in db.execute("PRAGMA table_info(agent_runs)").fetchall()
         }
         backend = db.execute(
             "SELECT backend FROM sessions WHERE id = 'session-1'"
         ).fetchone()[0]
-        assert "backend" in columns
+        permission_preset = db.execute(
+            "SELECT permission_preset FROM sessions WHERE id = 'session-1'"
+        ).fetchone()[0]
+        assert "backend" in session_columns
+        assert "permission_preset" in session_columns
+        assert "permission_preset" in run_columns
         assert backend == "local"
+        assert permission_preset == "default"
 
 
 def test_init_db_is_idempotent_and_backup_is_readable(tmp_path, monkeypatch):
@@ -706,7 +750,7 @@ def test_init_db_is_idempotent_and_backup_is_readable(tmp_path, monkeypatch):
     init_db()
 
     with sqlite3.connect(db_file) as db:
-        assert db.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 3
+        assert db.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 4
         assert db.execute("SELECT title FROM sessions").fetchone()[0] == "Keep me"
     with sqlite3.connect(first_backup) as backup:
         assert backup.execute("PRAGMA quick_check").fetchone()[0] == "ok"

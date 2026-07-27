@@ -843,6 +843,12 @@ def insert_run(
     plan_id: str | None = None,
 ) -> None:
     now = now_iso()
+    session = db.execute(
+        "SELECT permission_preset FROM sessions WHERE id = ?",
+        (session_id,),
+    ).fetchone()
+    if session is None:
+        raise RunNotFoundError("Session not found")
     db.execute(
         """
         INSERT INTO agent_runs (
@@ -850,6 +856,7 @@ def insert_run(
             session_id,
             kind,
             mode,
+            permission_preset,
             status,
             request_message_id,
             plan_id,
@@ -857,13 +864,14 @@ def insert_run(
             created_at,
             heartbeat_at
         )
-        VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)
         """,
         (
             run_id,
             session_id,
             kind,
             mode,
+            str(session["permission_preset"]),
             request_message_id,
             plan_id,
             owner_instance_id,

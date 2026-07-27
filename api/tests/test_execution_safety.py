@@ -14,7 +14,12 @@ from automata_api.agent.execution.approval import (
     canonical_arguments_hash,
 )
 from automata_api.agent.execution.model import CancellationToken, ToolExecutionContext
-from automata_api.agent.execution.orchestrator import ToolExecutionOrchestrator
+from automata_api.agent.execution.orchestrator import (
+    ToolExecutionOrchestrator,
+    tool_operation_attributes,
+    tool_result_attributes,
+)
+from automata_api.agent.execution.permissions import PermissionPreset
 from automata_api.agent.execution.process import (
     process_execution_scope,
     subprocess_group_kwargs,
@@ -67,12 +72,41 @@ def descriptor(tool: RecordingTool, risk: str) -> ToolDescriptor:
     )
 
 
+def test_rg_files_observability_attributes_are_bounded():
+    result = ToolResult(
+        "rg",
+        {"mode": "files"},
+        json.dumps(
+            {
+                "mode": "files",
+                "engine": "rg",
+                "count": 12,
+                "truncated": True,
+                "degraded": False,
+                "files": ["not-exported.py"],
+            }
+        ),
+        True,
+    )
+
+    assert tool_operation_attributes("rg", {"mode": "files"}) == {
+        "operation_mode": "files"
+    }
+    assert tool_result_attributes("rg", result) == {
+        "engine": "rg",
+        "file_count": 12,
+        "truncated": True,
+        "degraded": False,
+    }
+
+
 async def execute_with_broker(
     tool: RecordingTool,
     *,
     risk: str,
     mode: str = "act",
     resolve: str | None = None,
+    permission_preset: PermissionPreset = "default",
 ):
     emitted: list[dict[str, Any]] = []
     emitted_event = asyncio.Event()
@@ -88,7 +122,10 @@ async def execute_with_broker(
         emit=emit,
         cancellation=cancellation,
     )
-    orchestrator = ToolExecutionOrchestrator(approval_broker=broker)
+    orchestrator = ToolExecutionOrchestrator(
+        approval_broker=broker,
+        permission_preset=permission_preset,
+    )
     router = ToolRouter([descriptor(tool, risk)])
     task = asyncio.create_task(
         orchestrator.execute(
@@ -179,6 +216,55 @@ def test_external_prompt_uses_shared_approval_and_external_deny_is_final():
     )
     assert denied.success is False
     assert denied_tool.calls == []
+    assert emitted == []
+
+
+@pytest.mark.parametrize("risk", ["write", "command", "destructive", "external"])
+def test_full_access_executes_prompt_risks_without_approval(risk):
+    tool = RecordingTool(f"{risk}_test", read_only=False)
+    result, emitted = asyncio.run(
+        execute_with_broker(
+            tool,
+            risk=risk,
+            permission_preset="full_access",
+        )
+    )
+
+    assert result.success is True
+    assert len(tool.calls) == 1
+    assert emitted == []
+
+
+def test_full_access_does_not_override_explicit_tool_deny():
+    tool = ExternalPolicyTool("deny")
+    result, emitted = asyncio.run(
+        execute_with_broker(
+            tool,
+            risk="external",
+            permission_preset="full_access",
+        )
+    )
+
+    assert result.success is False
+    assert json.loads(result.content)["error"] == "mcp_policy_deny"
+    assert tool.calls == []
+    assert emitted == []
+
+
+def test_full_access_does_not_override_plan_mode_write_deny():
+    tool = RecordingTool("write_test", read_only=False)
+    result, emitted = asyncio.run(
+        execute_with_broker(
+            tool,
+            risk="write",
+            mode="plan",
+            permission_preset="full_access",
+        )
+    )
+
+    assert result.success is False
+    assert json.loads(result.content)["error"] == "blocked_by_plan_mode"
+    assert tool.calls == []
     assert emitted == []
 
 

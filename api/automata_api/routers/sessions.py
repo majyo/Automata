@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from automata_api.repositories import sessions as session_repository
 from automata_api.repositories.sessions import (
     InvalidBackendError,
+    InvalidPermissionPresetError,
     InvalidWorkingDirectoryError,
     SessionHasActiveRunError,
     SessionNotFoundError,
@@ -34,10 +35,13 @@ async def create_session(request: CreateSessionRequest) -> dict[str, Any]:
             request.title,
             request.working_directory,
             request.backend,
+            request.permission_preset,
         )
     except InvalidBackendError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except InvalidWorkingDirectoryError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except InvalidPermissionPresetError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
 
@@ -47,10 +51,15 @@ async def update_session(
 ) -> dict[str, Any]:
     try:
         return await run_repository_call(
-            session_repository.update_session, session_id, request.title
+            session_repository.update_session,
+            session_id,
+            title=request.title,
+            permission_preset=request.permission_preset,
         )
     except SessionNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+    except InvalidPermissionPresetError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @router.delete("/sessions/{session_id}", status_code=204)

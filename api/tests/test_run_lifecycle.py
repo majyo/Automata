@@ -140,6 +140,62 @@ def test_cancel_while_waiting_for_approval_prevents_tool_execution(
     assert not (tmp_path / "cancelled.txt").exists()
 
 
+def test_full_access_run_executes_write_without_approval(
+    client, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
+    calls = 0
+
+    async def model(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            async for event in write_tool_model():
+                yield event
+            return
+        yield {"content": "Write completed."}
+
+    monkeypatch.setattr(
+        "automata_api.agent.llm.stream_chat_completion",
+        model,
+    )
+    session = client.post(
+        "/sessions",
+        json={
+            "title": "Full access",
+            "working_directory": str(tmp_path),
+            "permission_preset": "full_access",
+        },
+    ).json()
+
+    with client.websocket_connect("/ws/chat") as websocket:
+        websocket.receive_json()
+        websocket.send_json(
+            {
+                "type": "prompt",
+                "session_id": session["id"],
+                "prompt": "write a file",
+            }
+        )
+        events = []
+        while True:
+            event = websocket.receive_json()
+            events.append(event)
+            if event["type"] == "done":
+                break
+
+    started = next(event for event in events if event["type"] == "started")
+    assert started["permission_preset"] == "full_access"
+    assert all(event["type"] != "tool_approval_required" for event in events)
+    assert (tmp_path / "cancelled.txt").read_text(encoding="utf-8") == (
+        "must not exist"
+    )
+    run = client.get(
+        f"/sessions/{session['id']}/runs/{started['run_id']}"
+    ).json()
+    assert run["permission_preset"] == "full_access"
+
+
 def test_disconnect_keeps_run_in_background_until_explicit_cancel(
     client, monkeypatch
 ):

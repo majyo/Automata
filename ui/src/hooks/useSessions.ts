@@ -1,9 +1,9 @@
-import { useCallback, useMemo, useReducer, useRef } from "react";
+import { useCallback, useMemo, useReducer, useRef, useState } from "react";
 import { createSession, deleteSession, fetchMessages, fetchSessions, updateSession } from "../api/sessions";
 import { initialSessionState, sessionReducer } from "../state/sessionReducer";
 import type { ChatAction } from "../state/chatReducer";
 import type { ApiRuntimeConfig } from "../types/api";
-import type { SessionSummary } from "../types/session";
+import type { PermissionPreset, SessionSummary } from "../types/session";
 import { sleep } from "../utils/timing";
 
 type UseSessionsOptions = {
@@ -13,6 +13,7 @@ type UseSessionsOptions = {
 
 export function useSessions({ apiConfigRef, chatDispatch }: UseSessionsOptions) {
   const [state, dispatch] = useReducer(sessionReducer, initialSessionState);
+  const [permissionUpdating, setPermissionUpdating] = useState(false);
   const activeSessionIdRef = useRef<string | null>(null);
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -25,6 +26,9 @@ export function useSessions({ apiConfigRef, chatDispatch }: UseSessionsOptions) 
   const displayedWorkingDirectory = state.isNewSessionDraft
     ? state.draftWorkingDirectory
     : activeSession?.working_directory ?? apiConfigRef.current.defaultWorkingDirectory;
+  const permissionPreset = state.isNewSessionDraft
+    ? state.draftPermissionPreset
+    : activeSession?.permission_preset ?? "default";
 
   const startNewSessionDraft = useCallback(() => {
     activeSessionIdRef.current = null;
@@ -106,6 +110,31 @@ export function useSessions({ apiConfigRef, chatDispatch }: UseSessionsOptions) 
     dispatch({ type: "draftWorkingDirectoryChanged", workingDirectory });
   }, []);
 
+  const setPermissionPreset = useCallback(
+    async (nextPermissionPreset: PermissionPreset) => {
+      if (stateRef.current.isNewSessionDraft || !activeSessionIdRef.current) {
+        dispatch({
+          type: "draftPermissionPresetChanged",
+          permissionPreset: nextPermissionPreset,
+        });
+        return;
+      }
+
+      setPermissionUpdating(true);
+      try {
+        const updated = await updateSession(
+          apiConfigRef.current,
+          activeSessionIdRef.current,
+          { permission_preset: nextPermissionPreset },
+        );
+        dispatch({ type: "sessionUpdated", session: updated });
+      } finally {
+        setPermissionUpdating(false);
+      }
+    },
+    [apiConfigRef],
+  );
+
   const commitRename = useCallback(
     async (sessionId: string) => {
       const title = stateRef.current.editingTitle.trim();
@@ -114,7 +143,7 @@ export function useSessions({ apiConfigRef, chatDispatch }: UseSessionsOptions) 
         return;
       }
 
-      await updateSession(apiConfigRef.current, sessionId, title);
+      await updateSession(apiConfigRef.current, sessionId, { title });
       dispatch({ type: "sessionsLoaded", sessions: await fetchSessions(apiConfigRef.current) });
       dispatch({ type: "renameEnded" });
     },
@@ -152,6 +181,8 @@ export function useSessions({ apiConfigRef, chatDispatch }: UseSessionsOptions) 
       apiConfigRef.current,
       "New session",
       stateRef.current.draftWorkingDirectory,
+      undefined,
+      stateRef.current.draftPermissionPreset,
     );
     const loadedSessions = await fetchSessions(apiConfigRef.current);
     dispatch({ type: "sessionsLoaded", sessions: loadedSessions });
@@ -168,6 +199,8 @@ export function useSessions({ apiConfigRef, chatDispatch }: UseSessionsOptions) 
     isNewSessionDraft: state.isNewSessionDraft,
     draftWorkingDirectory: state.draftWorkingDirectory,
     displayedWorkingDirectory,
+    permissionPreset,
+    permissionUpdating,
     editingSessionId: state.editingSessionId,
     editingTitle: state.editingTitle,
     actions: {
@@ -182,6 +215,7 @@ export function useSessions({ apiConfigRef, chatDispatch }: UseSessionsOptions) 
       deleteCurrentSession,
       ensureActiveSession,
       setDraftWorkingDirectory,
+      setPermissionPreset,
       setEditingTitle,
     },
   };

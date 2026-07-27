@@ -27,6 +27,8 @@ def test_agent_system_prompt_includes_workspace_and_tool_guidance(monkeypatch, t
     assert "shell=bash" in prompt
     assert "shell=powershell" in prompt
     assert "run_bash" in prompt
+    assert 'mode="files"' in prompt
+    assert "Do not use exec_command with ls, find" in prompt
     assert "write_file" in prompt
     assert "apply_patch" in prompt
     assert "Codex-style patches" in prompt

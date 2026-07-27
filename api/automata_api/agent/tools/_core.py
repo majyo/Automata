@@ -188,14 +188,23 @@ async def capture_process_output(
     *,
     stdout_limit: int,
     stderr_limit: int,
+    emit_output: bool = True,
 ) -> CapturedProcessOutput:
     managed = await process_supervisor.register(process)
     try:
         stdout_task = asyncio.create_task(
-            read_limited_stream(process.stdout, stdout_limit, stream_name="stdout")
+            read_limited_stream(
+                process.stdout,
+                stdout_limit,
+                stream_name="stdout" if emit_output else None,
+            )
         )
         stderr_task = asyncio.create_task(
-            read_limited_stream(process.stderr, stderr_limit, stream_name="stderr")
+            read_limited_stream(
+                process.stderr,
+                stderr_limit,
+                stream_name="stderr" if emit_output else None,
+            )
         )
         wait_task = asyncio.create_task(process.wait())
         timed_out = False
@@ -285,12 +294,10 @@ def append_limited_text(
 
 
 async def run_rg(arguments: dict[str, Any], workspace: str) -> ToolResult:
-    return await run_search_tool(
-        tool_name="rg",
-        arguments=arguments,
-        workspace=workspace,
-        engines=("rg", "grep", "bash"),
-    )
+    from automata_api.agent.backends.local import LocalBackend
+    from automata_api.agent.tools.search import RgTool
+
+    return await RgTool(LocalBackend(workspace)).run(arguments)
 
 
 async def run_grep(arguments: dict[str, Any], workspace: str) -> ToolResult:

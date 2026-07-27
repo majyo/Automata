@@ -60,6 +60,7 @@ function App() {
   const messagesRef = useAutoScroll<HTMLDivElement>(messages);
   const canSend =
     Boolean(prompt.trim()) &&
+    !sessions.permissionUpdating &&
     !agentSocket.isSessionRunning(sessions.activeSessionId) &&
     Boolean(sessions.activeSessionId || sessions.isNewSessionDraft);
 
@@ -133,6 +134,8 @@ function App() {
       socketStatus={agentSocket.socketStatus}
       prompt={prompt}
       sendMode={sendMode}
+      permissionPreset={sessions.permissionPreset}
+      permissionUpdating={sessions.permissionUpdating}
       isStreaming={agentSocket.isStreaming}
       canSend={canSend}
       approvals={approvals}
@@ -156,6 +159,9 @@ function App() {
       onSubmit={handleSubmit}
       onPromptChange={setPrompt}
       onSendModeChange={setSendMode}
+      onPermissionPresetChange={(permissionPreset) =>
+        void sessions.actions.setPermissionPreset(permissionPreset)
+      }
       onApprovePlan={agentSocket.approvePlan}
       onRespondToApproval={agentSocket.respondToApproval}
       onCancelRun={agentSocket.cancelRun}

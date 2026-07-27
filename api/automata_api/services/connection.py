@@ -196,6 +196,7 @@ class AgentConnection:
                     run.run_id,
                     run.cancellation,
                     run.approval_broker,
+                    run.permission_preset,
                     payload.get("skills"),
                 )
             return await stream_agent_reply(
@@ -205,6 +206,7 @@ class AgentConnection:
                 run.run_id,
                 run.cancellation,
                 run.approval_broker,
+                run.permission_preset,
                 payload.get("skills"),
             )
 
@@ -256,6 +258,7 @@ class AgentConnection:
                 run.run_id,
                 run.cancellation,
                 run.approval_broker,
+                run.permission_preset,
             )
 
         try:

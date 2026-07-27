@@ -49,6 +49,21 @@ class SearchResult:
     attempts: list[dict[str, Any]]
 
 
+@dataclass(frozen=True)
+class FileListResult:
+    ok: bool
+    engine: str
+    path: str
+    cwd: str
+    files: tuple[str, ...]
+    truncated: bool
+    truncation_reason: str | None
+    ignore_semantics: str
+    degraded: bool
+    timed_out: bool
+    attempts: list[dict[str, Any]]
+
+
 class BackendError(RuntimeError):
     """Primitive-level failure raised by backend implementations."""
 
@@ -117,6 +132,22 @@ class Backend(ABC):
     ) -> SearchResult:
         """Search workspace files."""
 
+    @abstractmethod
+    async def list_files(
+        self,
+        *,
+        path: str | None,
+        cwd: str | None,
+        include_globs: tuple[str, ...],
+        exclude_globs: tuple[str, ...],
+        hidden: bool,
+        max_depth: int | None,
+        limit: int,
+        max_result_chars: int,
+        timeout_seconds: float,
+    ) -> FileListResult:
+        """List bounded workspace files without following symbolic links."""
+
     def tools(self) -> tuple["AgentTool", ...]:
         from automata_api.agent.tools.registry import default_tools
 
@@ -134,7 +165,11 @@ class Backend(ABC):
             "commands, but prefer exec_command for new command execution.\n\n"
             "For code or text search, prefer the rg tool first. It automatically "
             "falls back to grep and then to run_bash when needed. Use grep directly "
-            "only when grep behavior is specifically required.\n\n"
+            "only when grep behavior is specifically required. Use rg with "
+            'mode="files" to enumerate workspace files. Narrow path or '
+            "include_globs when the result is truncated. Do not use exec_command "
+            "with ls, find, dir, Get-ChildItem, or rg --files for ordinary "
+            "workspace enumeration.\n\n"
             "Use read_file to inspect exact file contents and write_file only when "
             "the user explicitly asks you to create or change files. Both operate "
             "on real workspace files and return simulated=false.\n\n"

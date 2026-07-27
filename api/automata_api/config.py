@@ -6,6 +6,7 @@ from pathlib import Path
 
 DEFAULT_LLM_BASE_URL = "https://api.deepseek.com"
 DEFAULT_LLM_MODEL = "deepseek-v4-pro"
+DEFAULT_AGENT_MAX_STEPS = 24
 DEFAULT_SYSTEM_PROMPT = """You are Automata, a real LLM-backed coding agent inside a local desktop workspace.
 Respond in the user's language. Be concise, practical, and engineering-focused.
 Use the prior session messages as context. If the user asks for code changes, give concrete file-level guidance and do not claim that files were changed unless an external tool actually changed them."""
@@ -41,6 +42,7 @@ class AgentConfig:
     model: str
     timeout_seconds: float
     temperature: float
+    max_steps: int = DEFAULT_AGENT_MAX_STEPS
 
 
 @dataclass(frozen=True)
@@ -159,6 +161,14 @@ def get_agent_config() -> AgentConfig:
             "AUTOMATA_ENV_FILE, or the process environment."
         )
 
+    max_steps = read_int_env(
+        "AUTOMATA_AGENT_MAX_STEPS", DEFAULT_AGENT_MAX_STEPS
+    )
+    if max_steps <= 0:
+        raise AgentConfigurationError(
+            "AUTOMATA_AGENT_MAX_STEPS must be greater than 0."
+        )
+
     return AgentConfig(
         api_key=api_key,
         base_url=(
@@ -167,6 +177,7 @@ def get_agent_config() -> AgentConfig:
         model=(os.environ.get("AUTOMATA_LLM_MODEL") or DEFAULT_LLM_MODEL).strip(),
         timeout_seconds=read_float_env("AUTOMATA_LLM_TIMEOUT_SECONDS", 120.0),
         temperature=read_float_env("AUTOMATA_LLM_TEMPERATURE", 0.2),
+        max_steps=max_steps,
     )
 
 

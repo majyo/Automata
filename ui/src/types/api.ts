@@ -1,5 +1,6 @@
 import type { PersistedPlanStatus, ToolRunMetadata } from "./chat";
 import type { PersistedRunStatus } from "./chat";
+import type { PermissionPreset } from "./session";
 
 export type ApiRuntimeConfig = {
   httpBaseUrl: string;
@@ -26,6 +27,7 @@ export type ApiRun = {
   session_id: string;
   kind: "chat_act" | "chat_plan" | "plan_execution";
   mode: "act" | "plan";
+  permission_preset: PermissionPreset;
   status: PersistedRunStatus;
   request_message_id?: string | null;
   response_message_id?: string | null;

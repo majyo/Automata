@@ -65,13 +65,13 @@ flowchart LR
 
 ## 一次任务如何运行
 
-1. 调用方先创建 Session。Session 固定保存 `working_directory` 和 `backend`，因此不同会话可以面向不同工作区和执行环境。
-2. 调用方通过 `/ws/chat` 发送 `prompt`。后端把用户消息和 Run 在同一个数据库事务中创建，并将执行交给 `RunCoordinator` 的后台 task。
+1. 调用方先创建 Session。Session 固定保存 `working_directory`、`backend` 和 `permission_preset`，因此不同会话可以面向不同工作区、执行环境和审批策略。
+2. 调用方通过 `/ws/chat` 发送 `prompt`。后端把用户消息和 Run 在同一个数据库事务中创建，并把 Session 当时的权限预设快照到 Run，再将执行交给 `RunCoordinator` 的后台 task。
 3. Chat Service 根据 Session 配置创建 `local` 或 `windows` Backend，发现已经授权的 MCP servers，并加载当前工作区可用的 Skills。
 4. Runtime 组合系统提示、历史上下文、上下文摘要、可用 Skill 清单、显式选中的 Skill 正文和当前可见工具，然后调用 Chat Completions 兼容的模型接口。
-5. 如果模型请求工具，Runtime 发出 `tool_call`，执行编排器先做策略判断；需要审批时，Run 进入 `waiting_approval`，收到允许后才真正 dispatch。
+5. 如果模型请求工具，Runtime 发出 `tool_call`，执行编排器先做策略判断；Default 下需要审批时，Run 进入 `waiting_approval`，收到允许后才真正 dispatch；Full Access 下原本为 `prompt` 的决策直接执行。
 6. 工具结果作为 `tool_result` 事件返回，同时以 provider tool message 追加到模型上下文，模型据此继续下一步推理。
-7. 模型给出最终文本后，Run 进入终态。当前单个 agent loop 最多执行 6 个模型步骤，超限会以 provider error 结束，而不会无限循环。
+7. 模型给出最终文本后，Run 进入终态。当前单个 agent loop 默认最多执行 24 个模型步骤，超限会以 provider error 结束，而不会无限循环。
 8. 运行期间的事件先写入 SQLite，再广播给已连接的调用方。连接断开不会直接取消 Run；调用方可以随后通过 REST 查询，或使用 `resume_run` 从指定 `seq` 继续补取事件。
 
 ## 核心能力
@@ -83,8 +83,8 @@ flowchart LR
 | 工具 | 能力 | 关键边界 |
 | --- | --- | --- |
 | `read_file` | 按行读取 UTF-8 文本 | 路径必须位于工作区；单次内容最多返回 120,000 字符 |
-| `rg` / `grep` | 在工作区搜索 | `rg` 会按 `ripgrep -> grep -> bash` 回退；有超时和输出上限 |
-| `write_file` | 创建、覆盖或追加 UTF-8 文件 | 路径必须位于工作区；属于写入操作，需要审批 |
+| `rg` / `grep` | 在工作区搜索 | `rg` 文本搜索按 `ripgrep -> grep -> bash` 回退；`rg mode="files"` 以 `rg -> Git -> filesystem` 进行有界、免审批的只读文件枚举；两种模式都有工作区、超时和输出边界 |
+| `write_file` | 创建、覆盖或追加 UTF-8 文件 | 路径必须位于工作区；Default 下需要审批，Full Access 下免审批 |
 | `apply_patch_preview` | 校验并预览补丁 | 只读，不写文件，可在 Plan 模式使用 |
 | `apply_patch` | 添加、修改、移动或删除文件 | 支持 Codex-style patch 和 unified diff；删除会升级为 destructive 风险 |
 | `exec_command` | 以 Bash 或 PowerShell 执行一次性命令 | cwd 限制在工作区；默认超时 30 秒、最大 120 秒；输出默认上限 20,000 字符、最大 60,000 字符 |
@@ -97,6 +97,8 @@ flowchart LR
 
 - **Act 模式**：模型可以使用当前策略允许的读、写、命令和外部工具来完成任务。
 - **Plan 模式**：后端只暴露并允许只读工具。内置可用项为 `read_file`、`rg`、`grep`、`apply_patch_preview`，符合条件的只读 deferred 工具可通过 `tool_search` 激活；写入和命令即使被模型直接请求，也会被运行时以 `blocked_by_plan_mode` 拒绝。
+
+Session 另有 `default` 和 `full_access` 两种持久化权限预设。`default` 保留风险审批；`full_access` 对 Act 模式中本应返回 `prompt` 的写入、命令、破坏性及外部工具决策直接放行。它不会覆盖 policy 的显式 `deny`、MCP server grant/连接要求、hidden/deferred 工具发现边界或 Plan 模式禁写规则。权限在 Run 创建时冻结，运行中修改 Session 只影响后续 Run。
 
 Plan 不是临时聊天文本，而是保存到 `session_plans` 的持久化对象。新计划会 supersede 同 Session 中旧的 pending 计划。批准后，计划正文作为系统上下文进入正常 Act loop。失败的计划执行可以重试，但调用方必须明确确认“可能产生重复副作用”；`request_id` 用于避免相同请求重复创建执行尝试。
 
@@ -176,13 +178,13 @@ Automata 的当前安全边界由多层共同实现：
 | 工作区隔离 | 文件、搜索和命令 cwd 都必须解析到 Session 工作区内部 |
 | 模式隔离 | Plan 模式在 ToolRouter 和 policy 层拒绝非只读工具，不只依赖 prompt |
 | 风险分类 | 工具被分为 read、write、command、destructive、external |
-| 人工审批 | read 默认允许；write、command、destructive 和需要 prompt 的 external 调用在执行前发出审批请求 |
+| 人工审批 | Default 下 read 默认允许，其他需要 prompt 的风险操作在执行前审批；Full Access 把 `prompt` 决策转为直接执行 |
 | 审批完整性 | 审批绑定 Run、tool call 和参数 hash；参数变化时原审批失效；支持 allow once、按可用 scope allow for run、deny |
 | 进程治理 | 命令在独立进程组中执行；取消或失败时终止进程树，Windows 优先使用 Job Object 并带有 `taskkill /T` fallback |
 | 事件脱敏 | 持久化事件会递归遮蔽 authorization、token、password、secret 等字段 |
 | 外部工具信任 | MCP definition 与 grant 分离，未授权 server 不建立连接，workspace 配置不能自授信 |
 
-这些机制降低了误操作和越权风险，但没有构成 OS 级沙箱。已批准命令仍以 API 进程的系统权限执行，也可能访问工作区之外的系统资源；若用于多租户或高风险环境，还需要容器、低权限账户、文件系统隔离、网络策略和更细粒度的命令策略。
+这些机制降低了误操作和越权风险，但没有构成 OS 级沙箱。Default 下已批准的命令以及 Full Access 下免审批的命令，均以 API 进程的系统权限执行，也可能访问工作区之外的系统资源；结构化文件工具仍限制在 Session 工作区。Full Access 因此只应在受信任的本地环境使用。若用于多租户或高风险环境，还需要容器、低权限账户、文件系统隔离、网络策略和更细粒度的命令策略。
 
 ## 对外服务接口
 

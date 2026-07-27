@@ -1,16 +1,26 @@
 from typing import Any, Literal, NotRequired, TypedDict
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from automata_api.agent.execution.permissions import PermissionPreset
 
 
 class CreateSessionRequest(BaseModel):
     title: str | None = None
     working_directory: str | None = None
     backend: str | None = None
+    permission_preset: PermissionPreset = "default"
 
 
 class UpdateSessionRequest(BaseModel):
-    title: str
+    title: str | None = None
+    permission_preset: PermissionPreset | None = None
+
+    @model_validator(mode="after")
+    def require_update(self) -> "UpdateSessionRequest":
+        if self.title is None and self.permission_preset is None:
+            raise ValueError("At least one session field must be provided.")
+        return self
 
 
 class McpGrantRequest(BaseModel):
@@ -40,6 +50,7 @@ class SessionSummary(BaseModel):
     title: str
     working_directory: str
     backend: str
+    permission_preset: PermissionPreset
     created_at: str
     updated_at: str
     message_count: int
@@ -65,6 +76,7 @@ class RunRecord(BaseModel):
     session_id: str
     kind: Literal["chat_act", "chat_plan", "plan_execution"]
     mode: Literal["act", "plan"]
+    permission_preset: PermissionPreset
     status: Literal[
         "queued",
         "running",

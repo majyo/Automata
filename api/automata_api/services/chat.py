@@ -17,6 +17,7 @@ from automata_api.agent.execution.model import (
     RunOutcome,
 )
 from automata_api.agent.execution.orchestrator import ToolExecutionOrchestrator
+from automata_api.agent.execution.permissions import PermissionPreset
 from automata_api.agent.mcp.runtime import create_mcp_tool_runtime
 from automata_api.agent.runtime import stream_agent_loop, stream_plan_loop
 from automata_api.agent.skills.runtime import (
@@ -60,6 +61,7 @@ async def stream_agent_reply(
     run_id: str,
     cancellation: CancellationToken,
     approval_broker: ApprovalBroker,
+    permission_preset: PermissionPreset,
     selected_skills: object = None,
     approved_plan_content: str | None = None,
     approved_plan_id: str | None = None,
@@ -70,6 +72,7 @@ async def stream_agent_reply(
             "run_id": run_id,
             "session_id": session_id,
             "prompt": prompt,
+            "permission_preset": permission_preset,
         }
     )
     response = ""
@@ -121,7 +124,8 @@ async def stream_agent_reply(
                         run_id=run_id,
                         cancellation=cancellation,
                         orchestrator=ToolExecutionOrchestrator(
-                            approval_broker=approval_broker
+                            approval_broker=approval_broker,
+                            permission_preset=permission_preset,
                         ),
                     ),
                     run_id=run_id,
@@ -153,6 +157,7 @@ async def stream_plan_reply(
     run_id: str,
     cancellation: CancellationToken,
     approval_broker: ApprovalBroker,
+    permission_preset: PermissionPreset,
     selected_skills: object = None,
 ) -> RunOutcome:
     await websocket.send_json(
@@ -162,6 +167,7 @@ async def stream_plan_reply(
             "session_id": session_id,
             "prompt": prompt,
             "mode": "plan",
+            "permission_preset": permission_preset,
         }
     )
     response = ""
@@ -212,7 +218,8 @@ async def stream_plan_reply(
                         run_id=run_id,
                         cancellation=cancellation,
                         orchestrator=ToolExecutionOrchestrator(
-                            approval_broker=approval_broker
+                            approval_broker=approval_broker,
+                            permission_preset=permission_preset,
                         ),
                     ),
                     run_id=run_id,
@@ -243,6 +250,7 @@ async def stream_approved_plan_reply(
     run_id: str,
     cancellation: CancellationToken,
     approval_broker: ApprovalBroker,
+    permission_preset: PermissionPreset,
 ) -> RunOutcome:
     plan_id = str(plan["id"])
     await websocket.send_json(
@@ -260,6 +268,7 @@ async def stream_approved_plan_reply(
         run_id=run_id,
         cancellation=cancellation,
         approval_broker=approval_broker,
+        permission_preset=permission_preset,
         approved_plan_content=str(plan["content"]),
         approved_plan_id=plan_id,
     )

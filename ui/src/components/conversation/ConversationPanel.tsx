@@ -5,6 +5,7 @@ import { PromptComposer } from "../composer/PromptComposer";
 import { WorkspacePicker } from "../sessions/WorkspacePicker";
 import { ToolApprovalCard } from "./ToolApprovalCard";
 import type { ApprovalDecision, ChatMessage, SendMode, ToolApprovalRequest } from "../../types/chat";
+import type { PermissionPreset } from "../../types/session";
 import type { SkillRecord, SkillRuntimeNotice } from "../../types/skills";
 
 type ConversationPanelProps = {
@@ -15,6 +16,8 @@ type ConversationPanelProps = {
   defaultWorkingDirectory: string;
   prompt: string;
   sendMode: SendMode;
+  permissionPreset: PermissionPreset;
+  permissionUpdating: boolean;
   isStreaming: boolean;
   canSend: boolean;
   approvals: ToolApprovalRequest[];
@@ -28,6 +31,7 @@ type ConversationPanelProps = {
   onSubmit(event: FormEvent<HTMLFormElement>): void;
   onPromptChange(prompt: string): void;
   onSendModeChange(sendMode: SendMode): void;
+  onPermissionPresetChange(permissionPreset: PermissionPreset): void;
   onApprovePlan(message: ChatMessage): void;
   onRespondToApproval(approval: ToolApprovalRequest, decision: ApprovalDecision): void;
   onCancelRun(): void;
@@ -44,6 +48,8 @@ export function ConversationPanel({
   defaultWorkingDirectory,
   prompt,
   sendMode,
+  permissionPreset,
+  permissionUpdating,
   isStreaming,
   canSend,
   approvals,
@@ -57,6 +63,7 @@ export function ConversationPanel({
   onSubmit,
   onPromptChange,
   onSendModeChange,
+  onPermissionPresetChange,
   onApprovePlan,
   onRespondToApproval,
   onCancelRun,
@@ -86,6 +93,8 @@ export function ConversationPanel({
               draft
               prompt={prompt}
               sendMode={sendMode}
+              permissionPreset={permissionPreset}
+              permissionUpdating={permissionUpdating}
               isStreaming={isStreaming}
               canSend={canSend}
               skills={skills}
@@ -95,6 +104,7 @@ export function ConversationPanel({
               skillsLoading={skillsLoading}
               onPromptChange={onPromptChange}
               onSendModeChange={onSendModeChange}
+              onPermissionPresetChange={onPermissionPresetChange}
               onCancel={onCancelRun}
               onToggleSkill={onToggleSkill}
               onToggleSkillEnabled={onToggleSkillEnabled}
@@ -118,6 +128,8 @@ export function ConversationPanel({
             <PromptComposer
               prompt={prompt}
               sendMode={sendMode}
+              permissionPreset={permissionPreset}
+              permissionUpdating={permissionUpdating}
               isStreaming={isStreaming}
               canSend={canSend}
               skills={skills}
@@ -127,6 +139,7 @@ export function ConversationPanel({
               skillsLoading={skillsLoading}
               onPromptChange={onPromptChange}
               onSendModeChange={onSendModeChange}
+              onPermissionPresetChange={onPermissionPresetChange}
               onCancel={onCancelRun}
               onToggleSkill={onToggleSkill}
               onToggleSkillEnabled={onToggleSkillEnabled}
