@@ -24,6 +24,19 @@ automata_api/repositories/ Session and message persistence
 tests/                   FastAPI TestClient coverage
 ```
 
+## Database schema
+
+The development database does not support upgrades from historical schemas.
+`automata_api/db/baseline.py` creates and validates the complete current schema
+directly. If an existing database does not match that baseline, delete
+`automata.db` and restart the backend.
+
+The migration hook remains in `automata_api/db/migrations/__init__.py` and
+`automata_api/db/schema.py`, including ordered versions, checksums,
+per-migration transactions, backups, and integrity checks. There are currently
+no concrete migrations, so a new database contains an empty
+`schema_migrations` table.
+
 ## LLM configuration
 
 Create `api/.env`, create a repository-root `.env`, point `AUTOMATA_ENV_FILE`

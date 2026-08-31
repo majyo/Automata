@@ -6,6 +6,10 @@
 > - 代码基线：`7b48f26`
 > - 前置方案：[Agent 执行安全 MVP 设计方案](./agent-execution-safety-mvp-design.md)
 > - 关联方案：[Agent Run Trace Sidequest 设计方案](../Deferred/agent-run-trace-sidequest-design.md)
+> - 2026-07-31 基线调整：历史 v1–v5 数据升级已停止支持，具体迁移脚本已移除。
+>   当前完整结构由 `api/automata_api/db/baseline.py` 直接创建；本文第 14 节的历史迁移
+>   设计仅保留为决策记录。迁移 hook、事务、checksum、备份和完整性检查代码仍保留，
+>   当前 migration registry 为空。
 
 ## 1. 文档目的
 

@@ -29,7 +29,7 @@
 
 | 能力 | 当前实现 |
 | --- | --- |
-| Run 数据 | `api/automata_api/db/migrations/v0002_runs.py` 创建 `agent_runs` |
+| Run 数据 | `api/automata_api/db/baseline.py` 在当前基线中创建 `agent_runs` |
 | Run 类型 | `chat_act`、`chat_plan`、`plan_execution` |
 | Run 状态 | `queued`、`running`、`waiting_approval`、`cancelling`、`completed`、`failed`、`cancelled`、`interrupted` |
 | 并发约束 | 数据库唯一索引保证一个 session 同时最多一个非终态 Run |

@@ -642,7 +642,9 @@ sandbox_protocol_error
 
 ## 13. 数据库与事件
 
-新增 migration 时保留当前 `permission_preset`，同时增加编译后快照字段。
+`permission_preset` 和编译后的 profile 快照字段已经属于
+`api/automata_api/db/baseline.py` 当前基线。历史 migration 已移除；未来需要保留数据跨
+baseline 升级时，再通过保留的空 migration hook 新增版本脚本。
 
 建议新增事件：
 

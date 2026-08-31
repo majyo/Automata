@@ -6,6 +6,11 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
+from automata_api.db.baseline import (
+    create_current_schema,
+    has_application_tables,
+    validate_current_schema,
+)
 from automata_api.db.connection import connect_db, db_lock, db_path
 from automata_api.db.migrations import MIGRATIONS, Migration
 
@@ -29,41 +34,36 @@ def init_db() -> None:
     with db_lock, connect_db() as db:
         db.execute("PRAGMA journal_mode = WAL")
         db.execute("PRAGMA foreign_keys = ON")
-        assert_database_quick_check(db, "before migration")
-        has_user_objects = database_has_user_objects(db)
-        has_migration_table = table_exists(db, "schema_migrations")
-        applied = applied_migrations(db) if has_migration_table else {}
-        validate_applied_migrations(applied)
+        assert_database_quick_check(db, "before schema initialization")
 
-        pending = [migration for migration in MIGRATIONS if migration.version not in applied]
-        violations = foreign_key_violations(db)
-        legacy_shadow_tables = repairable_legacy_shadow_tables(
-            db,
-            violations,
-            has_migration_table=has_migration_table,
-        )
-        if violations and not legacy_shadow_tables:
-            raise_foreign_key_error(violations, "before migration")
+        if has_application_tables(db):
+            validate_current_schema(db)
+        else:
+            create_current_schema(db)
+
+        ensure_migration_table(db)
+        validate_migration_registry()
+        applied = applied_migrations(db)
+        validate_applied_migrations(applied)
+        pending = [
+            migration
+            for migration in MIGRATIONS
+            if migration.version not in applied
+        ]
 
         backup_path: Path | None = None
-        if pending and has_user_objects:
+        if pending:
             backup_path = create_database_backup(db, path, applied, pending)
 
         try:
-            if legacy_shadow_tables:
-                drop_legacy_shadow_tables(db, legacy_shadow_tables)
-
-            if pending:
-                db.execute("PRAGMA foreign_keys = OFF")
-                for migration in pending:
-                    apply_migration(db, migration)
-                db.execute("PRAGMA foreign_keys = ON")
-
-            assert_database_integrity(db, "after migration")
+            for migration in pending:
+                apply_migration(db, migration)
+            assert_database_integrity(db, "after schema initialization")
         except Exception:
-            db.execute("PRAGMA foreign_keys = ON")
             if backup_path is not None and backup_path.exists():
-                backup_path.rename(backup_path.with_name(f"{backup_path.name}.failed"))
+                backup_path.rename(
+                    backup_path.with_name(f"{backup_path.name}.failed")
+                )
             raise
 
         prune_successful_backups(path, keep=3)
@@ -94,7 +94,21 @@ def applied_migrations(db: sqlite3.Connection) -> dict[int, sqlite3.Row]:
     return {int(row["version"]): row for row in rows}
 
 
+def validate_migration_registry() -> None:
+    versions = [migration.version for migration in MIGRATIONS]
+    if versions != list(range(1, len(versions) + 1)):
+        raise DatabaseMigrationError(
+            "Migration versions must be unique, ordered, and contiguous from 1."
+        )
+
+
 def validate_applied_migrations(applied: dict[int, sqlite3.Row]) -> None:
+    if applied and not MIGRATIONS:
+        raise DatabaseSchemaTooNewError(
+            "Database contains historical migration records that are not "
+            "supported by the current development baseline. Reset the database."
+        )
+
     known = {migration.version: migration for migration in MIGRATIONS}
     if applied and max(applied) > max(known):
         raise DatabaseSchemaTooNewError(
@@ -123,16 +137,6 @@ def apply_migration(db: sqlite3.Connection, migration: Migration) -> None:
     checksum = migration_checksum(migration)
     try:
         db.execute("BEGIN IMMEDIATE")
-        db.execute(
-            """
-            CREATE TABLE IF NOT EXISTS schema_migrations (
-                version INTEGER PRIMARY KEY,
-                name TEXT NOT NULL,
-                checksum TEXT NOT NULL,
-                applied_at TEXT NOT NULL
-            )
-            """
-        )
         migration.apply(db)
         db.execute(
             """
@@ -165,135 +169,24 @@ def migration_checksum(migration: Migration) -> str:
 
 def assert_database_integrity(db: sqlite3.Connection, stage: str) -> None:
     assert_database_quick_check(db, stage)
-    violations = foreign_key_violations(db)
+    violations = db.execute("PRAGMA foreign_key_check").fetchall()
     if violations:
-        raise_foreign_key_error(violations, stage)
+        raise DatabaseMigrationError(
+            f"Database foreign_key_check failed {stage}: "
+            f"{len(violations)} violation(s)."
+        )
 
 
-def assert_database_quick_check(db: sqlite3.Connection, stage: str) -> None:
+def assert_database_quick_check(
+    db: sqlite3.Connection,
+    stage: str,
+) -> None:
     quick_check = db.execute("PRAGMA quick_check").fetchone()
     if quick_check is None or str(quick_check[0]).lower() != "ok":
         detail = quick_check[0] if quick_check else "no result"
         raise DatabaseMigrationError(
             f"Database quick_check failed {stage}: {detail}"
         )
-
-
-def foreign_key_violations(db: sqlite3.Connection) -> list[sqlite3.Row]:
-    return db.execute("PRAGMA foreign_key_check").fetchall()
-
-
-def raise_foreign_key_error(
-    violations: list[sqlite3.Row],
-    stage: str,
-) -> None:
-    raise DatabaseMigrationError(
-        f"Database foreign_key_check failed {stage}: {len(violations)} violation(s)."
-    )
-
-
-def repairable_legacy_shadow_tables(
-    db: sqlite3.Connection,
-    violations: list[sqlite3.Row],
-    *,
-    has_migration_table: bool,
-) -> list[str]:
-    if has_migration_table or not violations:
-        return []
-    if {str(row["table"]) for row in violations} != {"messages_old"}:
-        return []
-    if not table_exists(db, "messages") or not table_exists(db, "sessions"):
-        return []
-
-    columns = {
-        str(row["name"])
-        for row in db.execute('PRAGMA table_info("messages_old")').fetchall()
-    }
-    if columns != {
-        "id",
-        "session_id",
-        "role",
-        "content",
-        "sequence",
-        "created_at",
-    }:
-        return []
-
-    foreign_keys = db.execute(
-        'PRAGMA foreign_key_list("messages_old")'
-    ).fetchall()
-    if len(foreign_keys) != 1:
-        return []
-    foreign_key = foreign_keys[0]
-    if (
-        str(foreign_key["table"]) != "sessions"
-        or str(foreign_key["from"]) != "session_id"
-        or str(foreign_key["to"]) != "id"
-        or str(foreign_key["on_delete"]).upper() != "CASCADE"
-    ):
-        return []
-
-    row_count = int(
-        db.execute('SELECT COUNT(*) FROM "messages_old"').fetchone()[0]
-    )
-    if row_count != len(violations):
-        return []
-    linked_row = db.execute(
-        """
-        SELECT 1
-        FROM messages_old AS old
-        JOIN sessions ON sessions.id = old.session_id
-        LIMIT 1
-        """
-    ).fetchone()
-    if linked_row is not None:
-        return []
-
-    return ["messages_old"]
-
-
-def drop_legacy_shadow_tables(
-    db: sqlite3.Connection,
-    tables: list[str],
-) -> None:
-    db.execute("PRAGMA foreign_keys = OFF")
-    try:
-        db.execute("BEGIN IMMEDIATE")
-        for table in tables:
-            quoted_table = table.replace('"', '""')
-            db.execute(f'DROP TABLE "{quoted_table}"')
-        assert_database_integrity(db, "after legacy shadow table cleanup")
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
-    finally:
-        db.execute("PRAGMA foreign_keys = ON")
-
-
-def database_has_user_objects(db: sqlite3.Connection) -> bool:
-    row = db.execute(
-        """
-        SELECT 1
-        FROM sqlite_schema
-        WHERE name NOT LIKE 'sqlite_%'
-          AND name != 'schema_migrations'
-        LIMIT 1
-        """
-    ).fetchone()
-    return row is not None
-
-
-def table_exists(db: sqlite3.Connection, table: str) -> bool:
-    row = db.execute(
-        """
-        SELECT 1
-        FROM sqlite_schema
-        WHERE type = 'table' AND name = ?
-        """,
-        (table,),
-    ).fetchone()
-    return row is not None
 
 
 def create_database_backup(
