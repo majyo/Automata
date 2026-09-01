@@ -13,6 +13,7 @@ from automata_api.agent.execution.permissions import (
     normalize_permission_preset,
 )
 from automata_api.agent.prompts import agent_workspace
+from automata_api.db import context_search as context_search_db
 from automata_api.db.connection import connect_db, db_lock
 from automata_api.utils import new_id, normalize_title, now_iso
 
@@ -365,7 +366,18 @@ def update_tool_run_result(
     return message
 
 
-def save_context_message(session_id: str, message: dict[str, Any]) -> dict[str, Any]:
+def save_context_message(
+    session_id: str,
+    message: dict[str, Any],
+    *,
+    source: str = context_search_db.CONTEXT_SOURCE_CONVERSATION,
+) -> dict[str, Any]:
+    if source not in {
+        context_search_db.CONTEXT_SOURCE_CONVERSATION,
+        context_search_db.CONTEXT_SOURCE_SEARCH,
+    }:
+        raise ValueError(f"Unsupported context message source: {source}")
+
     message_id = new_id()
     created_at = now_iso()
     message_json = json.dumps(message, ensure_ascii=False, sort_keys=True)
@@ -384,11 +396,27 @@ def save_context_message(session_id: str, message: dict[str, Any]) -> dict[str, 
         db.execute(
             """
             INSERT INTO agent_context_messages (
-                id, session_id, message_json, sequence, created_at
+                id, session_id, message_json, sequence, created_at, source
             )
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (message_id, session_id, message_json, sequence, created_at),
+            (
+                message_id,
+                session_id,
+                message_json,
+                sequence,
+                created_at,
+                source,
+            ),
+        )
+        context_search_db.index_context_message(
+            db,
+            context_message_id=message_id,
+            session_id=session_id,
+            sequence=sequence,
+            created_at=created_at,
+            message=message,
+            source=source,
         )
         db.commit()
 
@@ -396,9 +424,28 @@ def save_context_message(session_id: str, message: dict[str, Any]) -> dict[str, 
         "id": message_id,
         "session_id": session_id,
         "message": message,
+        "source": source,
         "sequence": sequence,
         "created_at": created_at,
     }
+
+
+def search_context(
+    session_id: str,
+    query: str,
+    *,
+    limit: int = context_search_db.DEFAULT_CONTEXT_SEARCH_LIMIT,
+    include_tool_results: bool = True,
+) -> dict[str, Any]:
+    with db_lock, connect_db() as db:
+        ensure_session(db, session_id)
+        return context_search_db.search_context(
+            db,
+            session_id=session_id,
+            query=query,
+            limit=limit,
+            include_tool_results=include_tool_results,
+        )
 
 
 def get_recent_messages(session_id: str, limit: int) -> list[dict[str, Any]]:

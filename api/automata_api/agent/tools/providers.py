@@ -8,7 +8,9 @@ from automata_api.agent.tools.model import (
     ToolDiscoveryContext,
     ToolExposure,
 )
+from automata_api.agent.tools.thread_context import SearchThreadContextTool
 from automata_api.agent.tools.tool_search import tool_search_text_for_spec
+from automata_api.agent.types import AgentContextStore
 
 
 class BackendToolProvider:
@@ -19,6 +21,27 @@ class BackendToolProvider:
         return tuple(
             descriptor_for_tool(tool, source=f"backend:{context.backend.kind}")
             for tool in context.backend.tools()
+        )
+
+
+class ContextToolProvider:
+    """Provide read-only tools bound to the current Agent context."""
+
+    def __init__(self, store: AgentContextStore) -> None:
+        self._store = store
+
+    def discover(self, context: ToolDiscoveryContext) -> tuple[ToolDescriptor, ...]:
+        if not context.session_id:
+            return ()
+
+        return (
+            descriptor_for_tool(
+                SearchThreadContextTool(
+                    session_id=context.session_id,
+                    store=self._store,
+                ),
+                source="builtin:thread_context",
+            ),
         )
 
 

@@ -67,7 +67,21 @@ class AgentContextStore(Protocol):
         ...
 
     def save_context_message(
-        self, session_id: str, message: dict[str, Any]
+        self,
+        session_id: str,
+        message: dict[str, Any],
+        *,
+        source: str = "conversation",
+    ) -> dict[str, Any]:
+        ...
+
+    def search_context(
+        self,
+        session_id: str,
+        query: str,
+        *,
+        limit: int = 5,
+        include_tool_results: bool = True,
     ) -> dict[str, Any]:
         ...
 

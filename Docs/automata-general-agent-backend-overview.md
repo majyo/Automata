@@ -110,6 +110,11 @@ Automata 分开保存三类信息：
 - 供模型继续推理的 `agent_context_messages`，其中保留 assistant tool call 和 tool result 协议消息；
 - 独立的 `session_context_summaries`，用于压缩较早的历史，而不改写可见消息。
 
+当最近消息和摘要不足以回答当前问题时，Agent 还可以调用只读的
+`search_thread_context` 工具。该工具把当前 `session_id` 绑定在运行时，使用
+SQLite FTS5 检索完整的 `agent_context_messages` 历史，并返回带 sequence 和
+message id 的有界历史片段；检索结果被标记为不可再次建立检索索引。
+
 默认只直接装载最近 24 条上下文消息。上下文压缩默认开启，基于配置的模型上下文规模、触发比例和字符估算计算阈值；超过阈值时使用同一个模型生成隐藏摘要。Runtime 也会在工具循环过大时压缩最近的工具活动。压缩失败会被记录并跳过，不会伪造摘要。
 
 ### 4. 持久化 Run、事件和恢复

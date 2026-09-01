@@ -33,9 +33,9 @@ directly. If an existing database does not match that baseline, delete
 
 The migration hook remains in `automata_api/db/migrations/__init__.py` and
 `automata_api/db/schema.py`, including ordered versions, checksums,
-per-migration transactions, backups, and integrity checks. There are currently
-no concrete migrations, so a new database contains an empty
-`schema_migrations` table.
+per-migration transactions, backups, and integrity checks. Migration 1 adds the
+thread-context search source marker, the rebuildable SQLite FTS5 search index,
+and indexes any existing agent context messages without deleting them.
 
 ## LLM configuration
 

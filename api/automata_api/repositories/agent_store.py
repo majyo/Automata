@@ -25,9 +25,30 @@ class SessionAgentContextStore:
         )
 
     def save_context_message(
-        self, session_id: str, message: dict[str, Any]
+        self,
+        session_id: str,
+        message: dict[str, Any],
+        *,
+        source: str = "conversation",
     ) -> dict[str, Any]:
-        return session_repository.save_context_message(session_id, message)
+        return session_repository.save_context_message(
+            session_id, message, source=source
+        )
+
+    def search_context(
+        self,
+        session_id: str,
+        query: str,
+        *,
+        limit: int = 5,
+        include_tool_results: bool = True,
+    ) -> dict[str, Any]:
+        return session_repository.search_context(
+            session_id,
+            query,
+            limit=limit,
+            include_tool_results=include_tool_results,
+        )
 
     def fetch_context_summary(self, session_id: str) -> dict[str, Any] | None:
         return session_repository.fetch_context_summary(session_id)

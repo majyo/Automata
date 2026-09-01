@@ -19,12 +19,17 @@ from automata_api.agent.skills.model import SkillTurnContext
 from automata_api.agent.tools import ToolResult, run_tool, tool_specs
 from automata_api.agent.tools.registry import ToolRegistry, registered_tools
 from automata_api.agent.tools.router import ToolRouter
+from automata_api.agent.tools.thread_context import SEARCH_THREAD_CONTEXT_NAME
 from automata_api.agent.types import AgentContextStore, AgentLoopEvent
 from automata_api.config import (
     DEFAULT_AGENT_MAX_STEPS,
     ContextCompressionConfig,
     get_agent_config,
     get_context_compression_config,
+)
+from automata_api.db.context_search import (
+    CONTEXT_SOURCE_CONVERSATION,
+    CONTEXT_SOURCE_SEARCH,
 )
 from automata_api.observability import (
     emit_content_record,
@@ -272,6 +277,9 @@ async def stream_model_loop(
                         store=store,
                         session_id=session_id,
                         message=provider_message,
+                        source=context_source_for_assistant_message(
+                            provider_message
+                        ),
                     )
                 for tool_call in tool_calls:
                     async for event in stream_execute_tool_call(
@@ -519,7 +527,14 @@ async def _stream_execute_tool_call_inner(
     provider_message = tool_result_for_provider(tool_call, result)
     messages.append(provider_message)
     await save_context_message_if_possible(
-        store=store, session_id=session_id, message=provider_message
+        store=store,
+        session_id=session_id,
+        message=provider_message,
+        source=(
+            CONTEXT_SOURCE_SEARCH
+            if result.name == SEARCH_THREAD_CONTEXT_NAME
+            else CONTEXT_SOURCE_CONVERSATION
+        ),
     )
 
 
@@ -528,11 +543,43 @@ async def save_context_message_if_possible(
     store: AgentContextStore | None,
     session_id: str | None,
     message: dict[str, Any],
+    source: str = CONTEXT_SOURCE_CONVERSATION,
 ) -> None:
     if store is None or not session_id:
         return
 
-    await asyncio.to_thread(store.save_context_message, session_id, message)
+    if source == CONTEXT_SOURCE_CONVERSATION:
+        await asyncio.to_thread(store.save_context_message, session_id, message)
+        return
+
+    await asyncio.to_thread(
+        store.save_context_message,
+        session_id,
+        message,
+        source=source,
+    )
+
+
+def context_source_for_assistant_message(message: dict[str, Any]) -> str:
+    tool_calls = message.get("tool_calls")
+    if not isinstance(tool_calls, list) or not tool_calls:
+        return CONTEXT_SOURCE_CONVERSATION
+
+    names: list[str] = []
+    for tool_call in tool_calls:
+        if not isinstance(tool_call, dict):
+            return CONTEXT_SOURCE_CONVERSATION
+        function = tool_call.get("function")
+        if not isinstance(function, dict):
+            return CONTEXT_SOURCE_CONVERSATION
+        name = function.get("name")
+        if not isinstance(name, str) or not name.strip():
+            return CONTEXT_SOURCE_CONVERSATION
+        names.append(name)
+
+    if names and all(name == SEARCH_THREAD_CONTEXT_NAME for name in names):
+        return CONTEXT_SOURCE_SEARCH
+    return CONTEXT_SOURCE_CONVERSATION
 
 
 def insert_skill_messages(

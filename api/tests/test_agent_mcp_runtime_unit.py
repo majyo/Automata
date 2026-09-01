@@ -67,6 +67,7 @@ def test_ungranted_workspace_server_is_only_a_candidate_and_never_starts(tmp_pat
                 "workspace-server"
             ]
             assert "read_file" in visible_names(runtime)
+            assert "search_thread_context" in visible_names(runtime)
 
     asyncio.run(run())
     assert not marker.exists()

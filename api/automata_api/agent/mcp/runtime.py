@@ -13,9 +13,10 @@ from automata_api.agent.mcp.manager import McpConnectionManager
 from automata_api.agent.mcp.trust import McpTrustStore, server_fingerprint
 from automata_api.agent.tools.mcp_provider import McpToolProvider
 from automata_api.agent.tools.model import ToolDiscoveryContext
-from automata_api.agent.tools.providers import BackendToolProvider
+from automata_api.agent.tools.providers import BackendToolProvider, ContextToolProvider
 from automata_api.agent.tools.router import ToolRouter, ToolRouterBuilder
 from automata_api.observability import observe_span
+from automata_api.repositories.agent_store import SessionAgentContextStore
 
 
 @dataclass(frozen=True)
@@ -105,7 +106,10 @@ async def create_mcp_tool_runtime(
                         backend=backend,
                         mode=mode,
                     ),
-                    sync_providers=(BackendToolProvider(),),
+                    sync_providers=(
+                        BackendToolProvider(),
+                        ContextToolProvider(SessionAgentContextStore()),
+                    ),
                     async_providers=async_providers,
                 )
             yield McpRuntimeState(

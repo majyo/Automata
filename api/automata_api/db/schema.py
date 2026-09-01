@@ -113,7 +113,7 @@ def validate_applied_migrations(applied: dict[int, sqlite3.Row]) -> None:
     if applied and max(applied) > max(known):
         raise DatabaseSchemaTooNewError(
             f"Database schema version {max(applied)} is newer than supported "
-            f"version {max(known)}."
+            f"version {max(known)}. Reset the database."
         )
 
     expected_versions = list(range(1, max(applied, default=0) + 1))

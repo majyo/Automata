@@ -9,7 +9,12 @@ from .model import (
     ToolExposure,
     ToolProvider,
 )
-from .providers import BackendToolProvider, StaticToolProvider, descriptor_for_tool
+from .providers import (
+    BackendToolProvider,
+    ContextToolProvider,
+    StaticToolProvider,
+    descriptor_for_tool,
+)
 from .registry import (
     REGISTERED_TOOLS,
     ToolRegistry,
