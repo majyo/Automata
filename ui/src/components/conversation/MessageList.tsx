@@ -1,5 +1,5 @@
 import type { RefObject } from "react";
-import { Sparkles } from "lucide-react";
+import { AutomataMark } from "../app-shell/AutomataMark";
 import { MessageBubble } from "./MessageBubble";
 import { ToolRunGroup } from "./ToolCard";
 import type { ChatMessage } from "../../types/chat";
@@ -11,23 +11,44 @@ type MessageListProps = {
   onApprovePlan(message: ChatMessage): void;
 };
 
-export function MessageList({ messages, messagesRef, isStreaming, onApprovePlan }: MessageListProps) {
+export function MessageList({
+  messages,
+  messagesRef,
+  isStreaming,
+  onApprovePlan,
+}: MessageListProps) {
   const items = groupToolRuns(messages);
 
   return (
-    <div className="messages" ref={messagesRef}>
+    <div
+      className="messages"
+      ref={messagesRef}
+      role="log"
+      aria-label="会话记录"
+      aria-busy={isStreaming}
+    >
+      {messages.length > 0 && (
+        <div className="conversation-start">
+          <span />
+          会话记录
+          <span />
+        </div>
+      )}
       {messages.length === 0 && (
         <div className="empty-state">
           <div className="empty-state-icon">
-            <Sparkles size={22} />
+            <AutomataMark />
           </div>
-          <h3>Start the conversation</h3>
-          <p>This session is empty. Send a prompt to start a persisted conversation.</p>
+          <h3>从一个具体任务开始</h3>
+          <p>在下方输入问题、需求或需要排查的现象。</p>
         </div>
       )}
-      {items.map((item) => (
+      {items.map((item) =>
         item.kind === "tool_group" ? (
-          <ToolRunGroup key={item.messages.map((message) => message.id).join(":")} messages={item.messages} />
+          <ToolRunGroup
+            key={item.messages.map((message) => message.id).join(":")}
+            messages={item.messages}
+          />
         ) : (
           <MessageBubble
             key={item.message.id}
@@ -35,8 +56,14 @@ export function MessageList({ messages, messagesRef, isStreaming, onApprovePlan 
             isStreaming={isStreaming}
             onApprovePlan={onApprovePlan}
           />
-        )
-      ))}
+        ),
+      )}
+      {messages.length > 0 && (
+        <div className="conversation-end">
+          <span className="tiny-square" />
+          {isStreaming ? "正在处理…" : "已显示全部记录"}
+        </div>
+      )}
     </div>
   );
 }

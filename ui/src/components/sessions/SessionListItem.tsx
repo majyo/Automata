@@ -1,4 +1,11 @@
-import { Check, FolderGit2, FolderOpen, Pencil, Trash2, X } from "lucide-react";
+import {
+  ArrowUpRight,
+  Check,
+  FolderOpen,
+  Pencil,
+  Trash2,
+  X,
+} from "lucide-react";
 import type { KeyboardEvent } from "react";
 import type { PersistedRunStatus } from "../../types/chat";
 import type { SessionSummary } from "../../types/session";
@@ -19,6 +26,15 @@ type SessionListItemProps = {
   onDelete(sessionId: string): void;
 };
 
+const statusLabels: Partial<Record<PersistedRunStatus, string>> = {
+  waiting_approval: "等待批准",
+  cancelling: "正在停止",
+  completed: "已完成",
+  failed: "失败",
+  cancelled: "已取消",
+  interrupted: "已中断",
+};
+
 export function SessionListItem({
   session,
   isActive,
@@ -34,154 +50,109 @@ export function SessionListItem({
   onDelete,
 }: SessionListItemProps) {
   const isEditing = editingSessionId === session.id;
-  const statusLabel = formatSessionRunStatus(runStatus, isRunning, isActive);
-  const showStatus = statusLabel !== "Saved" && statusLabel !== "Active";
-
+  const status =
+    runStatus === "waiting_approval"
+      ? "等待批准"
+      : isRunning
+        ? runStatus === "cancelling"
+          ? "正在停止"
+          : "执行中"
+        : runStatus
+          ? statusLabels[runStatus]
+          : undefined;
   function handleTitleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
     if (event.key === "Enter") {
       event.preventDefault();
       onCommitRename(session.id);
     }
     if (event.key === "Escape") {
+      event.stopPropagation();
       onCancelRename();
     }
   }
-
   return (
-    <button
+    <div
       className={`session-item ${isActive ? "active" : ""} ${isRunning ? "running" : ""}`}
-      onClick={() => onSelect(session.id)}
     >
-      <span className="session-item-icon">
-        <FolderGit2 size={18} />
-      </span>
-      <span className="session-item-text">
-        {isEditing ? (
+      {isEditing ? (
+        <div className="session-edit">
           <input
+            aria-label="会话名称"
             autoFocus
             className="session-title-input"
             value={editingTitle}
-            onChange={(event) => onEditingTitleChange(event.currentTarget.value)}
-            onClick={(event) => event.stopPropagation()}
+            onChange={(event) =>
+              onEditingTitleChange(event.currentTarget.value)
+            }
             onKeyDown={handleTitleKeyDown}
           />
-        ) : (
+          <button
+            className="mini-action"
+            type="button"
+            aria-label="保存会话名称"
+            onClick={() => onCommitRename(session.id)}
+          >
+            <Check size={14} />
+          </button>
+          <button
+            className="mini-action"
+            type="button"
+            aria-label="取消重命名"
+            onClick={onCancelRename}
+          >
+            <X size={14} />
+          </button>
+        </div>
+      ) : (
+        <button
+          className="session-select"
+          type="button"
+          onClick={() => onSelect(session.id)}
+          aria-current={isActive ? "page" : undefined}
+        >
+          <span className="session-directory">
+            <FolderOpen size={12} />
+            {formatDirectoryName(session.working_directory)}
+          </span>
           <strong>{session.title}</strong>
-        )}
-        <small>
-          {session.message_count} messages · {session.backend}
-        </small>
-        <small className="session-directory" title={session.working_directory}>
-          <FolderOpen size={12} />
-          {formatDirectoryName(session.working_directory)}
-        </small>
-      </span>
-      <span className="session-item-trailing">
-        {showStatus ? (
-          <em className={`status-chip ${sessionStatusTone(runStatus, isRunning)}`}>
-            {isRunning ? <span className="status-dot" /> : null}
-            {statusLabel}
-          </em>
-        ) : null}
-        <span className="session-actions">
-          {isEditing ? (
-            <>
-              <span
-                className="mini-action"
-                role="button"
-                tabIndex={0}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onCommitRename(session.id);
-                }}
+          <span className="session-item-bottom">
+            <span>{session.message_count} 条消息</span>
+            {status ? (
+              <em
+                className={`session-run-status ${runStatus === "failed" ? "tone-error" : runStatus === "waiting_approval" ? "tone-warning" : ""}`}
               >
-                <Check size={14} />
-              </span>
-              <span
-                className="mini-action"
-                role="button"
-                tabIndex={0}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onCancelRename();
-                }}
-              >
-                <X size={14} />
-              </span>
-            </>
-          ) : (
-            <>
-              <span
-                className="mini-action"
-                role="button"
-                tabIndex={0}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onStartRename(session);
-                }}
-              >
-                <Pencil size={14} />
-              </span>
-              <span
-                className="mini-action danger"
-                role="button"
-                tabIndex={0}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onDelete(session.id);
-                }}
-              >
-                <Trash2 size={14} />
-              </span>
-            </>
-          )}
-        </span>
-      </span>
-    </button>
+                {isRunning && <span className="status-dot" />}
+                {status}
+              </em>
+            ) : (
+              <ArrowUpRight size={13} />
+            )}
+          </span>
+        </button>
+      )}
+      {!isEditing && (
+        <div className="session-actions">
+          <button
+            className="mini-action"
+            type="button"
+            aria-label={`重命名 ${session.title}`}
+            title="重命名"
+            onClick={() => onStartRename(session)}
+          >
+            <Pencil size={13} />
+          </button>
+          <button
+            className="mini-action danger"
+            type="button"
+            aria-label={`删除 ${session.title}`}
+            title="删除会话"
+            onClick={() => onDelete(session.id)}
+          >
+            <Trash2 size={13} />
+          </button>
+        </div>
+      )}
+    </div>
   );
-}
-
-function formatSessionRunStatus(
-  status: PersistedRunStatus | undefined,
-  isRunning: boolean,
-  isActive: boolean,
-): string {
-  if (status === "waiting_approval") {
-    return "Approval";
-  }
-  if (isRunning) {
-    return status === "cancelling" ? "Stopping" : "Running";
-  }
-  if (isActive) {
-    return "Active";
-  }
-  if (status === "completed") {
-    return "Completed";
-  }
-  if (status === "failed") {
-    return "Failed";
-  }
-  if (status === "cancelled") {
-    return "Cancelled";
-  }
-  if (status === "interrupted") {
-    return "Interrupted";
-  }
-  return "Saved";
-}
-
-function sessionStatusTone(status: PersistedRunStatus | undefined, isRunning: boolean): string {
-  if (status === "waiting_approval") {
-    return "tone-warning";
-  }
-  if (isRunning) {
-    return "tone-primary";
-  }
-  if (status === "failed") {
-    return "tone-error";
-  }
-  if (status === "completed") {
-    return "tone-success";
-  }
-  return "tone-neutral";
 }

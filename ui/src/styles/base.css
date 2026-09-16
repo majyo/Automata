@@ -1,145 +1,31 @@
-/* ==========================================================================
-   Automata — professional tool design tokens
-   Neutral graphite surfaces + a single restrained indigo accent.
-   Light + dark schemes. Fills are subtle, structure comes from hairlines.
-   ========================================================================== */
-
+/* Warm paper surfaces, olive ink, and quiet hairlines. All fonts are local
+   so the desktop webview works without a network font dependency. */
 :root {
-  /* Typography -----------------------------------------------------------
-     CSP (font-src 'self') forbids webfonts, so we stack the platform's
-     professional faces: Segoe UI on Windows, SF on macOS. */
   --md-font:
-    "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto,
-    "Helvetica Neue", Arial, sans-serif;
-  --md-font-mono:
-    "Cascadia Code", "Cascadia Mono", "JetBrains Mono", "SFMono-Regular",
-    Consolas, "Liberation Mono", monospace;
-
-  /* Type scale (root font-size: 14px) — compact, information-dense */
-  --md-type-headline-small: 1.429rem; /* 20px */
-  --md-type-title-large: 1.143rem; /* 16px */
-  --md-type-title-medium: 1rem; /* 14px */
-  --md-type-title-small: 0.929rem; /* 13px */
-  --md-type-body-large: 1rem; /* 14px */
-  --md-type-body-medium: 0.929rem; /* 13px */
-  --md-type-body-small: 0.857rem; /* 12px */
-  --md-type-label-large: 0.929rem; /* 13px */
-  --md-type-label-medium: 0.857rem; /* 12px */
-  --md-type-label-small: 0.786rem; /* 11px */
-
-  /* Shape — squared, precise */
-  --md-shape-xs: 3px;
-  --md-shape-sm: 6px;
-  --md-shape-md: 8px;
-  --md-shape-lg: 10px;
-  --md-shape-xl: 12px;
+    "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei", system-ui,
+    sans-serif;
+  --md-font-mono: "Cascadia Code", "Cascadia Mono", Consolas, monospace;
+  --md-type-headline-small: 1.5rem;
+  --md-type-title-large: 1.25rem;
+  --md-type-title-medium: 1rem;
+  --md-type-title-small: 0.929rem;
+  --md-type-body-large: 1.071rem;
+  --md-type-body-medium: 1rem;
+  --md-type-body-small: 0.857rem;
+  --md-type-label-large: 0.929rem;
+  --md-type-label-medium: 0.857rem;
+  --md-type-label-small: 0.786rem;
+  --md-shape-xs: 2px;
+  --md-shape-sm: 2px;
+  --md-shape-md: 3px;
+  --md-shape-lg: 3px;
+  --md-shape-xl: 4px;
   --md-shape-full: 999px;
-
-  /* Motion */
   --md-easing: cubic-bezier(0.2, 0, 0, 1);
   --md-easing-emphasized: cubic-bezier(0.05, 0.7, 0.1, 1);
   --md-duration-short: 120ms;
   --md-duration-medium: 200ms;
   --md-duration-long: 320ms;
-
-  color-scheme: light;
-}
-
-:root,
-:root[data-theme="light"] {
-  /* Accent — deep indigo, used sparingly */
-  --md-primary: #4338ca;
-  --md-on-primary: #ffffff;
-  --md-primary-container: #e0e7ff;
-  --md-on-primary-container: #1e1b4b;
-
-  /* Neutral active/selected fills */
-  --md-secondary-container: #e4e4e7;
-  --md-on-secondary-container: #18181b;
-
-  /* Surfaces — zinc neutrals */
-  --md-surface: #ffffff;
-  --md-surface-dim: #e4e4e7;
-  --md-surface-container-lowest: #ffffff;
-  --md-surface-container-low: #fafafa;
-  --md-surface-container: #f4f4f5;
-  --md-surface-container-high: #ececee;
-  --md-surface-container-highest: #e4e4e7;
-  --md-on-surface: #18181b;
-  --md-on-surface-variant: #52525b;
-  --md-outline: #a1a1aa;
-  --md-outline-variant: #e4e4e7;
-  --md-inverse-surface: #27272a;
-  --md-inverse-on-surface: #f4f4f5;
-  --md-inverse-primary: #a5b4fc;
-  --md-scrim: rgba(9, 9, 11, 0.4);
-
-  /* Semantic — muted, functional */
-  --md-error: #dc2626;
-  --md-on-error: #ffffff;
-  --md-error-container: #fee2e2;
-  --md-on-error-container: #7f1d1d;
-  --md-warning: #b45309;
-  --md-warning-container: #fef3c7;
-  --md-on-warning-container: #78350f;
-  --md-success: #15803d;
-  --md-success-container: #dcfce7;
-  --md-on-success-container: #14532d;
-
-  /* Elevation — nearly flat; borders do the work */
-  --md-elev-1: 0 1px 2px rgba(9, 9, 11, 0.06);
-  --md-elev-2: 0 2px 8px rgba(9, 9, 11, 0.08);
-  --md-elev-3: 0 8px 24px rgba(9, 9, 11, 0.12);
-}
-
-:root[data-theme="dark"] {
-  color-scheme: dark;
-
-  --md-primary: #a5b4fc;
-  --md-on-primary: #1e1b4b;
-  --md-primary-container: #2d2a6e;
-  --md-on-primary-container: #e0e7ff;
-
-  --md-secondary-container: #27272a;
-  --md-on-secondary-container: #f4f4f5;
-
-  --md-surface: #0c0c0e;
-  --md-surface-dim: #0c0c0e;
-  --md-surface-container-lowest: #0c0c0e;
-  --md-surface-container-low: #111113;
-  --md-surface-container: #17171a;
-  --md-surface-container-high: #1e1e22;
-  --md-surface-container-highest: #26262b;
-  --md-on-surface: #f4f4f5;
-  --md-on-surface-variant: #a1a1aa;
-  --md-outline: #52525b;
-  --md-outline-variant: #26262b;
-  --md-inverse-surface: #e4e4e7;
-  --md-inverse-on-surface: #27272a;
-  --md-inverse-primary: #4338ca;
-  --md-scrim: rgba(0, 0, 0, 0.6);
-
-  --md-error: #f87171;
-  --md-on-error: #450a0a;
-  --md-error-container: #450a0a;
-  --md-on-error-container: #fecaca;
-  --md-warning: #fbbf24;
-  --md-warning-container: #451a03;
-  --md-on-warning-container: #fde68a;
-  --md-success: #4ade80;
-  --md-success-container: #052e16;
-  --md-on-success-container: #bbf7d0;
-
-  --md-elev-1: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --md-elev-2: 0 2px 8px rgba(0, 0, 0, 0.45);
-  --md-elev-3: 0 8px 24px rgba(0, 0, 0, 0.5);
-}
-
-/* ==========================================================================
-   Base elements
-   ========================================================================== */
-
-:root {
   font-family: var(--md-font);
   font-size: 14px;
   color: var(--md-on-surface);
@@ -147,64 +33,147 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+}
+
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+  --md-primary: #525d43;
+  --md-on-primary: #f5f5ed;
+  --md-primary-container: #d9ddce;
+  --md-on-primary-container: #39432f;
+  --md-secondary-container: #dde0d4;
+  --md-on-secondary-container: #343b2d;
+  --md-surface: #eae9e2;
+  --md-surface-dim: #d6d8cb;
+  --md-surface-container-lowest: #f4f3ec;
+  --md-surface-container-low: #efeee7;
+  --md-surface-container: #e3e4da;
+  --md-surface-container-high: #dfe1d5;
+  --md-surface-container-highest: #d5d9c9;
+  --md-on-surface: #2d3228;
+  --md-on-surface-variant: #6d7464;
+  --md-outline: #969e87;
+  --md-outline-variant: #cbd0c0;
+  --md-inverse-surface: #343c2c;
+  --md-inverse-on-surface: #eeefe6;
+  --md-inverse-primary: #cad1b4;
+  --md-scrim: #2c33244d;
+  --md-error: #a14336;
+  --md-on-error: #fff5f0;
+  --md-error-container: #ead8cf;
+  --md-on-error-container: #793328;
+  --md-warning: #936a30;
+  --md-warning-container: #e9e0cb;
+  --md-on-warning-container: #715122;
+  --md-success: #526b40;
+  --md-success-container: #dce3d1;
+  --md-on-success-container: #3e542e;
+  --md-elev-1: 0 1px 3px #333b2510;
+  --md-elev-2: 0 4px 16px #333b2510;
+  --md-elev-3: 0 12px 40px #333b2525;
+  --paper-glow: #faf7eb70;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --md-primary: #b6c29b;
+  --md-on-primary: #262f1e;
+  --md-primary-container: #3a4430;
+  --md-on-primary-container: #dbe3cb;
+  --md-secondary-container: #353c2e;
+  --md-on-secondary-container: #e0e6d4;
+  --md-surface: #242820;
+  --md-surface-dim: #20231b;
+  --md-surface-container-lowest: #2e3328;
+  --md-surface-container-low: #292e24;
+  --md-surface-container: #30362a;
+  --md-surface-container-high: #394030;
+  --md-surface-container-highest: #444b38;
+  --md-on-surface: #e4e6dc;
+  --md-on-surface-variant: #a4ad97;
+  --md-outline: #717c60;
+  --md-outline-variant: #444d38;
+  --md-inverse-surface: #e6e9de;
+  --md-inverse-on-surface: #2d3425;
+  --md-inverse-primary: #52623f;
+  --md-scrim: #10160c99;
+  --md-error: #e4a18f;
+  --md-on-error: #392119;
+  --md-error-container: #4c342a;
+  --md-on-error-container: #f3c2ae;
+  --md-warning: #d7b879;
+  --md-warning-container: #453d28;
+  --md-on-warning-container: #e9d2a0;
+  --md-success: #afc491;
+  --md-success-container: #35432a;
+  --md-on-success-container: #d2e2ba;
+  --md-elev-1: 0 1px 3px #0d120933;
+  --md-elev-2: 0 4px 16px #0d120933;
+  --md-elev-3: 0 12px 40px #0d120966;
+  --paper-glow: #67704c10;
 }
 
 * {
   box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: var(--md-outline-variant) transparent;
 }
-
 body {
   margin: 0;
-  min-width: 960px;
+  min-width: 360px;
   min-height: 100vh;
   background: var(--md-surface);
 }
-
 button,
-input {
+input,
+textarea {
   font: inherit;
+  color: inherit;
 }
-
 button {
   border: 0;
+  cursor: pointer;
 }
-
-button:focus-visible,
-input:focus-visible {
-  outline: 2px solid var(--md-primary);
-  outline-offset: 1px;
-}
-
 button:disabled {
   cursor: not-allowed;
+  opacity: 0.5;
 }
-
+button,
+a,
+input,
+textarea,
+summary {
+  -webkit-tap-highlight-color: transparent;
+}
+:where(button, input, textarea, a, summary):focus-visible {
+  outline: 2px solid var(--md-primary);
+  outline-offset: 3px;
+}
+button {
+  transition:
+    background var(--md-duration-short),
+    color var(--md-duration-short);
+}
+button svg {
+  flex-shrink: 0;
+}
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
 ::selection {
-  color: var(--md-on-surface);
-  background: color-mix(in srgb, var(--md-primary) 22%, transparent);
+  background: var(--md-primary-container);
+  color: var(--md-on-primary-container);
 }
-
-/* Slim, neutral scrollbars */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--md-surface-container-highest) transparent;
-}
-
-*::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-*::-webkit-scrollbar-thumb {
-  background: var(--md-surface-container-highest);
-  border-radius: var(--md-shape-full);
-}
-
-*::-webkit-scrollbar-thumb:hover {
-  background: var(--md-outline);
-}
-
-*::-webkit-scrollbar-track {
-  background: transparent;
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
 }

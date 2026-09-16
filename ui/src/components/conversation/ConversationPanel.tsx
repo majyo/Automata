@@ -1,10 +1,15 @@
 import type { FormEvent, RefObject } from "react";
-import { Sparkles } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 import { MessageList } from "./MessageList";
 import { PromptComposer } from "../composer/PromptComposer";
 import { WorkspacePicker } from "../sessions/WorkspacePicker";
 import { ToolApprovalCard } from "./ToolApprovalCard";
-import type { ApprovalDecision, ChatMessage, SendMode, ToolApprovalRequest } from "../../types/chat";
+import type {
+  ApprovalDecision,
+  ChatMessage,
+  SendMode,
+  ToolApprovalRequest,
+} from "../../types/chat";
 import type { PermissionPreset } from "../../types/session";
 import type { SkillRecord, SkillRuntimeNotice } from "../../types/skills";
 
@@ -35,7 +40,10 @@ type ConversationPanelProps = {
   onPermissionPresetChange(permissionPreset: PermissionPreset): void;
   onSandboxSetup(): void;
   onApprovePlan(message: ChatMessage): void;
-  onRespondToApproval(approval: ToolApprovalRequest, decision: ApprovalDecision): void;
+  onRespondToApproval(
+    approval: ToolApprovalRequest,
+    decision: ApprovalDecision,
+  ): void;
   onCancelRun(): void;
   onToggleSkill(skillId: string): void;
   onToggleSkillEnabled(skill: SkillRecord): Promise<void>;
@@ -76,24 +84,64 @@ export function ConversationPanel({
   onRefreshSkills,
 }: ConversationPanelProps) {
   return (
-    <section className="conversation-panel" aria-label="Agent conversation">
+    <section className="conversation-panel" aria-label="编程助手会话">
       {isNewSessionDraft ? (
         <div className="new-session-stage">
           <form className="new-session-dialog" onSubmit={onSubmit}>
-            <div className="new-session-icon">
-              <Sparkles size={18} />
+            <div className="new-session-content">
+              <div className="welcome-heading">
+                <span className="eyebrow">开始一个新任务</span>
+                <h2>今天，处理什么项目？</h2>
+                <p>选择工作目录，描述你要完成的事。</p>
+              </div>
+              <div className="starter-prompts" aria-label="任务建议">
+                {[
+                  {
+                    title: "了解项目",
+                    description: "梳理结构与主要调用关系",
+                    prompt:
+                      "请先查看当前项目的目录与入口，梳理主要模块及其调用关系。",
+                  },
+                  {
+                    title: "实现功能",
+                    description: "从需求拆解到代码修改",
+                    prompt:
+                      "我想在当前项目中实现一个功能，请先了解现有代码，再和我确认具体需求。",
+                  },
+                  {
+                    title: "排查问题",
+                    description: "定位原因并给出修复方案",
+                    prompt:
+                      "请帮助我排查当前项目的问题，先查看项目结构和现有测试，再根据我提供的现象定位原因。",
+                  },
+                ].map((item, index) => (
+                  <button
+                    type="button"
+                    key={item.title}
+                    onClick={() => {
+                      onPromptChange(item.prompt);
+                      document.getElementById("prompt-input")?.focus();
+                    }}
+                  >
+                    <span className="starter-number">0{index + 1}</span>
+                    <span>
+                      <strong>{item.title}</strong>
+                      <small>{item.description}</small>
+                    </span>
+                    <ArrowUpRight size={16} />
+                  </button>
+                ))}
+              </div>
+              <WorkspacePicker
+                displayedWorkingDirectory={displayedWorkingDirectory}
+                defaultWorkingDirectory={defaultWorkingDirectory}
+                isNewSessionDraft={isNewSessionDraft}
+                isStreaming={isStreaming}
+                onChooseDirectory={onChooseDirectory}
+                onWorkingDirectoryChange={onWorkingDirectoryChange}
+              />
             </div>
-            <h2>输入一条消息来开始新的会话</h2>
-            <WorkspacePicker
-              displayedWorkingDirectory={displayedWorkingDirectory}
-              defaultWorkingDirectory={defaultWorkingDirectory}
-              isNewSessionDraft={isNewSessionDraft}
-              isStreaming={isStreaming}
-              onChooseDirectory={onChooseDirectory}
-              onWorkingDirectoryChange={onWorkingDirectoryChange}
-            />
             <PromptComposer
-              autoFocus
               draft
               prompt={prompt}
               sendMode={sendMode}
@@ -116,6 +164,10 @@ export function ConversationPanel({
               onToggleSkillEnabled={onToggleSkillEnabled}
               onRefreshSkills={onRefreshSkills}
             />
+            <div className="composer-footnote">
+              <span>先选择执行方式与工具权限，再发送消息。</span>
+              <span>Enter 发送 · Shift + Enter 换行</span>
+            </div>
           </form>
         </div>
       ) : (
@@ -128,8 +180,15 @@ export function ConversationPanel({
           />
 
           <form className="composer-form" onSubmit={onSubmit}>
+            <div className="composer-heading">
+              <span>继续会话</span>
+              <span>{isStreaming ? "正在处理任务" : "描述下一步要做的事"}</span>
+            </div>
             {approvals[0] ? (
-              <ToolApprovalCard approval={approvals[0]} onRespond={onRespondToApproval} />
+              <ToolApprovalCard
+                approval={approvals[0]}
+                onRespond={onRespondToApproval}
+              />
             ) : null}
             <PromptComposer
               prompt={prompt}
@@ -153,6 +212,14 @@ export function ConversationPanel({
               onToggleSkillEnabled={onToggleSkillEnabled}
               onRefreshSkills={onRefreshSkills}
             />
+            <div className="composer-footnote">
+              <span>
+                {sendMode === "plan"
+                  ? "先生成计划，确认后执行。"
+                  : "按当前权限设置执行任务。"}
+              </span>
+              <span>Enter 发送 · Shift + Enter 换行</span>
+            </div>
           </form>
         </>
       )}

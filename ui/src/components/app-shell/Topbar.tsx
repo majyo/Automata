@@ -1,13 +1,12 @@
-import { FolderOpen, Moon, PanelRight, Play, Sun } from "lucide-react";
+import { FolderOpen, PanelLeft, PanelRight } from "lucide-react";
+import { ConnectionStatus } from "./ConnectionStatus";
 
 type TopbarProps = {
   title: string;
   displayedWorkingDirectory: string;
   socketStatus: string;
-  theme: "light" | "dark";
   isInspectorOpen: boolean;
-  onRunBridgeCheck(): void;
-  onToggleTheme(): void;
+  onToggleSidebar(): void;
   onToggleInspector(): void;
 };
 
@@ -15,72 +14,45 @@ export function Topbar({
   title,
   displayedWorkingDirectory,
   socketStatus,
-  theme,
   isInspectorOpen,
-  onRunBridgeCheck,
-  onToggleTheme,
+  onToggleSidebar,
   onToggleInspector,
 }: TopbarProps) {
   return (
     <header className="topbar">
+      <button
+        className="icon-button sidebar-toggle"
+        type="button"
+        onClick={onToggleSidebar}
+        aria-label="打开会话目录"
+      >
+        <PanelLeft size={18} />
+      </button>
       <div className="topbar-title">
+        <div className="eyebrow">
+          工作区 <span className="label-slash">/</span> <span>会话</span>
+        </div>
         <h1>{title}</h1>
-        {displayedWorkingDirectory ? (
+        {displayedWorkingDirectory && (
           <span className="topbar-subtitle" title={displayedWorkingDirectory}>
-            <FolderOpen size={13} />
+            <FolderOpen size={12} />
             {displayedWorkingDirectory}
           </span>
-        ) : null}
+        )}
       </div>
-
       <div className="topbar-actions">
-        <span className={`status-chip ${socketStatusTone(socketStatus)}`} title={socketStatus}>
-          <span className="status-dot" />
-          {socketStatus}
-        </span>
-
-        <button className="button button-tonal" type="button" onClick={onRunBridgeCheck}>
-          <Play size={14} />
-          Run bridge check
-        </button>
-
-        <span className="topbar-divider" />
-
-        <button
-          className="icon-button"
-          type="button"
-          onClick={onToggleTheme}
-          aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-          title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-        >
-          {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
-        </button>
-
+        <ConnectionStatus status={socketStatus} />
         <button
           className={`icon-button ${isInspectorOpen ? "active" : ""}`}
           type="button"
           onClick={onToggleInspector}
-          aria-label="Toggle run details panel"
+          aria-label="切换工作区概览"
           aria-pressed={isInspectorOpen}
-          title="Toggle run details panel"
+          title="工作区概览"
         >
-          <PanelRight size={17} />
+          <PanelRight size={18} />
         </button>
       </div>
     </header>
   );
-}
-
-function socketStatusTone(status: string): string {
-  const value = status.toLowerCase();
-  if (/(error|fail|closed|offline|disconnect(?!ing))/.test(value)) {
-    return "tone-error";
-  }
-  if (/(connecting|waiting|pending|starting)/.test(value)) {
-    return "tone-primary";
-  }
-  if (/(connected|ready|online|ok)/.test(value)) {
-    return "tone-success";
-  }
-  return "tone-neutral";
 }

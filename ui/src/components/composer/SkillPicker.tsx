@@ -1,5 +1,5 @@
 import { Check, ChevronDown, RefreshCw, Wrench } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { SkillRecord, SkillRuntimeNotice } from "../../types/skills";
 
 type SkillPickerProps = {
@@ -26,10 +26,37 @@ export function SkillPicker({
   onRefresh,
 }: SkillPickerProps) {
   const [open, setOpen] = useState(false);
+  const pickerRef = useRef<HTMLDivElement>(null);
   const selectedCount = selectedIds.size;
 
+  useEffect(() => {
+    if (!open) return;
+    function closeOnOutsideClick(event: PointerEvent) {
+      if (
+        event.target instanceof Node &&
+        !pickerRef.current?.contains(event.target)
+      )
+        setOpen(false);
+    }
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        setOpen(false);
+        pickerRef.current
+          ?.querySelector<HTMLButtonElement>(".skill-picker-trigger")
+          ?.focus();
+      }
+    }
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
+
   return (
-    <div className="skill-picker">
+    <div className="skill-picker" ref={pickerRef}>
       <button
         className={`skill-picker-trigger ${selectedCount ? "active" : ""}`}
         type="button"
@@ -63,7 +90,9 @@ export function SkillPicker({
           <div className="skill-picker-list">
             {skills.length === 0 ? (
               <p className="skill-picker-empty">
-                {isLoading ? "Loading skills..." : "No skills found for this workspace."}
+                {isLoading
+                  ? "Loading skills..."
+                  : "No skills found for this workspace."}
               </p>
             ) : (
               skills.map((skill) => {
@@ -79,12 +108,18 @@ export function SkillPicker({
                       disabled={disabled || !skill.enabled}
                       onClick={() => onToggleSelected(skill.skill_id)}
                     >
-                      <span className={`skill-picker-check ${selected ? "selected" : ""}`}>
+                      <span
+                        className={`skill-picker-check ${selected ? "selected" : ""}`}
+                      >
                         {selected ? <Check size={11} /> : null}
                       </span>
                       <span className="skill-picker-copy">
-                        <strong>{skill.interface?.display_name || skill.name}</strong>
-                        <span>{skill.short_description || skill.description}</span>
+                        <strong>
+                          {skill.interface?.display_name || skill.name}
+                        </strong>
+                        <span>
+                          {skill.short_description || skill.description}
+                        </span>
                         <small>{`${skill.scope} · ${skill.relative_dir}`}</small>
                       </span>
                     </button>
@@ -97,11 +132,15 @@ export function SkillPicker({
                       {skill.enabled ? "Disable" : "Enable"}
                     </button>
                     {skill.diagnostics.some(
-                      (item) => !["available", "deferred"].includes(item.status),
+                      (item) =>
+                        !["available", "deferred"].includes(item.status),
                     ) ? (
                       <p className="skill-picker-diagnostic">
                         {skill.diagnostics
-                          .filter((item) => !["available", "deferred"].includes(item.status))
+                          .filter(
+                            (item) =>
+                              !["available", "deferred"].includes(item.status),
+                          )
                           .map((item) => item.message)
                           .join(" · ")}
                       </p>

@@ -1,5 +1,4 @@
 import { FolderOpen } from "lucide-react";
-import { WORKING_DIRECTORY_PLACEHOLDER } from "../../utils/format";
 
 type WorkspacePickerProps = {
   displayedWorkingDirectory: string;
@@ -21,29 +20,42 @@ export function WorkspacePicker({
   const locked = !isNewSessionDraft || isStreaming;
 
   return (
-    <section className={`workspace-picker ${isNewSessionDraft ? "" : "locked"}`} aria-label="Working directory">
-      <span className="field-label">Working directory</span>
+    <section
+      className={`workspace-picker ${isNewSessionDraft ? "" : "locked"}`}
+      aria-label="工作目录"
+    >
+      <label className="field-label" htmlFor="working-directory">
+        工作目录
+      </label>
       <div className="text-field">
+        <FolderOpen size={16} />
         <input
+          id="working-directory"
           value={displayedWorkingDirectory}
-          onChange={(event) => onWorkingDirectoryChange(event.currentTarget.value)}
+          onChange={(event) =>
+            onWorkingDirectoryChange(event.currentTarget.value)
+          }
           disabled={locked}
           title={displayedWorkingDirectory}
-          placeholder={defaultWorkingDirectory || WORKING_DIRECTORY_PLACEHOLDER}
+          placeholder={
+            defaultWorkingDirectory || "输入项目路径（留空使用默认目录）"
+          }
         />
         <button
           className="icon-button"
           type="button"
           onClick={onChooseDirectory}
           disabled={locked}
-          aria-label="Choose working directory"
-          title="Choose working directory"
+          aria-label="选择文件夹"
+          title="选择文件夹"
         >
-          <FolderOpen size={16} />
+          <span>浏览</span>
         </button>
       </div>
       <span className="field-helper">
-        {locked ? "The working directory is fixed for this session." : "Pick a folder or type a path for the new session."}
+        {locked
+          ? "本次会话使用固定的工作目录。"
+          : "选择本地文件夹，或直接输入完整路径。"}
       </span>
     </section>
   );

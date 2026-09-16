@@ -64,3 +64,7 @@ ui/src-tauri/binaries/automata-sandbox-host-*.exe
 
 # Build artifacts
 *.tsbuildinfo
+
+# Local UI verification artifacts
+/.playwright-cli/
+/output/playwright/

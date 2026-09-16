@@ -1,4 +1,5 @@
-import { Send, Square } from "lucide-react";
+import { ArrowUp, Square } from "lucide-react";
+import { useEffect, useRef } from "react";
 import { PermissionPresetToggle } from "./PermissionPresetToggle";
 import { SendModeToggle } from "./SendModeToggle";
 import { SkillPicker } from "./SkillPicker";
@@ -55,17 +56,47 @@ export function PromptComposer({
   onToggleSkillEnabled,
   onRefreshSkills,
 }: PromptComposerProps) {
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const input = inputRef.current;
+    if (input) {
+      input.style.height = "auto";
+      input.style.height = `${Math.min(input.scrollHeight, 180)}px`;
+    }
+  }, [prompt]);
   return (
     <div className={`composer ${draft ? "draft" : ""}`}>
-      <input
+      <textarea
+        ref={inputRef}
+        id="prompt-input"
+        aria-label="输入任务消息"
+        rows={2}
         autoFocus={autoFocus}
         value={prompt}
         onChange={(event) => onPromptChange(event.currentTarget.value)}
-        placeholder="Ask the local coding agent..."
+        placeholder={
+          draft ? "描述任务，或从上方建议开始…" : "输入消息，继续处理项目…"
+        }
+        onKeyDown={(event) => {
+          if (
+            event.key === "Enter" &&
+            !event.shiftKey &&
+            !event.nativeEvent.isComposing &&
+            event.keyCode !== 229
+          ) {
+            event.preventDefault();
+            if (canSend && !isStreaming)
+              event.currentTarget.form?.requestSubmit();
+          }
+        }}
       />
       <div className="composer-toolbar">
         <div className="composer-actions">
-          <SendModeToggle sendMode={sendMode} disabled={isStreaming} onChange={onSendModeChange} />
+          <SendModeToggle
+            sendMode={sendMode}
+            disabled={isStreaming}
+            onChange={onSendModeChange}
+          />
           <PermissionPresetToggle
             permissionPreset={permissionPreset}
             disabled={isStreaming || permissionUpdating}
@@ -88,12 +119,16 @@ export function PromptComposer({
         <button
           className={`composer-submit ${isStreaming ? "stop" : ""}`}
           type={isStreaming ? "button" : "submit"}
-          aria-label={isStreaming ? "Stop run" : "Send prompt"}
-          title={isStreaming ? "Stop run" : "Send prompt"}
+          aria-label={isStreaming ? "停止任务" : "发送消息"}
+          title={isStreaming ? "停止任务" : "发送消息"}
           disabled={isStreaming ? false : !canSend}
           onClick={isStreaming ? onCancel : undefined}
         >
-          {isStreaming ? <Square size={12} fill="currentColor" /> : <Send size={15} />}
+          {isStreaming ? (
+            <Square size={13} fill="currentColor" />
+          ) : (
+            <ArrowUp size={20} />
+          )}
         </button>
       </div>
     </div>

@@ -21,7 +21,7 @@ import "./styles/components.css";
 
 function App() {
   const [chatState, chatDispatch] = useReducer(chatReducer, initialChatState);
-  const [prompt, setPrompt] = useState("Inspect the API folder and suggest the first FastAPI route.");
+  const [prompt, setPrompt] = useState("");
   const [sendMode, setSendMode] = useState<SendMode>("execute");
   const [sandboxSetupStatus, setSandboxSetupStatus] = useState("");
   const { apiConfig, apiConfigRef, isConfigReady } = useApiConfig();
@@ -75,7 +75,10 @@ function App() {
 
     async function boot() {
       agentSocket.connectSocket(apiConfig);
-      await sessions.actions.initializeSessions(apiConfig, agentSocket.setSocketStatus);
+      await sessions.actions.initializeSessions(
+        apiConfig,
+        agentSocket.setSocketStatus,
+      );
       if (cancelled) {
         return;
       }
@@ -86,7 +89,13 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [agentSocket.connectSocket, agentSocket.setSocketStatus, apiConfig, isConfigReady, sessions.actions.initializeSessions]);
+  }, [
+    agentSocket.connectSocket,
+    agentSocket.setSocketStatus,
+    apiConfig,
+    isConfigReady,
+    sessions.actions.initializeSessions,
+  ]);
 
   function handleCreateSession() {
     sessions.actions.startNewSessionDraft();
