@@ -70,7 +70,12 @@ def compression_config() -> ContextCompressionConfig:
     )
 
 
-def run_loop(provider: ScriptedProvider, *, max_steps: int = 4) -> list[dict[str, Any]]:
+def run_loop(
+    provider: ScriptedProvider,
+    *,
+    max_steps: int = 4,
+    tool_runner=None,
+) -> list[dict[str, Any]]:
     async def scenario() -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
         async for event in runtime.stream_model_loop(
@@ -82,6 +87,7 @@ def run_loop(provider: ScriptedProvider, *, max_steps: int = 4) -> list[dict[str
             max_steps=max_steps,
             tools=[],
             provider=provider,
+            tool_runner=tool_runner,
         ):
             events.append(event)
         return events
@@ -179,3 +185,47 @@ def test_tool_result_conversion_uses_the_call_id():
         "tool_call_id": "call-9",
         "content": "payload",
     }
+
+
+def test_engine_uses_the_injected_tool_runner():
+    """The builtin-tool fallback is a port, not a hard-coded import."""
+    calls: list[tuple[str, object, str]] = []
+
+    async def fake_runner(name, arguments, workspace):
+        calls.append((name, arguments, workspace))
+        return ToolResult(
+            name=name, arguments={}, content='{"ok": true}', success=True
+        )
+
+    provider = ScriptedProvider([tool_call_step("read_file"), [{"content": "done"}]])
+
+    events = run_loop(provider, tool_runner=fake_runner)
+
+    assert calls == [("read_file", "{}", "")]
+    results = [event for event in events if event["type"] == "tool_result"]
+    assert results and results[0]["tool"] == "read_file"
+    assert results[0]["success"] is True
+
+
+def test_default_tool_runner_resolves_the_runtime_seam():
+    """The default must resolve late so test doubles keep working."""
+    import automata_api.agent.runtime as runtime
+    from automata_api.agent.tool_dispatch import DefaultToolRunner
+
+    sentinel_calls: list[str] = []
+    original = runtime.run_tool
+
+    async def fake(name, arguments, workspace):
+        sentinel_calls.append(name)
+        return ToolResult(name=name, arguments={}, content="{}", success=True)
+
+    runtime.run_tool = fake
+    try:
+        result = asyncio.run(
+            DefaultToolRunner()("read_file", "{}", "workspace")
+        )
+    finally:
+        runtime.run_tool = original
+
+    assert sentinel_calls == ["read_file"]
+    assert result.success is True

@@ -21,7 +21,13 @@ from automata_api.agent.prompts import (
     plan_system_prompt,
 )
 from automata_api.agent.skills.model import SkillTurnContext
-from automata_api.agent.tools import ToolResult, run_tool, tool_specs
+from automata_api.agent.tool_dispatch import RunTool, default_tool_runner
+from automata_api.agent.tools import ToolResult, tool_specs
+
+# Re-exported on purpose: this module is the seam the tests patch to
+# substitute the builtin tool runner, and DefaultToolRunner resolves it
+# through here rather than capturing it at import time.
+from automata_api.agent.tools import run_tool as run_tool
 from automata_api.agent.tools.registry import ToolRegistry, registered_tools
 from automata_api.agent.tools.router import ToolRouter
 from automata_api.agent.tools.thread_context import SEARCH_THREAD_CONTEXT_NAME
@@ -65,6 +71,7 @@ async def stream_agent_loop(
     run_id: str | None = None,
     cancellation: CancellationToken | None = None,
     orchestrator: ToolExecutionOrchestrator | None = None,
+    tool_runner: RunTool | None = None,
 ) -> AsyncIterator[AgentLoopEvent]:
     if cancellation is not None:
         cancellation.raise_if_cancelled()
@@ -115,6 +122,7 @@ async def stream_agent_loop(
         run_id=run_id,
         cancellation=cancellation,
         orchestrator=orchestrator,
+        tool_runner=tool_runner,
     ):
         yield event
 
@@ -132,6 +140,7 @@ async def stream_plan_loop(
     run_id: str | None = None,
     cancellation: CancellationToken | None = None,
     orchestrator: ToolExecutionOrchestrator | None = None,
+    tool_runner: RunTool | None = None,
 ) -> AsyncIterator[AgentLoopEvent]:
     if cancellation is not None:
         cancellation.raise_if_cancelled()
@@ -193,6 +202,7 @@ async def stream_plan_loop(
         run_id=run_id,
         cancellation=cancellation,
         orchestrator=orchestrator,
+        tool_runner=tool_runner,
     ):
         yield event
 
@@ -215,6 +225,7 @@ async def stream_model_loop(
     cancellation: CancellationToken | None = None,
     orchestrator: ToolExecutionOrchestrator | None = None,
     provider: ModelProvider | None = None,
+    tool_runner: RunTool | None = None,
 ) -> AsyncIterator[AgentLoopEvent]:
     for step in range(1, max_steps + 1):
         async with observe_span(
@@ -297,6 +308,7 @@ async def stream_model_loop(
                         run_id=run_id,
                         cancellation=cancellation,
                         orchestrator=orchestrator,
+                        tool_runner=tool_runner,
                     ):
                         yield event
                 collector = EventCollector()
@@ -353,6 +365,7 @@ async def stream_execute_tool_call(
     run_id: str | None = None,
     cancellation: CancellationToken | None = None,
     orchestrator: ToolExecutionOrchestrator | None = None,
+    tool_runner: RunTool | None = None,
 ) -> AsyncIterator[AgentLoopEvent]:
     function = tool_call.get("function")
     function = function if isinstance(function, dict) else {}
@@ -395,6 +408,7 @@ async def stream_execute_tool_call(
             run_id=run_id,
             cancellation=cancellation,
             orchestrator=orchestrator,
+            tool_runner=tool_runner,
         ):
             if event.get("type") == "tool_result":
                 content = event.get("content")
@@ -426,6 +440,7 @@ async def _stream_execute_tool_call_inner(
     run_id: str | None = None,
     cancellation: CancellationToken | None = None,
     orchestrator: ToolExecutionOrchestrator | None = None,
+    tool_runner: RunTool | None = None,
 ) -> AsyncIterator[AgentLoopEvent]:
     if cancellation is not None:
         cancellation.raise_if_cancelled()
@@ -516,7 +531,8 @@ async def _stream_execute_tool_call_inner(
     elif registry is not None:
         result = await registry.run(name, arguments)
     else:
-        result = await run_tool(name, arguments, workspace or "")
+        runner = tool_runner or default_tool_runner
+        result = await runner(name, arguments, workspace or "")
     if cancellation is not None:
         cancellation.raise_if_cancelled()
     yield {
