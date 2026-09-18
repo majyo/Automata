@@ -32,9 +32,9 @@ from automata_api.agent.execution.sandbox.model import (
 from automata_api.agent.execution.sandbox.protocol import (
     classify_sandbox_failure,
 )
-from automata_api.agent.tools._core import ToolResult
 from automata_api.agent.tools.base import AgentTool
 from automata_api.agent.tools.model import ToolDescriptor
+from automata_api.agent.tools.models import ToolResult
 from automata_api.agent.tools.router import ToolRouter
 from automata_api.execution.permissions import (
     compile_permission_profile,

@@ -5,8 +5,8 @@ import re
 import time
 from typing import Any
 
-from automata_api.agent.tools._core import ToolResult
 from automata_api.agent.tools.base import AgentTool
+from automata_api.agent.tools.models import ToolResult
 from automata_api.extensions.mcp.manager import McpConnectionManager
 from automata_api.extensions.mcp.policy import McpPolicyEngine
 from automata_api.extensions.mcp.result import (

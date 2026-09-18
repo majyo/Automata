@@ -114,7 +114,7 @@ def test_public_run_error_codes_are_reachable_from_the_error_wrapper():
 
 
 def test_tool_result_contract_matches_the_dataclass():
-    from automata_api.agent.tools._core import ToolResult
+    from automata_api.agent.tools.models import ToolResult
 
     fields = [field.name for field in dataclasses.fields(ToolResult)]
     assert fields == TOOL_RESULTS["result_fields"]

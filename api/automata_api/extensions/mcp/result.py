@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 from jsonschema import Draft202012Validator, SchemaError, ValidationError
 
-from automata_api.agent.tools._core import ToolResult
+from automata_api.agent.tools.models import ToolResult
 from automata_api.extensions.mcp.schema import (
     McpCallResult,
     McpError,
