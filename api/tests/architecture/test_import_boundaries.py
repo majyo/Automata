@@ -83,6 +83,39 @@ def test_workspace_and_execution_never_import_tools(refs):
     assert offenders == []
 
 
+def test_tool_facade_is_still_importable(refs):
+    """The M2 boundary must keep working while the facade exists.
+
+    ``tools/_core.py`` is a one-way facade during the migration. Two
+    things are pinned: it still re-exports the helpers that moved out, and
+    the moved implementations really live in the workspace/execution
+    layers (so the facade is delegating rather than duplicating).
+    """
+    from automata_api.agent.tools import _core as core
+
+    for name in (
+        "ToolResult",
+        "resolve_file_path",
+        "resolve_search_path",
+        "resolve_tool_cwd",
+        "path_argument_for_cwd",
+        "capture_process_output",
+        "read_limited_stream",
+        "json_response",
+        "parse_tool_arguments",
+        "process_supervisor",
+    ):
+        assert hasattr(core, name), f"tools._core no longer re-exports {name}"
+
+    assert core.resolve_file_path.__module__ == "automata_api.workspace.paths"
+    assert (
+        core.read_limited_stream.__module__
+        == "automata_api.agent.execution.output"
+    )
+    assert core.json_response.__module__ == "automata_api.agent.tools.args"
+    assert core.ToolResult.__module__ == "automata_api.agent.tools.models"
+
+
 def test_agent_core_does_not_import_transport_or_fastapi(refs):
     """Plan 3.3.2: the agent core stays framework free."""
     forbidden_roots = {

@@ -14,6 +14,7 @@
     "agent -> db",
     "agent -> observability",
     "agent -> repositories",
+    "agent -> workspace",
     "bootstrap -> agent",
     "bootstrap -> config",
     "bootstrap -> db",

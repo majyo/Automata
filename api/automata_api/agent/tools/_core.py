@@ -63,6 +63,21 @@ from automata_api.agent.tools.constants import (
     SUPPORTED_EXEC_SHELLS,
 )
 from automata_api.agent.tools.models import ToolResult
+from automata_api.workspace.paths import (
+    path_argument_for_cwd as path_argument_for_cwd,
+)
+from automata_api.workspace.paths import (
+    resolve_executable as resolve_executable,
+)
+from automata_api.workspace.paths import (
+    resolve_file_path as resolve_file_path,
+)
+from automata_api.workspace.paths import (
+    resolve_search_path as resolve_search_path,
+)
+from automata_api.workspace.paths import (
+    resolve_tool_cwd as resolve_tool_cwd,
+)
 
 from .patch_codex import (
     CodexPatchFile,
@@ -474,36 +489,6 @@ def search_error_result(
         ),
         success=False,
     )
-
-
-def resolve_executable(name: str) -> str | None:
-    return shutil.which(name)
-
-
-def resolve_search_path(
-    *, workspace_path: Path, cwd_path: Path, raw_path: Any
-) -> Path | str:
-    requested_path = raw_path if isinstance(raw_path, str) and raw_path.strip() else "."
-    path = Path(requested_path).expanduser()
-    if path.is_absolute():
-        resolved = path.resolve()
-    else:
-        resolved = (cwd_path / path).resolve()
-
-    try:
-        resolved.relative_to(workspace_path)
-    except ValueError:
-        return f"path must stay inside workspace: {workspace_path}"
-
-    if not resolved.exists():
-        return f"path does not exist: {resolved}"
-
-    return resolved
-
-
-def path_argument_for_cwd(path: Path, cwd_path: Path) -> str:
-    relative = os.path.relpath(path, cwd_path)
-    return Path(relative).as_posix()
 
 
 def bash_search_command(preferred_engine: str, pattern: str, path: str) -> str:
@@ -1328,25 +1313,6 @@ def patch_error_result(
     )
 
 
-def resolve_file_path(workspace_path: Path, raw_path: Any) -> Path | str:
-    requested_path = raw_path if isinstance(raw_path, str) and raw_path.strip() else ""
-    if not requested_path:
-        return "Missing required path."
-
-    path = Path(requested_path).expanduser()
-    if path.is_absolute():
-        resolved = path.resolve()
-    else:
-        resolved = (workspace_path / path).resolve()
-
-    try:
-        resolved.relative_to(workspace_path)
-    except ValueError:
-        return f"path must stay inside workspace: {workspace_path}"
-
-    return resolved
-
-
 def select_line_range(
     content: str, raw_start_line: Any, raw_end_line: Any
 ) -> tuple[str, int | None, int | None, int]:
@@ -1984,28 +1950,6 @@ def is_wsl_bash(path: str) -> bool:
         "\\windows\\system32\\bash.exe" in normalized
         or "\\windows\\sysnative\\bash.exe" in normalized
     )
-
-
-def resolve_tool_cwd(workspace_path: Path, raw_cwd: Any) -> Path | str:
-    requested_cwd = raw_cwd if isinstance(raw_cwd, str) and raw_cwd.strip() else "."
-    cwd_path = Path(requested_cwd).expanduser()
-    if cwd_path.is_absolute():
-        resolved = cwd_path.resolve()
-    else:
-        resolved = (workspace_path / cwd_path).resolve()
-
-    try:
-        resolved.relative_to(workspace_path)
-    except ValueError:
-        return f"cwd must stay inside workspace: {workspace_path}"
-
-    if not resolved.exists():
-        return f"cwd does not exist: {resolved}"
-
-    if not resolved.is_dir():
-        return f"cwd is not a directory: {resolved}"
-
-    return resolved
 
 
 def bash_error_result(
