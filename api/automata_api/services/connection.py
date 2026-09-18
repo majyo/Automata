@@ -27,6 +27,15 @@ from automata_api.services.chat import (
     stream_plan_reply,
 )
 from automata_api.sessions.ports import SessionStore
+from automata_api.transport.websocket.commands import (
+    ApprovalResponseCommand,
+    CancelRunCommand,
+    InvalidCommand,
+    PlanExecutionCommand,
+    PromptCommand,
+    ResumeRunCommand,
+    decode_command,
+)
 from automata_api.transport.websocket.sender import (
     SerializedWebSocketSender,
 )
@@ -91,59 +100,57 @@ class AgentConnection:
             self.sender.close()
 
     async def _handle_payload(self, payload: Mapping[str, Any]) -> None:
-        payload_type = payload.get("type")
-        if payload_type == "tool_approval_response":
-            await self._resolve_approval(payload)
+        command = decode_command(payload)
+        if isinstance(command, InvalidCommand):
+            await self._send_command_error(command)
             return
-        if payload_type == "cancel_run":
-            await self._handle_cancel(payload)
+        if isinstance(command, ApprovalResponseCommand):
+            await self._resolve_approval(command)
             return
-        if payload_type == "resume_run":
-            await self._resume_run(payload)
+        if isinstance(command, CancelRunCommand):
+            await self._handle_cancel(command)
             return
-        if payload_type not in {
-            "prompt",
-            "approve_plan",
-            "retry_plan",
-        }:
-            await self.sender.send_json(
-                {"type": "error", "message": "Unsupported message type"}
-            )
+        if isinstance(command, ResumeRunCommand):
+            await self._resume_run(command)
             return
 
-        session_id = str(payload.get("session_id", "")).strip()
-        if not session_id:
-            await self.sender.send_json(
-                {"type": "error", "message": "Missing session_id"}
-            )
-            return
         if not await run_repository_call(
-            self.session_store.session_exists, session_id
+            self.session_store.session_exists, command.session_id
         ):
             await self.sender.send_json(
                 {"type": "error", "message": "Session not found"}
             )
             return
 
-        if payload_type == "prompt":
-            await self._start_prompt(session_id, payload)
+        if isinstance(command, PromptCommand):
+            await self._start_prompt(command)
             return
-        await self._start_plan_execution(
-            session_id,
-            payload,
-            retry=payload_type == "retry_plan",
-        )
+        await self._start_plan_execution(command)
 
-    async def _start_prompt(
-        self, session_id: str, payload: Mapping[str, Any]
-    ) -> None:
-        prompt = str(payload.get("prompt", "")).strip()
-        if not prompt:
+    async def _send_command_error(self, command: InvalidCommand) -> None:
+        """Report a malformed frame using the envelope the client expects.
+
+        A rejected plan retry carries the plan id so the UI can re-prompt,
+        which is why it uses ``plan_error`` rather than the generic ``error``
+        envelope.
+        """
+        if command.code is None:
             await self.sender.send_json(
-                {"type": "error", "message": "Missing prompt"}
+                {"type": "error", "message": command.message}
             )
             return
-        mode = "plan" if str(payload.get("mode", "")).strip() == "plan" else "act"
+        await self.sender.send_json(
+            {
+                "type": "plan_error",
+                "code": command.code,
+                "message": command.message,
+            }
+        )
+
+    async def _start_prompt(self, command: PromptCommand) -> None:
+        session_id = command.session_id
+        prompt = command.prompt
+        mode = command.mode
 
         async def execute(
             run: RunHandle, user_message: dict[str, Any]
@@ -164,7 +171,7 @@ class AgentConnection:
                     run.approval_broker,
                     run.permission_preset,
                     run.permission_profile,
-                    payload.get("skills"),
+                    command.skills,
                 )
             return await stream_agent_reply(
                 run.event_sink,
@@ -175,7 +182,7 @@ class AgentConnection:
                 run.approval_broker,
                 run.permission_preset,
                 run.permission_profile,
-                payload.get("skills"),
+                command.skills,
             )
 
         try:
@@ -188,33 +195,11 @@ class AgentConnection:
         except run_repository.SessionBusyError as error:
             await self._send_session_busy(session_id, error.run_id)
 
-    async def _start_plan_execution(
-        self,
-        session_id: str,
-        payload: Mapping[str, Any],
-        *,
-        retry: bool,
-    ) -> None:
-        plan_id = str(payload.get("plan_id", "")).strip()
-        if not plan_id:
-            await self.sender.send_json(
-                {"type": "plan_error", "message": "Missing plan_id"}
-            )
-            return
-        if retry and payload.get("confirm_possible_duplicate_side_effects") is not True:
-            await self.sender.send_json(
-                {
-                    "type": "plan_error",
-                    "code": "duplicate_side_effect_confirmation_required",
-                    "session_id": session_id,
-                    "plan_id": plan_id,
-                    "message": (
-                        "Retry requires confirmation of possible duplicate side effects."
-                    ),
-                }
-            )
-            return
-        request_id = str(payload.get("request_id", "")).strip() or uuid.uuid4().hex
+    async def _start_plan_execution(self, command: PlanExecutionCommand) -> None:
+        session_id = command.session_id
+        plan_id = command.plan_id
+        request_id = command.request_id
+        retry = command.retry
 
         async def execute(
             run: RunHandle, plan: dict[str, Any]
@@ -276,9 +261,9 @@ class AgentConnection:
                 }
             )
 
-    async def _resolve_approval(self, payload: Mapping[str, Any]) -> None:
-        run_id = str(payload.get("run_id", "")).strip()
-        session_id = await self._session_id_for_run(payload, run_id)
+    async def _resolve_approval(self, command: ApprovalResponseCommand) -> None:
+        run_id = command.run_id
+        session_id = await self._session_id_for_run(command.session_id, run_id)
         if session_id is None:
             await self.sender.send_json(
                 {
@@ -292,8 +277,8 @@ class AgentConnection:
             await self.coordinator.resolve_approval(
                 session_id=session_id,
                 run_id=run_id,
-                approval_id=str(payload.get("approval_id", "")),
-                decision=str(payload.get("decision", "")),
+                approval_id=command.approval_id,
+                decision=command.decision,
             )
         except run_repository.RunNotFoundError:
             await self.sender.send_json(
@@ -312,9 +297,9 @@ class AgentConnection:
                 }
             )
 
-    async def _handle_cancel(self, payload: Mapping[str, Any]) -> None:
-        run_id = str(payload.get("run_id", "")).strip()
-        session_id = await self._session_id_for_run(payload, run_id)
+    async def _handle_cancel(self, command: CancelRunCommand) -> None:
+        run_id = command.run_id
+        session_id = await self._session_id_for_run(command.session_id, run_id)
         if session_id is None:
             await self.sender.send_json(
                 {
@@ -338,27 +323,25 @@ class AgentConnection:
                 }
             )
 
-    async def _resume_run(self, payload: Mapping[str, Any]) -> None:
-        run_id = str(payload.get("run_id", "")).strip()
-        session_id = str(payload.get("session_id", "")).strip()
-        try:
-            after_sequence = int(payload.get("after_sequence", 0))
-        except (TypeError, ValueError):
-            after_sequence = -1
-
+    async def _resume_run(self, command: ResumeRunCommand) -> None:
         outcome = await self.replay.resume(
             sender=self.sender,
-            session_id=session_id,
-            run_id=run_id,
-            after_sequence=after_sequence,
+            session_id=command.session_id,
+            run_id=command.run_id,
+            after_sequence=command.after_sequence,
         )
         if not outcome.ok and outcome.cursor_error:
-            await self._send_cursor_error(session_id, run_id)
+            await self._send_cursor_error(command.session_id, command.run_id)
 
     async def _session_id_for_run(
-        self, payload: Mapping[str, Any], run_id: str
+        self, requested_session_id: str, run_id: str
     ) -> str | None:
-        requested_session_id = str(payload.get("session_id", "")).strip()
+        """Resolve the owning session, rejecting a mismatched claim.
+
+        The client may name a session as a guard; when it does and the Run
+        belongs to another session, the request is refused rather than
+        retargeted.
+        """
         try:
             run = await run_repository_call(run_repository.get_run, run_id)
         except run_repository.RunNotFoundError:

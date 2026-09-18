@@ -120,7 +120,9 @@ def test_connection_uses_the_injected_session_store(settings, monkeypatch):
     import asyncio
 
     asyncio.run(
-        connection._handle_payload({"type": "prompt", "session_id": "missing"})
+        connection._handle_payload(
+            {"type": "prompt", "session_id": "missing", "prompt": "hello"}
+        )
     )
 
     assert calls == ["missing"]
