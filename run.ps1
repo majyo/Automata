@@ -150,6 +150,9 @@ function Build-ApiSidecar {
   $WorkDir = Join-Path $PyinstallerRoot "work"
   $SpecDir = Join-Path $PyinstallerRoot "spec"
   $BuiltExe = Join-Path $DistDir "$SidecarName.exe"
+  # The source side of --add-data must be absolute: PyInstaller resolves a
+  # relative source against the spec directory, which is $SpecDir here and
+  # not the api project, so the file would not be found.
   $MigrationSourceData = (
     (Join-Path $ApiDir "automata_api\db\migrations\*.py") +
     ";automata_api\db\migrations"
