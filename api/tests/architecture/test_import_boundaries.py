@@ -104,15 +104,15 @@ def test_workspace_and_execution_never_import_tools(refs):
     assert offenders == []
 
 
-def test_tool_facade_is_still_importable(refs):
-    """The M2 boundary must keep working while the facade exists.
+def test_tools_package_surface_is_explicit(refs):
+    """The tools package exposes its helper list from one declared place.
 
-    ``tools/_core.py`` is a one-way facade during the migration. Two
-    things are pinned: it still re-exports the helpers that moved out, and
-    the moved implementations really live in the workspace/execution
-    layers (so the facade is delegating rather than duplicating).
+    ``tools/api.py`` is the public surface. Two things are pinned: every
+    helper the old ``_core`` module used to provide still resolves through
+    the package, and the names come from the modules that own them (so the
+    package is re-exporting rather than re-implementing).
     """
-    from automata_api.agent.tools import _core as core
+    from automata_api.agent import tools
 
     for name in (
         "ToolResult",
@@ -124,17 +124,44 @@ def test_tool_facade_is_still_importable(refs):
         "read_limited_stream",
         "json_response",
         "parse_tool_arguments",
-        "process_supervisor",
+        "run_process",
+        "parse_unified_patch",
+        "patch_summary",
     ):
-        assert hasattr(core, name), f"tools._core no longer re-exports {name}"
+        assert hasattr(tools, name), f"tools no longer re-exports {name}"
 
-    assert core.resolve_file_path.__module__ == "automata_api.workspace.paths"
+    assert tools.resolve_file_path.__module__ == "automata_api.workspace.paths"
     assert (
-        core.read_limited_stream.__module__
+        tools.read_limited_stream.__module__
         == "automata_api.agent.execution.output"
     )
-    assert core.json_response.__module__ == "automata_api.agent.tools.args"
-    assert core.ToolResult.__module__ == "automata_api.agent.tools.models"
+    assert tools.json_response.__module__ == "automata_api.agent.tools.args"
+    assert tools.ToolResult.__module__ == "automata_api.agent.tools.models"
+    assert (
+        tools.parse_unified_patch.__module__
+        == "automata_api.workspace.patches.parsing"
+    )
+
+
+def test_core_facade_is_gone(refs):
+    """``tools/_core.py`` must not come back.
+
+    The module was the mixed dumping ground this refactoring split apart;
+    its responsibilities now live in tools/api.py, tools/args.py,
+    tools/constants.py, tools/models.py, tools/results.py, tools/text.py,
+    tools/sessions.py, tools/exec_shell.py, workspace/paths.py and
+    workspace/patches/parsing.py.
+    """
+    from pathlib import Path
+
+    tools_dir = (
+        Path(__file__).resolve().parents[2] / "automata_api" / "agent" / "tools"
+    )
+
+    assert not (tools_dir / "_core.py").exists(), (
+        "tools/_core.py was reintroduced; add the helper to its owning "
+        "module and list it in tools/api.py instead"
+    )
 
 
 def test_agent_core_does_not_import_transport_or_fastapi(refs):
