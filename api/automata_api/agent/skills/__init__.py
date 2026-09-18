@@ -1,4 +1,12 @@
-from .manager import SkillManager
+"""Agent-owned skill vocabulary.
+
+The skill *implementation* (discovery, configuration, loading, injection and
+tool dependency diagnostics) lives in ``extensions.skills``. What stays here
+is the shared vocabulary the turn engine needs: the context material a skill
+contributes and the value objects describing it. The core is therefore able
+to talk about skills without depending on the extension that produces them.
+"""
+
 from .model import (
     SkillError,
     SkillLoadOutcome,
@@ -6,14 +14,11 @@ from .model import (
     SkillSelection,
     SkillTurnContext,
 )
-from .runtime import create_skill_turn_context
 
 __all__ = [
     "SkillError",
     "SkillLoadOutcome",
-    "SkillManager",
     "SkillMetadata",
     "SkillSelection",
     "SkillTurnContext",
-    "create_skill_turn_context",
 ]

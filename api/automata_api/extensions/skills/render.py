@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from automata_api.agent.skills.config import DEFAULT_SKILL_METADATA_BUDGET_CHARS
 from automata_api.agent.skills.model import SkillMetadata
+
+from .config import DEFAULT_SKILL_METADATA_BUDGET_CHARS
 
 
 def render_available_skills(

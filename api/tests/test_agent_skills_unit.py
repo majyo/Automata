@@ -4,16 +4,16 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from automata_api.agent import llm, runtime
-from automata_api.agent.skills.config import SkillsConfig
-from automata_api.agent.skills.loader import load_skills_from_roots
-from automata_api.agent.skills.manager import SkillManager, reset_skill_manager
 from automata_api.agent.skills.model import SkillRoot, SkillTurnContext
-from automata_api.agent.skills.runtime import (
+from automata_api.config import AgentConfig, ContextCompressionConfig
+from automata_api.extensions.skills.config import SkillsConfig
+from automata_api.extensions.skills.loader import load_skills_from_roots
+from automata_api.extensions.skills.manager import SkillManager, reset_skill_manager
+from automata_api.extensions.skills.runtime import (
     create_skill_turn_context,
     skill_selections_from_payload,
 )
-from automata_api.agent.skills.settings import SkillSettingsStore
-from automata_api.config import AgentConfig, ContextCompressionConfig
+from automata_api.extensions.skills.settings import SkillSettingsStore
 
 
 def write_skill(

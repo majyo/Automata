@@ -22,14 +22,14 @@ from automata_api.agent.execution.permissions import (
 )
 from automata_api.agent.llm import AgentProviderError
 from automata_api.agent.runtime import stream_agent_loop, stream_plan_loop
-from automata_api.agent.skills.runtime import (
-    create_skill_turn_context,
-    skill_selections_from_payload,
-)
 from automata_api.agent.types import AgentLoopEvent
 from automata_api.config import AgentConfigurationError
 from automata_api.extensions.mcp.lookup import mcp_config_lookup
 from automata_api.extensions.mcp.runtime import create_mcp_tool_runtime
+from automata_api.extensions.skills.runtime import (
+    create_skill_turn_context,
+    skill_selections_from_payload,
+)
 from automata_api.observability import observe_span
 from automata_api.repositories.agent_store import SessionAgentContextStore
 from automata_api.repositories.sessions import (

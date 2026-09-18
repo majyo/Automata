@@ -4,13 +4,14 @@ import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from automata_api.agent.skills.config import SkillsConfig, get_skills_config
-from automata_api.agent.skills.loader import (
+from automata_api.agent.skills.model import SkillLoadOutcome, SkillMetadata, SkillRoot
+
+from .config import SkillsConfig, get_skills_config
+from .loader import (
     discover_skill_files,
     load_skills_from_roots,
 )
-from automata_api.agent.skills.model import SkillLoadOutcome, SkillMetadata, SkillRoot
-from automata_api.agent.skills.settings import SkillSettingsStore
+from .settings import SkillSettingsStore
 
 
 @dataclass(frozen=True)

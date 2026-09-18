@@ -6,9 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from automata_api.agent.skills.model import SkillMetadata
 from automata_api.config import get_database_config
-
-from .model import SkillMetadata
 
 SETTINGS_VERSION = 2
 

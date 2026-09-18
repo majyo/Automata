@@ -2,23 +2,24 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from automata_api.agent.skills.config import get_skills_config
-from automata_api.agent.skills.diagnostics import (
-    McpServerLookup,
-    diagnose_skill_dependencies,
-)
-from automata_api.agent.skills.injection import (
-    build_skill_messages,
-    resolve_selected_skills,
-)
-from automata_api.agent.skills.manager import SkillManager, get_skill_manager
 from automata_api.agent.skills.model import (
     AgentMode,
     SkillSelection,
     SkillTurnContext,
 )
-from automata_api.agent.skills.render import render_available_skills
 from automata_api.agent.tools.router import ToolRouter
+
+from .config import get_skills_config
+from .diagnostics import (
+    McpServerLookup,
+    diagnose_skill_dependencies,
+)
+from .injection import (
+    build_skill_messages,
+    resolve_selected_skills,
+)
+from .manager import SkillManager, get_skill_manager
+from .render import render_available_skills
 
 
 async def create_skill_turn_context(

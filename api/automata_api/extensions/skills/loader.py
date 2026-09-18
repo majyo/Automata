@@ -7,7 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from .model import (
+from automata_api.agent.skills.model import (
     SkillDependencies,
     SkillError,
     SkillInterface,

@@ -4,8 +4,6 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 
-from automata_api.agent.skills.diagnostics import diagnose_skill_dependencies
-from automata_api.agent.skills.manager import get_skill_manager
 from automata_api.agent.skills.model import (
     SkillDependencies,
     SkillDependencyDiagnostic,
@@ -16,6 +14,8 @@ from automata_api.agent.skills.model import (
 )
 from automata_api.agent.tools.router import ToolRouter
 from automata_api.extensions.mcp.lookup import mcp_config_lookup
+from automata_api.extensions.skills.diagnostics import diagnose_skill_dependencies
+from automata_api.extensions.skills.manager import get_skill_manager
 from automata_api.schemas import (
     SkillDependenciesRecord,
     SkillDependencyDiagnosticRecord,
