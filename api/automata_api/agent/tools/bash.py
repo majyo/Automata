@@ -1,14 +1,14 @@
 from typing import Any
 
 from automata_api.agent.backends.base import Backend, BackendError
-
-from ._core import (
-    ToolResult,
-    bash_error_result,
+from automata_api.agent.tools.args import (
     json_response,
     string_argument,
     timeout_argument,
 )
+from automata_api.agent.tools.models import ToolResult
+from automata_api.agent.tools.results import bash_error_result
+
 from .base import AgentTool
 
 

@@ -3,8 +3,13 @@ from __future__ import annotations
 from typing import Any
 
 from automata_api.agent.backends.base import Backend, BackendError
+from automata_api.agent.tools.args import (
+    json_response,
+    string_argument,
+    timeout_argument,
+)
+from automata_api.agent.tools.models import ToolResult
 
-from ._core import ToolResult, json_response, string_argument, timeout_argument
 from .base import AgentTool
 
 

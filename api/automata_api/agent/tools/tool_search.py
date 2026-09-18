@@ -4,12 +4,12 @@ import json
 import re
 from typing import Any
 
-from automata_api.agent.tools._core import (
-    ToolResult,
+from automata_api.agent.tools.args import (
     json_response,
     parse_tool_arguments,
 )
 from automata_api.agent.tools.model import ToolDescriptor
+from automata_api.agent.tools.models import ToolResult
 
 TOOL_SEARCH_NAME = "tool_search"
 DEFAULT_TOOL_SEARCH_LIMIT = 8

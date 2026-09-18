@@ -1,7 +1,16 @@
 from typing import Any
 
-from ._core import *  # noqa: F403
-from ._core import ToolResult, json_response, parse_tool_arguments
+# The package surface is the tool registry and router plus the helpers the
+# loop and tests reach through ``automata_api.agent.tools``. The helper
+# re-exports are declared explicitly in tools/api.py, which is the public
+# list; tools/_core.py no longer backs this module.
+from automata_api.agent.tools.api import *  # noqa: F403
+from automata_api.agent.tools.api import (  # noqa: F401
+    ToolResult,
+    json_response,
+    parse_tool_arguments,
+)
+
 from .model import (
     AsyncToolProvider,
     ToolDescriptor,

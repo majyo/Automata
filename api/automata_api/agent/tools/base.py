@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-from ._core import ToolResult
+from automata_api.agent.tools.models import ToolResult
 
 
 class AgentTool(ABC):

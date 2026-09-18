@@ -7,7 +7,6 @@ from collections.abc import Iterable
 from typing import Any
 
 from automata_api.agent.backends.base import Backend
-from automata_api.agent.tools._core import ToolResult
 from automata_api.agent.tools.model import (
     AsyncToolProvider,
     ToolDescriptor,
@@ -15,6 +14,7 @@ from automata_api.agent.tools.model import (
     ToolExposure,
     ToolProvider,
 )
+from automata_api.agent.tools.models import ToolResult
 from automata_api.agent.tools.providers import BackendToolProvider
 from automata_api.agent.tools.registry import ToolRegistry
 from automata_api.agent.tools.tool_search import (

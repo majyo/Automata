@@ -1,16 +1,18 @@
 from typing import Any
 
 from automata_api.agent.backends.base import Backend, BackendError
-
-from ._core import (
-    ToolResult,
+from automata_api.agent.tools.args import (
     bool_argument,
-    file_error_result,
     json_response,
-    select_line_range,
     string_argument,
+)
+from automata_api.agent.tools.models import ToolResult
+from automata_api.agent.tools.results import file_error_result
+from automata_api.agent.tools.text import (
+    select_line_range,
     truncate_content,
 )
+
 from .base import AgentTool
 
 

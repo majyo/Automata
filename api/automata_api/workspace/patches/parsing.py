@@ -171,3 +171,82 @@ def patch_summary(files: list[dict[str, Any]]) -> dict[str, int]:
         "moved": sum(1 for file in files if file["status"] == "moved"),
         "hunks": sum(int(file["hunks"]) for file in files),
     }
+
+
+def parse_unified_patch(patch: str) -> tuple[list[PatchFile], str | None]:
+    if "GIT binary patch" in patch or re.search(r"^Binary files .+ differ$", patch, re.MULTILINE):
+        return [], "Binary patches are not supported."
+
+    normalized_patch = patch.replace("\r\n", "\n").replace("\r", "\n")
+    lines = normalized_patch.splitlines(keepends=True)
+    files: list[PatchFile] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if line.startswith("--- "):
+            file_patch, index_or_error = parse_patch_file(lines, index)
+            if isinstance(index_or_error, str):
+                return [], index_or_error
+            files.append(file_patch)
+            index = index_or_error
+            continue
+
+        index += 1
+
+    if not files:
+        return [], "Patch must contain at least one unified diff file header."
+
+    return files, None
+
+
+def parse_patch_file(
+    lines: list[str], start_index: int
+) -> tuple[PatchFile, int | str]:
+    old_path, old_error = diff_header_path(lines[start_index], "--- ")
+    if old_error:
+        return PatchFile(None, None, []), old_error
+
+    next_index = start_index + 1
+    if next_index >= len(lines) or not lines[next_index].startswith("+++ "):
+        return PatchFile(None, None, []), "Malformed patch: missing +++ file header."
+
+    new_path, new_error = diff_header_path(lines[next_index], "+++ ")
+    if new_error:
+        return PatchFile(None, None, []), new_error
+
+    hunks: list[PatchHunk] = []
+    index = next_index + 1
+    while index < len(lines):
+        line = lines[index]
+        if line.startswith("--- "):
+            break
+        if line.startswith("diff --git ") and hunks:
+            break
+        if line.startswith("@@ "):
+            hunk, index_or_error = parse_patch_hunk(lines, index)
+            if isinstance(index_or_error, str):
+                return PatchFile(old_path, new_path, hunks), index_or_error
+            hunks.append(hunk)
+            index = index_or_error
+            continue
+        if line.strip() == "":
+            index += 1
+            continue
+        if line.startswith(("diff --git ", "index ", "new file mode ", "deleted file mode ")):
+            if hunks:
+                break
+            index += 1
+            continue
+
+        return PatchFile(old_path, new_path, hunks), (
+            f"Malformed patch: expected hunk header after file header for "
+            f"{new_path or old_path or 'unknown file'}."
+        )
+
+    if not hunks:
+        return PatchFile(old_path, new_path, hunks), (
+            f"Patch for {new_path or old_path or 'unknown file'} has no content hunks."
+        )
+
+    return PatchFile(old_path, new_path, hunks), index
+
