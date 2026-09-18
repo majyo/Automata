@@ -6,6 +6,7 @@ import type {
 import { RunStreamController } from "../features/runs/runStreamController";
 import type { RunResumeRequest, RunRuntime } from "../features/runs/runStreamController";
 import { isTerminalRunStatus } from "../features/runs/runStatus";
+import { SessionRunTracker } from "../features/runs/sessionRunTracker";
 import { AgentSocketClient } from "../platform/api/agentSocketClient";
 import type { ChatAction } from "../state/chatReducer";
 import type { ApiRuntimeConfig } from "../types/api";
@@ -40,9 +41,14 @@ export function useAgentSocket({
 }: UseAgentSocketOptions) {
   const [socketStatus, setSocketStatus] = useState("Connecting");
   const [activeRunIdBySession, setActiveRunIdBySession] = useState<Record<string, string>>({});
-  const activeRunsRef = useRef<Record<string, string>>({});
-  const pendingSessionsRef = useRef<Set<string>>(new Set());
-  const planRequestIdsRef = useRef<Record<string, string>>({});
+
+  // Session-scoped run bookkeeping (active Run, in-flight command, plan
+  // request ids) lives in a store so its rules are testable without React.
+  const trackerRef = useRef<SessionRunTracker | null>(null);
+  if (trackerRef.current === null) {
+    trackerRef.current = new SessionRunTracker();
+  }
+  const tracker = trackerRef.current;
 
   const clientRef = useRef<AgentSocketClient | null>(null);
   const controllerRef = useRef<RunStreamController | null>(null);
@@ -89,16 +95,15 @@ export function useAgentSocket({
     return controller;
   }, []);
 
-  const updateActiveRun = useCallback((sessionId: string, runId?: string) => {
-    const next = { ...activeRunsRef.current };
-    if (runId) {
-      next[sessionId] = runId;
-    } else {
-      delete next[sessionId];
-    }
-    activeRunsRef.current = next;
-    setActiveRunIdBySession(next);
-  }, []);
+  const updateActiveRun = useCallback(
+    (sessionId: string, runId?: string) => {
+      tracker.setActiveRun(sessionId, runId);
+    },
+    [tracker],
+  );
+
+  // Mirror the store's active-Run map into React state for rendering.
+  useEffect(() => tracker.subscribe(setActiveRunIdBySession), [tracker]);
 
   const refreshCompletedRun = useCallback(
     (sessionId: string) => {
@@ -120,7 +125,7 @@ export function useAgentSocket({
           onSkillEvent?.(effect.payload);
           break;
         case "pendingSessionResolved":
-          pendingSessionsRef.current.delete(effect.sessionId);
+          tracker.clearPending(effect.sessionId);
           break;
         case "runActivated":
           updateActiveRun(effect.sessionId, effect.runId);
@@ -188,7 +193,7 @@ export function useAgentSocket({
             hadRuntime ? runtime.lastSequence : 0,
           );
         }
-        for (const [sessionId, runId] of Object.entries(activeRunsRef.current)) {
+        for (const [sessionId, runId] of Object.entries(tracker.snapshot())) {
           if (discoveredIds.has(runId)) {
             continue;
           }
@@ -234,8 +239,8 @@ export function useAgentSocket({
           payload.session_id,
           payload.plan_id,
         );
-        pendingSessionsRef.current.delete(payload.session_id);
-        delete planRequestIdsRef.current[payload.plan_id];
+        tracker.clearPending(payload.session_id);
+        tracker.releasePlan(payload.plan_id);
         updateActiveRun(payload.session_id, payload.run_id);
         chatDispatch({
           type: "runDiscovered",
@@ -259,7 +264,7 @@ export function useAgentSocket({
       if (payload.type === "plan_error") {
         const message = payload.message ?? payload.code ?? "Plan error";
         if (payload.session_id) {
-          pendingSessionsRef.current.delete(payload.session_id);
+          tracker.clearPending(payload.session_id);
           chatDispatch({
             type: "currentPlanError",
             sessionId: payload.session_id,
@@ -272,7 +277,7 @@ export function useAgentSocket({
 
       if (payload.type === "approval_error" || payload.type === "run_error") {
         if (payload.type === "run_error" && payload.session_id) {
-          pendingSessionsRef.current.delete(payload.session_id);
+          tracker.clearPending(payload.session_id);
         }
         setSocketStatus(payload.message ?? payload.code ?? "Run request failed");
         return;
@@ -324,12 +329,12 @@ export function useAgentSocket({
         setSocketStatus("Could not create session");
         return false;
       }
-      if (activeRunsRef.current[sessionId] || pendingSessionsRef.current.has(sessionId)) {
+      if (tracker.activeRunId(sessionId) || tracker.isPending(sessionId)) {
         setSocketStatus("This session already has an active run");
         return false;
       }
 
-      pendingSessionsRef.current.add(sessionId);
+      tracker.markPending(sessionId);
       const userMessage: ChatMessage = {
         id: crypto.randomUUID(),
         session_id: sessionId,
@@ -359,8 +364,8 @@ export function useAgentSocket({
         !sessionId ||
         !planId ||
         !client.isOpen() ||
-        activeRunsRef.current[sessionId] ||
-        pendingSessionsRef.current.has(sessionId)
+        tracker.activeRunId(sessionId) ||
+        tracker.isPending(sessionId)
       ) {
         return;
       }
@@ -373,9 +378,8 @@ export function useAgentSocket({
         return;
       }
 
-      const requestId = planRequestIdsRef.current[planId] ?? crypto.randomUUID();
-      planRequestIdsRef.current[planId] = requestId;
-      pendingSessionsRef.current.add(sessionId);
+      const requestId = tracker.requestIdForPlan(planId, () => crypto.randomUUID());
+      tracker.markPending(sessionId);
       chatDispatch({
         type: "planStatusChanged",
         sessionId,
@@ -423,7 +427,7 @@ export function useAgentSocket({
   const cancelRun = useCallback(() => {
     const client = getClient();
     const sessionId = activeSessionIdRef.current;
-    const runId = sessionId ? activeRunsRef.current[sessionId] : undefined;
+    const runId = sessionId ? tracker.activeRunId(sessionId) : undefined;
     if (!sessionId || !runId || !client.isOpen()) {
       return;
     }
@@ -439,7 +443,7 @@ export function useAgentSocket({
   const isStreaming = Boolean(
     activeSessionId &&
       (activeRunIdBySession[activeSessionId] ||
-        pendingSessionsRef.current.has(activeSessionId)),
+        tracker.isPending(activeSessionId)),
   );
 
   return {
@@ -450,8 +454,8 @@ export function useAgentSocket({
     isSessionRunning: (sessionId: string | null) =>
       Boolean(
         sessionId &&
-          (activeRunsRef.current[sessionId] ||
-            pendingSessionsRef.current.has(sessionId)),
+          (tracker.activeRunId(sessionId) ||
+            tracker.isPending(sessionId)),
       ),
     connectSocket,
     sendPrompt,
