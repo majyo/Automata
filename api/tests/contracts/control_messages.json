@@ -1,0 +1,75 @@
+{
+  "$comment": [
+    "Canonical connection control messages (M0 contract baseline).",
+    "These are sent straight to a connection and are NOT persisted in the",
+    "run event table: ready, replay bracketing, and command acks. Plan 5.5",
+    "keeps them out of the business event stream on purpose."
+  ],
+  "not_persisted": true,
+  "messages": [
+    {
+      "type": "ready",
+      "message": "Automata agent is ready.",
+      "active_runs": [
+        {
+          "id": "run-active",
+          "session_id": "session-sample",
+          "status": "running",
+          "last_sequence": 12
+        }
+      ]
+    },
+    {
+      "type": "run_resume_started",
+      "session_id": "session-sample",
+      "run_id": "run-sample",
+      "after_sequence": 4,
+      "through_sequence": 12
+    },
+    {
+      "type": "run_resume_complete",
+      "session_id": "session-sample",
+      "run_id": "run-sample",
+      "status": "running",
+      "last_sequence": 12
+    },
+    {
+      "type": "plan_execution_created",
+      "session_id": "session-sample",
+      "plan_id": "plan-sample",
+      "run_id": "run-sample",
+      "status": "executing",
+      "request_id": "request-sample"
+    },
+    {
+      "type": "plan_execution_attached",
+      "session_id": "session-sample",
+      "plan_id": "plan-sample",
+      "run_id": "run-sample",
+      "status": "executing",
+      "request_id": "request-sample"
+    },
+    {
+      "type": "mcp_server_status",
+      "run_id": "run-sample",
+      "status": "warning",
+      "message": "MCP server 'x' failed to start."
+    },
+    {
+      "type": "mcp_server_candidate",
+      "run_id": "run-sample",
+      "server": "filesystem",
+      "provenance": "workspace",
+      "fingerprint": "sha256:0000000000000000"
+    }
+  ],
+  "client_commands": [
+    { "type": "prompt", "session_id": "session-sample", "prompt": "hi", "mode": "act" },
+    { "type": "prompt", "session_id": "session-sample", "prompt": "plan it", "mode": "plan" },
+    { "type": "approve_plan", "session_id": "session-sample", "plan_id": "plan-sample", "request_id": "request-sample" },
+    { "type": "retry_plan", "session_id": "session-sample", "plan_id": "plan-sample", "request_id": "request-sample", "confirm_possible_duplicate_side_effects": true },
+    { "type": "tool_approval_response", "run_id": "run-sample", "approval_id": "approval-1", "decision": "allow_once" },
+    { "type": "cancel_run", "run_id": "run-sample", "session_id": "session-sample" },
+    { "type": "resume_run", "session_id": "session-sample", "run_id": "run-sample", "after_sequence": 4 }
+  ]
+}

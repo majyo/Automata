@@ -9,10 +9,10 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from automata_api.agent.execution.approval import ApprovalResolutionError
 from automata_api.agent.execution.coordinator import (
+    RunCoordinator,
     RunHandle,
-    run_coordinator,
 )
-from automata_api.agent.execution.event_hub import run_event_hub
+from automata_api.agent.execution.event_hub import RunEventHub
 from automata_api.agent.execution.model import RunOutcome
 from automata_api.agent.status import agent_ready_message
 from automata_api.config import get_api_config
@@ -90,8 +90,25 @@ class SerializedWebSocketSender:
 
 
 class AgentConnection:
-    def __init__(self, websocket: WebSocket) -> None:
+    """One WebSocket connection.
+
+    The connection owns only connection scoped state (the serialized
+    sender, the replay buffers and the subscription). Run coordination and
+    event fan-out come from the application container, and runs outlive the
+    connection: closing a socket unsubscribes and releases the sender but
+    never cancels a Run.
+    """
+
+    def __init__(
+        self,
+        websocket: WebSocket,
+        *,
+        coordinator: RunCoordinator,
+        event_hub: RunEventHub,
+    ) -> None:
         self.websocket = websocket
+        self.coordinator = coordinator
+        self.event_hub = event_hub
         self.sender = SerializedWebSocketSender(websocket)
         self.connection_id = uuid.uuid4().hex
 
@@ -103,7 +120,7 @@ class AgentConnection:
         if not authenticated:
             return
 
-        await run_event_hub.register(self.sender)
+        await self.event_hub.register(self.sender)
         try:
             active_runs = await run_repository_call(
                 run_repository.list_runs,
@@ -123,7 +140,7 @@ class AgentConnection:
         except (WebSocketDisconnect, RuntimeError):
             pass
         finally:
-            await run_event_hub.unregister(self.sender)
+            await self.event_hub.unregister(self.sender)
             self.sender.close()
 
     async def _handle_payload(self, payload: Mapping[str, Any]) -> None:
@@ -213,7 +230,7 @@ class AgentConnection:
             )
 
         try:
-            await run_coordinator.start_prompt(
+            await self.coordinator.start_prompt(
                 session_id=session_id,
                 prompt=prompt,
                 mode=mode,
@@ -265,7 +282,7 @@ class AgentConnection:
             )
 
         try:
-            run, plan, idempotent = await run_coordinator.start_plan_execution(
+            run, plan, idempotent = await self.coordinator.start_plan_execution(
                 session_id=session_id,
                 plan_id=plan_id,
                 request_id=request_id,
@@ -323,7 +340,7 @@ class AgentConnection:
             )
             return
         try:
-            await run_coordinator.resolve_approval(
+            await self.coordinator.resolve_approval(
                 session_id=session_id,
                 run_id=run_id,
                 approval_id=str(payload.get("approval_id", "")),
@@ -359,7 +376,7 @@ class AgentConnection:
             )
             return
         try:
-            await run_coordinator.cancel(
+            await self.coordinator.cancel(
                 session_id=session_id,
                 run_id=run_id,
             )

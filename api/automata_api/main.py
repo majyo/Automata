@@ -1,69 +1,46 @@
-import logging
-from collections.abc import AsyncIterator
+"""Backend entry point and FastAPI application factory.
+
+``create_app`` is a thin compatibility entry point: it builds (or accepts)
+an :class:`~automata_api.bootstrap.container.AppContainer` and delegates
+all assembly to ``bootstrap``. Transport code reads its services from
+``app.state`` via the dependency helpers in ``transport.dependencies``.
+"""
+
+from __future__ import annotations
+
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from automata_api.agent.execution.coordinator import run_coordinator
-from automata_api.agent.execution.event_hub import run_event_hub
-from automata_api.agent.execution.process import process_supervisor
-from automata_api.agent.execution.process_sessions import process_session_manager
-from automata_api.config import get_api_config, load_local_env
-from automata_api.db.schema import init_db
-from automata_api.observability import (
-    get_observability_manager,
-    start_observability,
-    stop_observability,
-)
+from automata_api.bootstrap.container import AppContainer, create_container
+from automata_api.bootstrap.lifecycle import app_lifespan
+from automata_api.bootstrap.settings import AppSettings
 from automata_api.routers import chat, health, mcp, runs, sandbox, sessions, skills
-from automata_api.security import (
-    bearer_token,
-    get_api_token,
-    token_is_valid,
-    validate_loopback_host,
-)
-
-load_local_env()
-logger = logging.getLogger(__name__)
+from automata_api.security import bearer_token, token_is_valid
 
 
-@asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    await start_observability()
-    observer = get_observability_manager()
-    logger.info(
-        "Observability started mode=%s output_dir=%s capture_content=%s",
-        observer.config.mode if observer.config else "disabled",
-        observer.config.output_dir if observer.config else "",
-        observer.capture_content,
-    )
-    if observer.capture_content:
-        logger.warning(
-            "Profile content capture is enabled; artifacts may contain "
-            "sensitive workspace and conversation data."
-        )
-    try:
-        config = get_api_config()
-        validate_loopback_host(config.host)
-        get_api_token()
-        init_db()
-        await run_coordinator.startup()
-        try:
+def create_app(
+    settings: AppSettings | None = None,
+    container: AppContainer | None = None,
+) -> FastAPI:
+    """Build one application instance.
+
+    ``settings`` and ``container`` exist so tests can inject a fully
+    configured graph; the default path builds a container from the current
+    environment exactly as before.
+    """
+    resolved = container or create_container(settings)
+    config = resolved.settings.api
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        async with app_lifespan(resolved):
             yield
-        finally:
-            await run_coordinator.shutdown()
-            await process_session_manager.terminate_all()
-            await process_supervisor.terminate_all()
-            await run_event_hub.clear()
-    finally:
-        await stop_observability()
 
-
-def create_app() -> FastAPI:
-    config = get_api_config()
     app = FastAPI(title="Automata Agent API", lifespan=lifespan)
+    app.state.container = resolved
 
     app.add_middleware(
         CORSMiddleware,

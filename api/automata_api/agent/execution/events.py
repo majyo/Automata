@@ -10,18 +10,31 @@ from automata_api.observability import (
     emit_profile_event,
     get_observability_manager,
 )
-from automata_api.repositories import runs as run_repository
+from automata_api.repositories.runs import (
+    RunStateError,
+    RunStore,
+    get_default_run_store,
+)
 
 
 class DurableRunEventSink:
+    """Persists every run event before broadcasting it.
+
+    Ordering is the contract: an event is written to storage first and only
+    then published, so a broadcast failure can be repaired from the
+    persisted sequence instead of re-running a side-effecting tool.
+    """
+
     def __init__(
         self,
         *,
         run_id: str,
-        hub: RunEventHub = run_event_hub,
+        hub: RunEventHub | None = None,
+        store: RunStore | None = None,
     ) -> None:
         self.run_id = run_id
-        self._hub = hub
+        self._hub = hub or run_event_hub
+        self._store = store or get_default_run_store()
         self._lock = asyncio.Lock()
         self._token_parts: list[str] = []
         self._token_chars = 0
@@ -153,7 +166,7 @@ class DurableRunEventSink:
         event_type = str(payload.get("type", ""))
         if event_type == "tool_approval_required":
             await asyncio.to_thread(
-                run_repository.transition_run,
+                self._store.transition_run,
                 self.run_id,
                 expected=("running",),
                 target="waiting_approval",
@@ -161,17 +174,17 @@ class DurableRunEventSink:
         elif event_type == "tool_approval_resolved":
             try:
                 await asyncio.to_thread(
-                    run_repository.transition_run,
+                    self._store.transition_run,
                     self.run_id,
                     expected=("waiting_approval",),
                     target="running",
                 )
-            except run_repository.RunStateError:
+            except RunStateError:
                 pass
 
         persist_started_ns = time.monotonic_ns()
         event = await asyncio.to_thread(
-            run_repository.append_event,
+            self._store.append_event,
             self.run_id,
             payload,
             max_payload_bytes=self._max_payload_bytes,

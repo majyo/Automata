@@ -1,0 +1,108 @@
+{
+  "$comment": [
+    "Canonical external error codes (M0 contract baseline).",
+    "These are part of the published protocol: internal renames must not",
+    "change them. Each entry states the surface that emits it and the",
+    "envelope fields the client may rely on."
+  ],
+  "websocket_errors": [
+    {
+      "code": "unsupported_message_type",
+      "envelope": { "type": "error", "message": "Unsupported message type" },
+      "emitted_by": "services/connection.py"
+    },
+    {
+      "code": "missing_session_id",
+      "envelope": { "type": "error", "message": "Missing session_id" },
+      "emitted_by": "services/connection.py"
+    },
+    {
+      "code": "session_not_found",
+      "envelope": { "type": "error", "message": "Session not found" },
+      "emitted_by": "services/connection.py"
+    },
+    {
+      "code": "missing_prompt",
+      "envelope": { "type": "error", "message": "Missing prompt" },
+      "emitted_by": "services/connection.py"
+    },
+    {
+      "code": "session_busy",
+      "envelope": {
+        "type": "run_error",
+        "code": "session_busy",
+        "message": "This session already has an active run."
+      },
+      "emitted_by": "services/connection.py"
+    },
+    {
+      "code": "run_not_found",
+      "envelope": { "type": "run_error", "code": "run_not_found" },
+      "emitted_by": "services/connection.py"
+    },
+    {
+      "code": "event_cursor_invalid",
+      "envelope": {
+        "type": "run_error",
+        "code": "event_cursor_invalid",
+        "message": "The requested run event cursor is invalid."
+      },
+      "emitted_by": "services/connection.py"
+    },
+    {
+      "code": "approval_run_not_found",
+      "envelope": { "type": "approval_error", "code": "run_not_found" },
+      "emitted_by": "services/connection.py"
+    },
+    {
+      "code": "plan_not_retryable",
+      "envelope": { "type": "plan_error", "code": "plan_not_retryable" },
+      "emitted_by": "services/connection.py"
+    },
+    {
+      "code": "missing_plan_id",
+      "envelope": { "type": "plan_error", "message": "Missing plan_id" },
+      "emitted_by": "services/connection.py"
+    },
+    {
+      "code": "duplicate_side_effect_confirmation_required",
+      "envelope": {
+        "type": "plan_error",
+        "code": "duplicate_side_effect_confirmation_required"
+      },
+      "emitted_by": "services/connection.py"
+    },
+    {
+      "code": "run_failed",
+      "envelope": { "type": "run_error", "code": "run_failed" },
+      "emitted_by": "agent/execution/coordinator.py"
+    },
+    {
+      "code": "api_process_restarted",
+      "envelope": { "type": "run_interrupted", "code": "api_process_restarted" },
+      "emitted_by": "repositories/runs.py"
+    }
+  ],
+  "public_run_errors": [
+    "session_not_found",
+    "backend_configuration_error",
+    "agent_configuration_error",
+    "agent_provider_error",
+    "llm_request_failed"
+  ],
+  "sandbox_error_codes": [
+    "sandbox_unavailable",
+    "sandbox_setup_required",
+    "sandbox_setup_failed",
+    "sandbox_policy_unsupported",
+    "sandbox_spawn_failed",
+    "sandbox_denied",
+    "sandbox_network_denied",
+    "sandbox_timed_out",
+    "sandbox_protocol_error"
+  ],
+  "process_session_error_codes": [
+    "process_session_not_found",
+    "process_session_scope_mismatch"
+  ]
+}

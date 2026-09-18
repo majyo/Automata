@@ -1,0 +1,104 @@
+{
+  "$comment": [
+    "Canonical ToolResult contract (M0 contract baseline).",
+    "JSON mirrors automata_api.agent.tools._core.ToolResult; 'content' is",
+    "the JSON string the model sees. M2 moves ToolResult to tools/models.py",
+    "without changing these payloads, which is why the shape is frozen.",
+    "",
+    "Only the fields that are genuinely part of the contract are frozen:",
+    "the dataclass fields, the 'ok'/'simulated' markers, and the error_code",
+    "vocabulary. Free-form 'error' text stays a message, not a code."
+  ],
+  "result_fields": ["name", "arguments", "content", "success", "error_code", "sandbox"],
+  "content_markers": ["simulated", "ok"],
+  "samples": [
+    {
+      "name": "read_file",
+      "arguments": { "path": "README.md" },
+      "success": true,
+      "error_code": null,
+      "sandbox": null,
+      "content_keys": [
+        "simulated",
+        "ok",
+        "path",
+        "absolute_path",
+        "encoding",
+        "content",
+        "truncated"
+      ],
+      "note": "Success payload. Path escape reports ok=false with a message in 'error' and a null error_code."
+    },
+    {
+      "name": "apply_patch",
+      "arguments": { "patch": "*** Begin Patch\n*** End Patch\n" },
+      "success": false,
+      "error_code": null,
+      "sandbox": null,
+      "content_keys": [
+        "simulated",
+        "ok",
+        "tool",
+        "dry_run",
+        "path",
+        "error",
+        "error_code"
+      ],
+      "note": "Patch failures carry a human-readable 'error'; error_code is only set by sandbox/process paths."
+    },
+    {
+      "name": "exec_command",
+      "arguments": { "cmd": "echo hi" },
+      "success": true,
+      "error_code": null,
+      "sandbox": null,
+      "content_keys": [
+        "simulated",
+        "ok",
+        "cmd",
+        "shell",
+        "workdir",
+        "cwd",
+        "timeout_seconds",
+        "exit_code",
+        "timed_out",
+        "stdout",
+        "stderr",
+        "truncated"
+      ],
+      "note": "Process results expose exit code and timeout rather than only a code."
+    },
+    {
+      "name": "exec_command",
+      "arguments": { "cmd": "Write-Output blocked" },
+      "success": false,
+      "error_code": "sandbox_denied",
+      "sandbox": {
+        "enforcement": "appcontainer",
+        "mode": "managed",
+        "network": "denied"
+      },
+      "content_keys": [
+        "simulated",
+        "ok",
+        "cmd",
+        "shell",
+        "exit_code",
+        "timed_out",
+        "stdout",
+        "stderr",
+        "error_code"
+      ],
+      "note": "Sandbox failures are the main path that populates error_code and sandbox metadata."
+    },
+    {
+      "name": "write_stdin",
+      "arguments": { "session_id": "session-1", "input": "y\n" },
+      "success": false,
+      "error_code": "process_session_not_found",
+      "sandbox": null,
+      "content_keys": ["simulated", "ok", "error", "error_code"],
+      "note": "Process-session errors set a machine-readable error_code."
+    }
+  ]
+}

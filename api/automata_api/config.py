@@ -21,6 +21,10 @@ DEFAULT_CONTEXT_COMPRESSION_THRESHOLD_CHARS = int(
 )
 DEFAULT_CONTEXT_COMPRESSION_TARGET_CHARS = 20_000
 
+# Names populated from ``.env`` candidates by ``load_local_env`` so that
+# ``clear_local_env`` can remove exactly those and nothing else.
+_local_env_keys: set[str] = set()
+
 
 @dataclass(frozen=True)
 class ApiConfig:
@@ -66,6 +70,13 @@ def workspace_dir() -> Path:
 
 
 def load_local_env() -> None:
+    """Apply ``.env`` candidates to the process environment.
+
+    Only variables that are not already set are populated, matching the
+    original precedence rules. ``clear_local_env`` undoes exactly the
+    assignments made here so the loading step has no lasting side effect
+    on the process environment.
+    """
     for env_file in env_file_candidates():
         if not env_file.exists():
             continue
@@ -80,6 +91,20 @@ def load_local_env() -> None:
             value = value.strip().strip('"').strip("'")
             if key and not os.environ.get(key, "").strip():
                 os.environ[key] = value
+                _local_env_keys.add(key)
+
+
+def clear_local_env() -> None:
+    """Remove the variables that :func:`load_local_env` populated.
+
+    Called once the configuration snapshot has been taken, so the rest of
+    the process sees the environment the operator actually configured
+    rather than a mutated one. This also keeps tests that patch individual
+    variables from inheriting ``.env`` values they deleted.
+    """
+    for key in sorted(_local_env_keys):
+        os.environ.pop(key, None)
+    _local_env_keys.clear()
 
 
 def env_file_candidates() -> tuple[Path, ...]:

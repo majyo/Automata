@@ -1,5 +1,4 @@
 import asyncio
-import codecs
 import json
 import os
 import re
@@ -10,21 +9,60 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from automata_api.agent.execution.process import process_supervisor
+from automata_api.agent.execution.output import (
+    CapturedProcessOutput,
+    CapturedStream,
+    HeadTailTextBuffer,
+    append_limited_text,
+    capture_process_output,
+    read_limited_stream,
+)
+
+# Re-exports below are the compatibility facade for callers that still
+# reach execution helpers through ``tools._core`` (notably the local
+# backend). They are aliased to themselves so linters keep them.
+from automata_api.agent.execution.process import (
+    process_supervisor as process_supervisor,
+)
 from automata_api.agent.execution.process_sessions import (
     ProcessSessionError,
     ProcessSessionSnapshot,
-    process_session_manager,
+)
+from automata_api.agent.execution.process_sessions import (
+    process_session_manager as process_session_manager,
 )
 from automata_api.agent.execution.sandbox import process_launcher
 from automata_api.agent.execution.sandbox.errors import SandboxError
-from automata_api.agent.execution.sandbox.launcher import emit_sandbox_event
-from automata_api.agent.execution.sandbox.model import SandboxMetadata
-from automata_api.agent.execution.sandbox.protocol import (
-    SandboxFailure,
-    classify_sandbox_failure,
+from automata_api.agent.execution.sandbox.launcher import (
+    emit_sandbox_event as emit_sandbox_event,
 )
-from automata_api.agent.execution.tool_output import emit_tool_output
+from automata_api.agent.execution.tool_output import (
+    emit_tool_output as emit_tool_output,
+)
+from automata_api.agent.tools.args import (
+    DEFAULT_BASH_TIMEOUT_SECONDS,
+    DEFAULT_STDIN_YIELD_MILLISECONDS,
+    MAX_BASH_TIMEOUT_SECONDS,
+    MAX_PROCESS_YIELD_MILLISECONDS,
+    bool_argument,
+    json_response,
+    max_output_chars_argument,
+    parse_tool_arguments,
+    positive_int_argument,
+    string_argument,
+    timeout_argument,
+    yield_time_ms_argument,
+)
+from automata_api.agent.tools.constants import (
+    DEFAULT_EXEC_OUTPUT_CHARS,
+    FILE_READ_LIMIT,
+    MAX_EXEC_OUTPUT_CHARS,
+    OUTPUT_LIMIT,
+    PROCESS_OUTPUT_CHUNK_BYTES,
+    SEARCH_TIMEOUT_SECONDS,
+    SUPPORTED_EXEC_SHELLS,
+)
+from automata_api.agent.tools.models import ToolResult
 
 from .patch_codex import (
     CodexPatchFile,
@@ -32,94 +70,10 @@ from .patch_codex import (
     parse_codex_patch,
 )
 
-DEFAULT_BASH_TIMEOUT_SECONDS = 30.0
-MAX_BASH_TIMEOUT_SECONDS = 120.0
-OUTPUT_LIMIT = 20_000
-SEARCH_TIMEOUT_SECONDS = 30.0
-FILE_READ_LIMIT = 120_000
-DEFAULT_EXEC_OUTPUT_CHARS = OUTPUT_LIMIT
-MAX_EXEC_OUTPUT_CHARS = 60_000
-MAX_PROCESS_YIELD_MILLISECONDS = 30_000
-DEFAULT_STDIN_YIELD_MILLISECONDS = 250
-PROCESS_OUTPUT_CHUNK_BYTES = 8192
-SUPPORTED_EXEC_SHELLS = ("bash", "powershell")
-
-
-@dataclass(frozen=True)
-class ToolResult:
-    name: str
-    arguments: dict[str, Any]
-    content: str
-    success: bool
-    error_code: str | None = None
-    sandbox: dict[str, Any] | None = None
-
-
-@dataclass(frozen=True)
-class CapturedStream:
-    text: str
-    truncated: bool
-    bytes_seen: int
-
-
-@dataclass(frozen=True)
-class CapturedProcessOutput:
-    stdout: CapturedStream
-    stderr: CapturedStream
-    exit_code: int | None
-    timed_out: bool
-    sandbox: SandboxMetadata | None
-    sandbox_failure: SandboxFailure | None
-
-
-class HeadTailTextBuffer:
-    _MARKER = "\n... output truncated ...\n"
-
-    def __init__(self, max_chars: int) -> None:
-        self.max_chars = max(0, max_chars)
-        self._value = ""
-        self._head = ""
-        self._tail = ""
-        self.truncated = False
-
-    def append(self, text: str) -> None:
-        if not text:
-            return
-        if self.max_chars <= 0:
-            self.truncated = True
-            return
-        if not self.truncated:
-            combined = self._value + text
-            if len(combined) <= self.max_chars:
-                self._value = combined
-                return
-            self.truncated = True
-            marker = self._marker()
-            available = max(0, self.max_chars - len(marker))
-            head_chars = available // 2
-            tail_chars = available - head_chars
-            self._head = combined[:head_chars]
-            self._tail = combined[-tail_chars:] if tail_chars else ""
-            self._value = ""
-            return
-        tail_chars = self._tail_limit()
-        if tail_chars:
-            self._tail = (self._tail + text)[-tail_chars:]
-
-    @property
-    def text(self) -> str:
-        if not self.truncated:
-            return self._value
-        return f"{self._head}{self._marker()}{self._tail}"
-
-    def _marker(self) -> str:
-        if self.max_chars < len(self._MARKER) + 2:
-            return ""
-        return self._MARKER
-
-    def _tail_limit(self) -> int:
-        available = max(0, self.max_chars - len(self._marker()))
-        return available - available // 2
+# NOTE: no ``__all__`` here on purpose. ``automata_api.agent.tools``
+# star-imports this module, so an explicit list would silently stop
+# re-exporting every helper that callers and tests reach through the
+# package. M7 narrows the surface deliberately, together with callers.
 
 
 @dataclass(frozen=True)
@@ -168,159 +122,6 @@ class PatchFile:
     old_path: str | None
     new_path: str | None
     hunks: list[PatchHunk]
-
-
-def parse_tool_arguments(
-    raw_arguments: str | dict[str, Any] | None,
-) -> tuple[dict[str, Any], str | None]:
-    if raw_arguments is None or raw_arguments == "":
-        return {}, None
-
-    if isinstance(raw_arguments, dict):
-        return raw_arguments, None
-
-    try:
-        parsed = json.loads(raw_arguments)
-    except json.JSONDecodeError as error:
-        return {}, f"Invalid JSON arguments: {error.msg}"
-
-    if not isinstance(parsed, dict):
-        return {}, "Tool arguments must be a JSON object."
-
-    return parsed, None
-
-
-async def capture_process_output(
-    process: Any,
-    timeout_seconds: float,
-    *,
-    stdout_limit: int,
-    stderr_limit: int,
-    emit_output: bool = True,
-) -> CapturedProcessOutput:
-    managed = await process_supervisor.register(process)
-    try:
-        stdout_task = asyncio.create_task(
-            read_limited_stream(
-                process.stdout,
-                stdout_limit,
-                stream_name="stdout" if emit_output else None,
-            )
-        )
-        stderr_task = asyncio.create_task(
-            read_limited_stream(
-                process.stderr,
-                stderr_limit,
-                stream_name="stderr" if emit_output else None,
-            )
-        )
-        wait_task = asyncio.create_task(process.wait())
-        timed_out = False
-
-        try:
-            exit_code = await asyncio.wait_for(
-                asyncio.shield(wait_task), timeout=timeout_seconds
-            )
-        except TimeoutError:
-            timed_out = True
-            await process_supervisor.terminate(managed)
-            await asyncio.shield(wait_task)
-            exit_code = None
-        except asyncio.CancelledError:
-            await process_supervisor.terminate(managed)
-            await asyncio.gather(
-                wait_task, stdout_task, stderr_task, return_exceptions=True
-            )
-            raise
-
-        stdout, stderr = await asyncio.gather(stdout_task, stderr_task)
-        metadata = getattr(process, "automata_sandbox", None)
-        if not isinstance(metadata, SandboxMetadata):
-            metadata = None
-        sandbox_failure = classify_sandbox_failure(
-            exit_code=exit_code,
-            stderr=stderr.text,
-            metadata=metadata,
-        )
-        if sandbox_failure is not None:
-            await emit_sandbox_event(
-                {
-                    "type": "sandbox_denied",
-                    "backend": metadata.backend if metadata is not None else "unknown",
-                    "profile_hash": (
-                        metadata.profile_hash if metadata is not None else None
-                    ),
-                    "attempt": metadata.attempt if metadata is not None else 1,
-                    "error_code": sandbox_failure.code,
-                }
-            )
-        return CapturedProcessOutput(
-            stdout=stdout,
-            stderr=stderr,
-            exit_code=exit_code,
-            timed_out=timed_out,
-            sandbox=metadata,
-            sandbox_failure=sandbox_failure,
-        )
-    finally:
-        await process_supervisor.unregister(managed)
-
-
-async def read_limited_stream(
-    reader: asyncio.StreamReader | None,
-    max_chars: int,
-    *,
-    chunk_size: int = PROCESS_OUTPUT_CHUNK_BYTES,
-    stream_name: str | None = None,
-) -> CapturedStream:
-    if reader is None:
-        return CapturedStream(text="", truncated=False, bytes_seen=0)
-
-    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
-    buffer = HeadTailTextBuffer(max_chars)
-    bytes_seen = 0
-    truncated = False
-
-    while True:
-        chunk = await reader.read(chunk_size)
-        if not chunk:
-            break
-
-        bytes_seen += len(chunk)
-        text = decoder.decode(chunk)
-        if stream_name in {"stdout", "stderr"}:
-            await emit_tool_output(stream_name, text)  # type: ignore[arg-type]
-        buffer.append(text)
-
-    tail = decoder.decode(b"", final=True)
-    if stream_name in {"stdout", "stderr"}:
-        await emit_tool_output(stream_name, tail)  # type: ignore[arg-type]
-    buffer.append(tail)
-    truncated = buffer.truncated
-
-    return CapturedStream(
-        text=buffer.text,
-        truncated=truncated,
-        bytes_seen=bytes_seen,
-    )
-
-
-def append_limited_text(
-    parts: list[str], text: str, max_chars: int, chars_kept: int
-) -> tuple[int, bool]:
-    if not text:
-        return chars_kept, False
-
-    remaining = max_chars - chars_kept
-    if remaining <= 0:
-        return chars_kept, True
-
-    if len(text) <= remaining:
-        parts.append(text)
-        return chars_kept + len(text), False
-
-    parts.append(text[:remaining])
-    return max_chars, True
 
 
 async def run_rg(arguments: dict[str, Any], workspace: str) -> ToolResult:
@@ -1564,25 +1365,6 @@ def select_line_range(
     return "".join(lines[start - 1 : end]), start, end, total_lines
 
 
-def positive_int_argument(value: Any) -> int | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value if value > 0 else None
-    if isinstance(value, str):
-        try:
-            parsed = int(value)
-        except ValueError:
-            return None
-        return parsed if parsed > 0 else None
-    return None
-
-
-def bool_argument(arguments: dict[str, Any], name: str, default: bool) -> bool:
-    value = arguments.get(name)
-    return value if isinstance(value, bool) else default
-
-
 def truncate_content(content: str, limit: int) -> tuple[str, bool]:
     if len(content) <= limit:
         return content, False
@@ -2226,70 +2008,6 @@ def resolve_tool_cwd(workspace_path: Path, raw_cwd: Any) -> Path | str:
     return resolved
 
 
-def timeout_argument(arguments: dict[str, Any]) -> float:
-    raw_value = arguments.get("timeout_seconds", DEFAULT_BASH_TIMEOUT_SECONDS)
-    if isinstance(raw_value, int | float):
-        timeout_seconds = float(raw_value)
-    elif isinstance(raw_value, str):
-        try:
-            timeout_seconds = float(raw_value)
-        except ValueError:
-            timeout_seconds = DEFAULT_BASH_TIMEOUT_SECONDS
-    else:
-        timeout_seconds = DEFAULT_BASH_TIMEOUT_SECONDS
-
-    if timeout_seconds <= 0:
-        return DEFAULT_BASH_TIMEOUT_SECONDS
-
-    return min(timeout_seconds, MAX_BASH_TIMEOUT_SECONDS)
-
-
-def max_output_chars_argument(arguments: dict[str, Any]) -> int:
-    raw_value = arguments.get("max_output_chars", DEFAULT_EXEC_OUTPUT_CHARS)
-    if isinstance(raw_value, bool):
-        return DEFAULT_EXEC_OUTPUT_CHARS
-    if isinstance(raw_value, int):
-        max_output_chars = raw_value
-    elif isinstance(raw_value, float):
-        max_output_chars = int(raw_value)
-    elif isinstance(raw_value, str):
-        try:
-            max_output_chars = int(raw_value)
-        except ValueError:
-            return DEFAULT_EXEC_OUTPUT_CHARS
-    else:
-        return DEFAULT_EXEC_OUTPUT_CHARS
-
-    if max_output_chars <= 0:
-        return DEFAULT_EXEC_OUTPUT_CHARS
-
-    return min(max_output_chars, MAX_EXEC_OUTPUT_CHARS)
-
-
-def yield_time_ms_argument(
-    arguments: dict[str, Any],
-    *,
-    default: int | None = None,
-) -> int | None:
-    if "yield_time_ms" not in arguments:
-        return default
-    raw_value = arguments.get("yield_time_ms")
-    if isinstance(raw_value, bool):
-        return default
-    if isinstance(raw_value, int):
-        yield_time_ms = raw_value
-    elif isinstance(raw_value, float):
-        yield_time_ms = int(raw_value)
-    elif isinstance(raw_value, str):
-        try:
-            yield_time_ms = int(raw_value)
-        except ValueError:
-            return default
-    else:
-        return default
-    return min(max(0, yield_time_ms), MAX_PROCESS_YIELD_MILLISECONDS)
-
-
 def bash_error_result(
     *,
     arguments: dict[str, Any],
@@ -2334,14 +2052,3 @@ def truncate_output(output: str) -> tuple[str, bool]:
         return output, False
 
     return output[:OUTPUT_LIMIT], True
-
-
-def string_argument(
-    arguments: dict[str, Any], name: str, default: str
-) -> str:
-    value = arguments.get(name)
-    return value if isinstance(value, str) and value.strip() else default
-
-
-def json_response(payload: dict[str, Any]) -> str:
-    return json.dumps(payload, ensure_ascii=True)

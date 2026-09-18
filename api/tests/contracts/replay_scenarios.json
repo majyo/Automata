@@ -1,0 +1,151 @@
+{
+  "$comment": [
+    "Canonical reconnect/replay samples (M0 contract baseline).",
+    "A client resumes a Run by sending run_resume with after_sequence.",
+    "The sender buffers live events per run_id while replay is in flight,",
+    "then finish_replay emits exactly the buffered events with",
+    "seq > watermark, sorted by seq, followed by run_resume_complete.",
+    "",
+    "These scenarios are the shared oracle for the backend ReplayService",
+    "and the frontend RunStreamController so both sides agree about",
+    "duplicates, gaps and the replay/live handover."
+  ],
+  "cursor_error": {
+    "type": "run_error",
+    "code": "event_cursor_invalid",
+    "message": "The requested run event cursor is invalid."
+  },
+  "scenarios": [
+    {
+      "id": "clean_replay_no_live_traffic",
+      "description": "Reconnect with persisted events and no concurrent output.",
+      "after_sequence": 0,
+      "persisted_sequences": [1, 2, 3, 4],
+      "live_during_replay": [],
+      "expect": {
+        "replayed_sequences": [1, 2, 3, 4],
+        "delivered_after_watermark": [],
+        "final_status": "running",
+        "last_sequence": 4,
+        "cursor_error": false
+      }
+    },
+    {
+      "id": "live_event_arrives_mid_replay",
+      "description": "A live event lands after watermark but during replay.",
+      "after_sequence": 2,
+      "persisted_sequences": [1, 2, 3, 4],
+      "live_during_replay": [
+        {
+          "type": "token",
+          "content": "live",
+          "seq": 5
+        }
+      ],
+      "expect": {
+        "replayed_sequences": [3, 4],
+        "delivered_after_watermark": [5],
+        "final_status": "running",
+        "last_sequence": 5,
+        "cursor_error": false
+      }
+    },
+    {
+      "id": "live_event_duplicates_a_replayed_sequence",
+      "description": "Buffered live event at or below watermark must be dropped.",
+      "after_sequence": 1,
+      "persisted_sequences": [1, 2, 3],
+      "live_during_replay": [
+        {
+          "type": "token",
+          "content": "duplicate",
+          "seq": 3
+        }
+      ],
+      "expect": {
+        "replayed_sequences": [2, 3],
+        "delivered_after_watermark": [],
+        "final_status": "running",
+        "last_sequence": 3,
+        "cursor_error": false
+      }
+    },
+    {
+      "id": "sequence_gap_is_repaired_from_storage",
+      "description": "A live gap is filled by a follow-up paged read.",
+      "after_sequence": 0,
+      "persisted_sequences": [1, 2, 3, 4, 5],
+      "live_during_replay": [
+        {
+          "type": "token",
+          "content": "five",
+          "seq": 5
+        }
+      ],
+      "expect": {
+        "replayed_sequences": [1, 2, 3, 4, 5],
+        "delivered_after_watermark": [],
+        "final_status": "running",
+        "last_sequence": 5,
+        "cursor_error": false
+      }
+    },
+    {
+      "id": "terminal_run_replays_to_completion",
+      "description": "Replaying a finished Run ends in the terminal event.",
+      "after_sequence": 3,
+      "persisted_sequences": [1, 2, 3, 4, 5],
+      "live_during_replay": [],
+      "expect": {
+        "replayed_sequences": [4, 5],
+        "delivered_after_watermark": [],
+        "final_status": "completed",
+        "last_sequence": 5,
+        "cursor_error": false
+      }
+    },
+    {
+      "id": "cursor_beyond_watermark_is_rejected",
+      "description": "after_sequence > last_sequence yields a cursor error.",
+      "after_sequence": 99,
+      "persisted_sequences": [1, 2, 3],
+      "live_during_replay": [],
+      "expect": {
+        "replayed_sequences": [],
+        "delivered_after_watermark": [],
+        "final_status": null,
+        "last_sequence": 3,
+        "cursor_error": true
+      }
+    },
+    {
+      "id": "negative_cursor_is_rejected",
+      "description": "A negative after_sequence is not a valid cursor.",
+      "after_sequence": -1,
+      "persisted_sequences": [1, 2, 3],
+      "live_during_replay": [],
+      "expect": {
+        "replayed_sequences": [],
+        "delivered_after_watermark": [],
+        "final_status": null,
+        "last_sequence": 3,
+        "cursor_error": true
+      }
+    },
+    {
+      "id": "trimmed_history_reports_cursor_error",
+      "description": "A cursor older than retained events cannot be served.",
+      "after_sequence": 0,
+      "retained_from_sequence": 7,
+      "persisted_sequences": [7, 8, 9],
+      "live_during_replay": [],
+      "expect": {
+        "replayed_sequences": [],
+        "delivered_after_watermark": [],
+        "final_status": null,
+        "last_sequence": 9,
+        "cursor_error": true
+      }
+    }
+  ]
+}

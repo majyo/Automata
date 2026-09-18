@@ -1,0 +1,226 @@
+{
+  "$comment": [
+    "Canonical persisted Run-event samples (M0 contract baseline).",
+    "These mirror what DurableRunEventSink persists and broadcasts: the",
+    "event is the agent payload plus run_id/session_id/seq/schema_version.",
+    "Frontend fixtures read this same file so both sides agree on shape.",
+    "Only non-deterministic values (ids, timestamps) are normalised."
+  ],
+  "schema_version": 1,
+  "envelope_required_fields": [
+    "type",
+    "run_id",
+    "session_id",
+    "seq",
+    "schema_version"
+  ],
+  "events": [
+    {
+      "type": "started",
+      "run_id": "run-sample",
+      "session_id": "session-sample",
+      "seq": 1,
+      "schema_version": 1,
+      "prompt": "List the files in the workspace",
+      "permission_preset": "ask"
+    },
+    {
+      "type": "agent_step",
+      "run_id": "run-sample",
+      "session_id": "session-sample",
+      "seq": 2,
+      "schema_version": 1,
+      "step": 1
+    },
+    {
+      "type": "token",
+      "run_id": "run-sample",
+      "session_id": "session-sample",
+      "seq": 3,
+      "schema_version": 1,
+      "content": "Listing "
+    },
+    {
+      "type": "token",
+      "run_id": "run-sample",
+      "session_id": "session-sample",
+      "seq": 4,
+      "schema_version": 1,
+      "content": "the workspace"
+    },
+    {
+      "type": "tool_call",
+      "run_id": "run-sample",
+      "session_id": "session-sample",
+      "seq": 5,
+      "schema_version": 1,
+      "tool_call_id": "call-1",
+      "tool": "list_files",
+      "arguments": "{\"path\": \".\"}",
+      "message_id": "msg-tool-1"
+    },
+    {
+      "type": "tool_output_delta",
+      "run_id": "run-sample",
+      "session_id": "session-sample",
+      "seq": 6,
+      "schema_version": 1,
+      "tool_call_id": "call-1",
+      "tool": "list_files",
+      "stream": "stdout",
+      "content": "README.md\n",
+      "truncated": false
+    },
+    {
+      "type": "tool_result",
+      "run_id": "run-sample",
+      "session_id": "session-sample",
+      "seq": 7,
+      "schema_version": 1,
+      "tool_call_id": "call-1",
+      "tool": "list_files",
+      "success": true,
+      "content": "README.md",
+      "message_id": "msg-tool-1",
+      "content_truncated": false
+    },
+    {
+      "type": "plan_ready",
+      "run_id": "run-sample",
+      "session_id": "session-sample",
+      "seq": 8,
+      "schema_version": 1,
+      "plan_id": "plan-sample",
+      "status": "pending",
+      "content": "1. Inspect the module tree\n2. Extract the pure helpers"
+    },
+    {
+      "type": "plan_approved",
+      "run_id": "run-sample",
+      "session_id": "session-sample",
+      "seq": 9,
+      "schema_version": 1,
+      "plan_id": "plan-sample"
+    },
+    {
+      "type": "context_compressed",
+      "run_id": "run-sample",
+      "session_id": "session-sample",
+      "seq": 10,
+      "schema_version": 1,
+      "scope": "history",
+      "before_chars": 120000,
+      "after_chars": 18000,
+      "summary_chars": 18000,
+      "compressed_messages": 12,
+      "through_sequence": 402
+    },
+    {
+      "type": "skills_loaded",
+      "run_id": "run-sample",
+      "session_id": "session-sample",
+      "seq": 11,
+      "schema_version": 1,
+      "count": 3,
+      "enabled_count": 2
+    },
+    {
+      "type": "skills_warning",
+      "run_id": "run-sample",
+      "session_id": "session-sample",
+      "seq": 12,
+      "schema_version": 1,
+      "message": "Skill 'x' has no front matter"
+    },
+    {
+      "type": "skill_injected",
+      "run_id": "run-sample",
+      "session_id": "session-sample",
+      "seq": 13,
+      "schema_version": 1,
+      "name": "refactor",
+      "path": "C:/workspace/.agents/skills/refactor/SKILL.md"
+    },
+    {
+      "type": "tool_approval_required",
+      "run_id": "run-sample",
+      "session_id": "session-sample",
+      "seq": 14,
+      "schema_version": 1,
+      "approval_id": "approval-1",
+      "tool_call_id": "call-2",
+      "tool": "exec_command",
+      "risk": "command",
+      "reason": "Running commands requires approval",
+      "summary": "pytest -q",
+      "preview": { "command": "pytest -q" },
+      "options": ["allow_once", "allow_for_run", "deny"]
+    },
+    {
+      "type": "tool_approval_resolved",
+      "run_id": "run-sample",
+      "session_id": "session-sample",
+      "seq": 15,
+      "schema_version": 1,
+      "approval_id": "approval-1",
+      "decision": "allow_once"
+    },
+    {
+      "type": "run_cancel_requested",
+      "run_id": "run-sample",
+      "session_id": "session-sample",
+      "seq": 16,
+      "schema_version": 1,
+      "message": "Cancellation requested."
+    },
+    {
+      "type": "run_cancelled",
+      "run_id": "run-sample",
+      "session_id": "session-sample",
+      "seq": 17,
+      "schema_version": 1,
+      "code": "cancelled",
+      "message": "Run cancelled."
+    },
+    {
+      "type": "run_interrupted",
+      "run_id": "run-sample",
+      "session_id": "session-sample",
+      "seq": 18,
+      "schema_version": 1,
+      "code": "interrupted",
+      "message": "Run interrupted."
+    },
+    {
+      "type": "error",
+      "run_id": "run-sample",
+      "session_id": "session-sample",
+      "seq": 19,
+      "schema_version": 1,
+      "code": "agent_provider_error",
+      "message": "The model provider rejected the request."
+    },
+    {
+      "type": "done",
+      "run_id": "run-sample",
+      "session_id": "session-sample",
+      "seq": 20,
+      "schema_version": 1,
+      "message": {
+        "id": "msg-agent-1",
+        "session_id": "session-sample",
+        "role": "agent",
+        "kind": "message",
+        "content": "Listing the workspace",
+        "sequence": 3,
+        "created_at": "2026-01-01T00:00:00Z"
+      }
+    }
+  ],
+  "terminal_events": {
+    "completed": "done",
+    "failed": "error",
+    "cancelled": "run_cancelled",
+    "interrupted": "run_interrupted"
+  }
+}

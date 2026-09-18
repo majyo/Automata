@@ -12,6 +12,12 @@ from automata_api.agent.execution.approval import (
     ApprovalBroker,
     ApprovalResolutionError,
 )
+from automata_api.agent.execution.event_hub import (
+    RunEventHub,
+)
+from automata_api.agent.execution.event_hub import (
+    run_event_hub as default_run_event_hub,
+)
 from automata_api.agent.execution.events import DurableRunEventSink
 from automata_api.agent.execution.model import (
     CancellationToken,
@@ -24,10 +30,21 @@ from automata_api.agent.execution.permissions import (
     normalize_permission_preset,
     permission_profile_from_json,
 )
-from automata_api.agent.execution.process import process_supervisor
-from automata_api.agent.execution.process_sessions import process_session_manager
+from automata_api.agent.execution.process import (
+    ProcessSupervisor,
+)
+from automata_api.agent.execution.process import (
+    process_supervisor as default_process_supervisor,
+)
+from automata_api.agent.execution.process_sessions import (
+    ProcessSessionManager,
+)
+from automata_api.agent.execution.process_sessions import (
+    process_session_manager as default_process_session_manager,
+)
 from automata_api.observability import observe_span
 from automata_api.repositories import runs as run_repository
+from automata_api.repositories.runs import RunStore, get_default_run_store
 
 RunExecutor = Callable[["RunHandle"], Awaitable[RunOutcome]]
 PromptRunExecutor = Callable[
@@ -53,11 +70,38 @@ class RunHandle:
 
 
 class RunCoordinator:
-    def __init__(self) -> None:
+    """Owns run lifetimes for one application instance.
+
+    Every collaborator is injected so the coordinator can be exercised with
+    in-memory doubles, and so two app instances never share run state. The
+    module level ``run_coordinator`` below is the composition-root default
+    kept for callers that predate the container; new code receives the
+    coordinator from ``AppContainer``.
+    """
+
+    def __init__(
+        self,
+        *,
+        event_hub: RunEventHub | None = None,
+        process_supervisor: ProcessSupervisor | None = None,
+        process_sessions: ProcessSessionManager | None = None,
+        store: RunStore | None = None,
+        run_event_retention_days: int | None = None,
+    ) -> None:
         self.instance_id = uuid.uuid4().hex
         self._lock = asyncio.Lock()
         self._by_run: dict[str, RunHandle] = {}
         self._stopping = False
+        self._hub = event_hub or default_run_event_hub
+        self._processes = process_supervisor or default_process_supervisor
+        self._process_sessions = process_sessions or default_process_session_manager
+        self._store = store or get_default_run_store()
+        retention = (
+            run_event_retention_days
+            if run_event_retention_days is not None
+            else read_run_event_retention_days()
+        )
+        self._retention_days = max(0, retention)
 
     async def startup(self) -> list[dict[str, Any]]:
         self.instance_id = uuid.uuid4().hex
@@ -65,11 +109,11 @@ class RunCoordinator:
         async with self._lock:
             self._by_run.clear()
         interrupted = await asyncio.to_thread(
-            run_repository.interrupt_stale_runs, self.instance_id
+            self._store.interrupt_stale_runs, self.instance_id
         )
         await asyncio.to_thread(
-            run_repository.prune_terminal_run_events,
-            run_event_retention_days(),
+            self._store.prune_terminal_run_events,
+            self._retention_days,
         )
         return interrupted
 
@@ -100,7 +144,7 @@ class RunCoordinator:
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         resolved_mode = "plan" if mode == "plan" else "act"
         run, user_message = await asyncio.to_thread(
-            run_repository.create_prompt_run,
+            self._store.create_prompt_run,
             session_id=session_id,
             prompt=prompt,
             mode=resolved_mode,
@@ -121,7 +165,7 @@ class RunCoordinator:
         execute: PlanRunExecutor,
     ) -> tuple[dict[str, Any], dict[str, Any], bool]:
         run, plan, idempotent = await asyncio.to_thread(
-            run_repository.begin_plan_execution,
+            self._store.begin_plan_execution,
             session_id=session_id,
             plan_id=plan_id,
             request_id=request_id,
@@ -145,13 +189,13 @@ class RunCoordinator:
         handle.explicit_cancel = True
         try:
             await asyncio.to_thread(
-                run_repository.transition_run,
+                self._store.transition_run,
                 run_id,
                 expected=("queued", "running", "waiting_approval"),
                 target="cancelling",
             )
         except run_repository.RunStateError:
-            run = await asyncio.to_thread(run_repository.get_run, run_id)
+            run = await asyncio.to_thread(self._store.get_run, run_id)
             if run["status"] in run_repository.TERMINAL_STATUSES:
                 raise
         await handle.event_sink.send_json(
@@ -191,7 +235,11 @@ class RunCoordinator:
         self, run: dict[str, Any], execute: RunExecutor
     ) -> RunHandle:
         cancellation = CancellationToken()
-        event_sink = DurableRunEventSink(run_id=str(run["id"]))
+        event_sink = DurableRunEventSink(
+            run_id=str(run["id"]),
+            store=self._store,
+            hub=self._hub,
+        )
         broker = ApprovalBroker(
             run_id=str(run["id"]),
             session_id=str(run["session_id"]),
@@ -243,20 +291,18 @@ class RunCoordinator:
     ) -> None:
         try:
             await asyncio.to_thread(
-                run_repository.transition_run,
+                self._store.transition_run,
                 handle.run_id,
                 expected=("queued",),
                 target="running",
             )
             outcome = await execute(handle)
-            await process_session_manager.terminate_run(handle.run_id)
-            await process_supervisor.terminate_run(handle.run_id)
+            await self._process_sessions.terminate_run(handle.run_id)
+            await self._processes.terminate_run(handle.run_id)
             await handle.event_sink.flush()
-            previous = await asyncio.to_thread(
-                run_repository.get_run, handle.run_id
-            )
+            previous = await asyncio.to_thread(self._store.get_run, handle.run_id)
             terminal = await asyncio.to_thread(
-                run_repository.finish_run,
+                self._store.finish_run,
                 handle.run_id,
                 status="completed",
                 event={"type": "done"},
@@ -264,7 +310,7 @@ class RunCoordinator:
                 plan_content=outcome.plan_content,
             )
             committed_events = await asyncio.to_thread(
-                run_repository.list_events,
+                self._store.list_events,
                 handle.run_id,
                 after_sequence=int(previous["last_sequence"]),
             )
@@ -272,8 +318,8 @@ class RunCoordinator:
                 await handle.event_sink.broadcast_persisted(event)
             run_span.set_attributes(run_status="completed")
         except asyncio.CancelledError:
-            await process_session_manager.terminate_run(handle.run_id)
-            await process_supervisor.terminate_run(handle.run_id)
+            await self._process_sessions.terminate_run(handle.run_id)
+            await self._processes.terminate_run(handle.run_id)
             await handle.event_sink.flush()
             status = (
                 "interrupted"
@@ -289,7 +335,7 @@ class RunCoordinator:
                 "run_interrupted" if status == "interrupted" else "run_cancelled"
             )
             terminal = await asyncio.to_thread(
-                run_repository.finish_run,
+                self._store.finish_run,
                 handle.run_id,
                 status=status,
                 event={
@@ -304,11 +350,11 @@ class RunCoordinator:
             run_span.set_status(status, error_type=code)
             run_span.set_attributes(run_status=status)
         except PublicRunError as error:
-            await process_session_manager.terminate_run(handle.run_id)
-            await process_supervisor.terminate_run(handle.run_id)
+            await self._process_sessions.terminate_run(handle.run_id)
+            await self._processes.terminate_run(handle.run_id)
             await handle.event_sink.flush()
             terminal = await asyncio.to_thread(
-                run_repository.finish_run,
+                self._store.finish_run,
                 handle.run_id,
                 status="failed",
                 event={
@@ -323,12 +369,12 @@ class RunCoordinator:
             run_span.set_status("error", error_type=error.code)
             run_span.set_attributes(run_status="failed")
         except Exception as error:
-            await process_session_manager.terminate_run(handle.run_id)
-            await process_supervisor.terminate_run(handle.run_id)
+            await self._process_sessions.terminate_run(handle.run_id)
+            await self._processes.terminate_run(handle.run_id)
             await handle.event_sink.flush()
             public_message = f"Agent run failed: {error.__class__.__name__}"
             terminal = await asyncio.to_thread(
-                run_repository.finish_run,
+                self._store.finish_run,
                 handle.run_id,
                 status="failed",
                 event={
@@ -351,10 +397,13 @@ class RunCoordinator:
                 self._by_run.pop(handle.run_id, None)
 
 
-run_coordinator = RunCoordinator()
+def read_run_event_retention_days() -> int:
+    """Retention window for pruned run events, in days.
 
-
-def run_event_retention_days() -> int:
+    Kept as a module level helper so ``RunCoordinator`` can still be
+    constructed without the container; ``bootstrap.settings`` owns the
+    authoritative snapshot used by real application instances.
+    """
     raw = os.environ.get("AUTOMATA_RUN_EVENT_RETENTION_DAYS", "").strip()
     if not raw:
         return 30
@@ -362,6 +411,9 @@ def run_event_retention_days() -> int:
         return max(0, min(int(raw), 3650))
     except ValueError:
         return 30
+
+
+run_coordinator = RunCoordinator()
 
 
 def queue_delay_ns(created_at: str | None) -> int | None:
