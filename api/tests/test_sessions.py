@@ -3,8 +3,6 @@ from pathlib import Path
 from automata_api.agent.backends.factory import default_backend_kind
 from automata_api.agent.prompts import agent_workspace
 from automata_api.repositories.sessions import (
-    PlanNotFoundError,
-    SessionNotFoundError,
     approve_plan,
     create_plan,
     fetch_context_summary,
@@ -18,6 +16,10 @@ from automata_api.repositories.sessions import (
     save_tool_run_message,
     update_tool_run_result,
     upsert_context_summary,
+)
+from automata_api.sessions.domain import (
+    PlanNotFoundError,
+    SessionNotFoundError,
 )
 
 

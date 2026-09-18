@@ -33,13 +33,13 @@ from automata_api.extensions.skills.runtime import (
 from automata_api.observability import observe_span
 from automata_api.repositories.agent_store import SessionAgentContextStore
 from automata_api.repositories.sessions import (
-    SessionNotFoundError,
     save_message,
     save_tool_run_message,
     session_backend_config,
     update_tool_run_result,
 )
 from automata_api.schemas import ChatPayload
+from automata_api.sessions.domain import SessionNotFoundError
 
 
 class JsonSender(Protocol):

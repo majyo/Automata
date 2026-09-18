@@ -50,6 +50,7 @@
     "routers -> repositories",
     "routers -> schemas",
     "routers -> services",
+    "routers -> sessions",
     "routers -> transport",
     "runs -> repositories",
     "schemas -> execution",

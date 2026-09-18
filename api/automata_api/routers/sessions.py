@@ -4,18 +4,18 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 
 from automata_api.repositories import sessions as session_repository
-from automata_api.repositories.sessions import (
-    InvalidBackendError,
-    InvalidPermissionPresetError,
-    InvalidWorkingDirectoryError,
-    SessionHasActiveRunError,
-    SessionNotFoundError,
-)
 from automata_api.schemas import (
     CreateSessionRequest,
     MessageRecord,
     SessionSummary,
     UpdateSessionRequest,
+)
+from automata_api.sessions.domain import (
+    InvalidBackendError,
+    InvalidPermissionPresetError,
+    InvalidWorkingDirectoryError,
+    SessionHasActiveRunError,
+    SessionNotFoundError,
 )
 
 router = APIRouter()
