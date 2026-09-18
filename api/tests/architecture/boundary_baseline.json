@@ -12,6 +12,7 @@
   "violations": [
     "agent -> config",
     "agent -> db",
+    "agent -> execution",
     "agent -> observability",
     "agent -> repositories",
     "agent -> workspace",
@@ -21,6 +22,7 @@
     "bootstrap -> observability",
     "bootstrap -> security",
     "db -> config",
+    "execution -> config",
     "main -> bootstrap",
     "main -> routers",
     "main -> security",
@@ -28,6 +30,7 @@
     "observability -> config",
     "repositories -> agent",
     "repositories -> db",
+    "repositories -> sessions",
     "repositories -> utils",
     "routers -> agent",
     "routers -> repositories",
@@ -41,6 +44,7 @@
     "services -> repositories",
     "services -> schemas",
     "services -> security",
+    "sessions -> execution",
     "transport -> bootstrap"
   ]
 }

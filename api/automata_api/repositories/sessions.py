@@ -1,51 +1,31 @@
 import json
 import sqlite3
-from pathlib import Path
 from typing import Any
 
-from automata_api.agent.backends.factory import (
-    available_backend_kinds,
-    default_backend_kind,
-)
 from automata_api.agent.execution.permissions import (
     DEFAULT_PERMISSION_PRESET,
     PermissionPreset,
-    normalize_permission_preset,
 )
 from automata_api.agent.prompts import agent_workspace
 from automata_api.db import context_search as context_search_db
 from automata_api.db.connection import connect_db, db_lock
+from automata_api.sessions import domain as session_domain
+from automata_api.sessions.domain import (
+    InvalidBackendError as InvalidBackendError,
+)
+from automata_api.sessions.domain import (
+    InvalidPermissionPresetError as InvalidPermissionPresetError,
+)
+from automata_api.sessions.domain import (
+    InvalidWorkingDirectoryError as InvalidWorkingDirectoryError,
+)
+from automata_api.sessions.domain import (
+    PlanNotFoundError,
+    PlanStateError,
+    SessionHasActiveRunError,
+    SessionNotFoundError,
+)
 from automata_api.utils import new_id, normalize_title, now_iso
-
-
-class SessionNotFoundError(ValueError):
-    pass
-
-
-class InvalidWorkingDirectoryError(ValueError):
-    pass
-
-
-class InvalidBackendError(ValueError):
-    pass
-
-
-class InvalidPermissionPresetError(ValueError):
-    pass
-
-
-class PlanNotFoundError(ValueError):
-    pass
-
-
-class PlanStateError(ValueError):
-    pass
-
-
-class SessionHasActiveRunError(ValueError):
-    def __init__(self, run_id: str) -> None:
-        super().__init__("Session has an active run.")
-        self.run_id = run_id
 
 
 def list_sessions() -> list[dict[str, Any]]:
@@ -804,46 +784,15 @@ def ensure_session(db: sqlite3.Connection, session_id: str) -> None:
 
 
 def normalize_working_directory(working_directory: str | None) -> str:
-    raw_value = (
-        working_directory.strip()
-        if isinstance(working_directory, str) and working_directory.strip()
-        else agent_workspace()
+    return session_domain.normalize_working_directory(
+        working_directory,
+        fallback=agent_workspace(),
     )
-    try:
-        path = Path(raw_value).expanduser().resolve()
-    except OSError as error:
-        raise InvalidWorkingDirectoryError(
-            f"Working directory is invalid: {raw_value}"
-        ) from error
-
-    if not path.exists():
-        raise InvalidWorkingDirectoryError(
-            f"Working directory does not exist: {path}"
-        )
-    if not path.is_dir():
-        raise InvalidWorkingDirectoryError(
-            f"Working directory is not a directory: {path}"
-        )
-
-    return str(path)
 
 
 def normalize_backend(backend: str | None) -> str:
-    raw_value = (
-        backend.strip().lower()
-        if isinstance(backend, str) and backend.strip()
-        else default_backend_kind()
-    )
-    if raw_value not in available_backend_kinds():
-        allowed = ", ".join(available_backend_kinds())
-        raise InvalidBackendError(
-            f"Backend is invalid: {raw_value}. Available backends: {allowed}"
-        )
-    return raw_value
+    return session_domain.normalize_backend(backend)
 
 
 def normalize_session_permission_preset(value: object) -> PermissionPreset:
-    try:
-        return normalize_permission_preset(value)
-    except ValueError as error:
-        raise InvalidPermissionPresetError(str(error)) from error
+    return session_domain.normalize_session_permission_preset(value)

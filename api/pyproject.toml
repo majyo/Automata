@@ -43,6 +43,11 @@ select = ["E4", "E7", "E9", "F", "I"]
 # so existing callers keep working. The facade is deleted in M7 together
 # with its callers, at which point this ignore goes away too.
 "automata_api/agent/tools/_core.py" = ["F401"]
+# The repository modules are the storage-side compatibility facade during
+# the refactoring: they own the SQL and re-export the domain error types
+# that transport already imports from here.
+"automata_api/repositories/sessions.py" = ["F401"]
+"automata_api/repositories/runs.py" = ["F401"]
 
 [tool.uv]
 package = false

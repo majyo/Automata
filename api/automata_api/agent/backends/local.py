@@ -28,10 +28,10 @@ from automata_api.agent.execution.sandbox.model import SandboxMetadata
 from automata_api.agent.execution.sandbox.protocol import (
     classify_sandbox_failure,
 )
-from automata_api.agent.execution.sandbox.runtime_paths import (
+from automata_api.agent.tools import _core as core
+from automata_api.execution.runtime_paths import (
     managed_runtime_roots,
 )
-from automata_api.agent.tools import _core as core
 
 
 @dataclass(frozen=True)

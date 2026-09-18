@@ -1,21 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createAgentSocket } from "../api/websocket";
+import type {
+  RunProjection,
+  RunProjectionEffect,
+} from "../features/runs/projection";
+import { RunStreamController } from "../features/runs/runStreamController";
+import type { RunResumeRequest, RunRuntime } from "../features/runs/runStreamController";
+import { isTerminalRunStatus } from "../features/runs/runStatus";
+import { AgentSocketClient } from "../platform/api/agentSocketClient";
 import type { ChatAction } from "../state/chatReducer";
 import type { ApiRuntimeConfig } from "../types/api";
 import type {
   ApprovalDecision,
   ChatMessage,
-  PersistedRunStatus,
   SendMode,
   ToolApprovalRequest,
 } from "../types/chat";
 import { isSequencedRunEvent } from "../types/socket";
-import type { SequencedSocketPayload, SocketPayload } from "../types/socket";
-import type { SkillSocketPayload } from "../types/socket";
+import type { SkillSocketPayload, SocketPayload } from "../types/socket";
 import type { SkillSelection } from "../types/skills";
-import { formatContextCompressed } from "../utils/format";
-
-const RECONNECT_DELAYS_MS = [500, 1_000, 2_000, 5_000];
 
 type UseAgentSocketOptions = {
   apiConfigRef: React.MutableRefObject<ApiRuntimeConfig>;
@@ -25,16 +27,6 @@ type UseAgentSocketOptions = {
   refreshSessionList(): Promise<unknown>;
   reloadSessionMessages(sessionId: string): Promise<unknown>;
   onSkillEvent?(payload: SkillSocketPayload): void;
-};
-
-type RunRuntime = {
-  runId: string;
-  sessionId: string;
-  lastSequence: number;
-  agentSegment: number;
-  executingPlanId?: string;
-  replaying: boolean;
-  terminal: boolean;
 };
 
 export function useAgentSocket({
@@ -48,21 +40,53 @@ export function useAgentSocket({
 }: UseAgentSocketOptions) {
   const [socketStatus, setSocketStatus] = useState("Connecting");
   const [activeRunIdBySession, setActiveRunIdBySession] = useState<Record<string, string>>({});
-  const socketRef = useRef<WebSocket | null>(null);
-  const runtimesRef = useRef<Record<string, RunRuntime>>({});
   const activeRunsRef = useRef<Record<string, string>>({});
   const pendingSessionsRef = useRef<Set<string>>(new Set());
   const planRequestIdsRef = useRef<Record<string, string>>({});
-  const reconnectTimerRef = useRef<number | null>(null);
-  const reconnectAttemptRef = useRef(0);
-  const shouldReconnectRef = useRef(true);
 
-  const clearReconnectTimer = useCallback(() => {
-    if (reconnectTimerRef.current === null) {
-      return;
+  const clientRef = useRef<AgentSocketClient | null>(null);
+  const controllerRef = useRef<RunStreamController | null>(null);
+  const handlePayloadRef = useRef<(payload: SocketPayload) => void>(() => undefined);
+  const applyProjectionRef = useRef<(projection: RunProjection, runtime: RunRuntime) => void>(
+    () => undefined,
+  );
+  const requestResumeRef = useRef<(request: RunResumeRequest) => void>(() => undefined);
+
+  const getClient = useCallback((): AgentSocketClient => {
+    let client = clientRef.current;
+    if (!client) {
+      client = new AgentSocketClient({
+        onConnecting: () => setSocketStatus("Connecting"),
+        onOpen: () => setSocketStatus("Connected"),
+        onPayload: (payload) => handlePayloadRef.current(payload),
+        onInvalidPayload: () => setSocketStatus("Invalid backend event"),
+        onClosed: () => {
+          setSocketStatus("Reconnecting");
+          clientRef.current?.scheduleReconnect();
+        },
+        onReconnectScheduled: () => setSocketStatus("Reconnecting"),
+        onError: () => setSocketStatus("Backend offline"),
+        resolveConnectOptions: () => ({
+          url: apiConfigRef.current.wsChatUrl,
+          apiToken: apiConfigRef.current.apiToken,
+        }),
+      });
+      clientRef.current = client;
     }
-    window.clearTimeout(reconnectTimerRef.current);
-    reconnectTimerRef.current = null;
+    return client;
+  }, [apiConfigRef]);
+
+  const getController = useCallback((): RunStreamController => {
+    let controller = controllerRef.current;
+    if (!controller) {
+      controller = new RunStreamController({
+        onRunEvent: (projection, runtime) =>
+          applyProjectionRef.current(projection, runtime),
+        onResumeRequested: (request) => requestResumeRef.current(request),
+      });
+      controllerRef.current = controller;
+    }
+    return controller;
   }, []);
 
   const updateActiveRun = useCallback((sessionId: string, runId?: string) => {
@@ -76,57 +100,6 @@ export function useAgentSocket({
     setActiveRunIdBySession(next);
   }, []);
 
-  const runtimeFor = useCallback((runId: string, sessionId: string): RunRuntime => {
-    const current = runtimesRef.current[runId];
-    if (current) {
-      return current;
-    }
-    const runtime: RunRuntime = {
-      runId,
-      sessionId,
-      lastSequence: 0,
-      agentSegment: 0,
-      replaying: false,
-      terminal: false,
-    };
-    runtimesRef.current[runId] = runtime;
-    return runtime;
-  }, []);
-
-  const scheduleReconnect = useCallback(() => {
-    if (!shouldReconnectRef.current || reconnectTimerRef.current !== null) {
-      return;
-    }
-    const delay = RECONNECT_DELAYS_MS[Math.min(reconnectAttemptRef.current, RECONNECT_DELAYS_MS.length - 1)];
-    reconnectAttemptRef.current += 1;
-    setSocketStatus("Reconnecting");
-    reconnectTimerRef.current = window.setTimeout(() => {
-      reconnectTimerRef.current = null;
-      connectSocket(apiConfigRef.current);
-    }, delay);
-  }, [apiConfigRef]);
-
-  const requestResume = useCallback(
-    (runId: string, sessionId: string, afterSequence: number) => {
-      const socket = socketRef.current;
-      const runtime = runtimeFor(runId, sessionId);
-      runtime.replaying = true;
-      chatDispatch({ type: "runReplayChanged", runId, replaying: true });
-      if (socket?.readyState !== WebSocket.OPEN) {
-        return;
-      }
-      socket.send(
-        JSON.stringify({
-          type: "resume_run",
-          session_id: sessionId,
-          run_id: runId,
-          after_sequence: afterSequence,
-        }),
-      );
-    },
-    [chatDispatch, runtimeFor],
-  );
-
   const refreshCompletedRun = useCallback(
     (sessionId: string) => {
       void Promise.all([
@@ -137,303 +110,108 @@ export function useAgentSocket({
     [refreshSessionList, reloadSessionMessages],
   );
 
-  const applyRunEvent = useCallback(
-    (payload: SequencedSocketPayload) => {
-      const runtime = runtimeFor(payload.run_id, payload.session_id);
-      if (payload.seq <= runtime.lastSequence) {
-        return;
-      }
-      if (payload.seq > runtime.lastSequence + 1) {
-        requestResume(payload.run_id, payload.session_id, runtime.lastSequence);
-        return;
-      }
-
-      runtime.lastSequence = payload.seq;
-      chatDispatch({
-        type: "runSequenceAdvanced",
-        runId: payload.run_id,
-        sessionId: payload.session_id,
-        sequence: payload.seq,
-      });
-
-      if (payload.type === "started") {
-        runtime.agentSegment = 0;
-        pendingSessionsRef.current.delete(payload.session_id);
-        updateActiveRun(payload.session_id, payload.run_id);
-        chatDispatch({
-          type: "runStarted",
-          runId: payload.run_id,
-          sessionId: payload.session_id,
-          sequence: payload.seq,
-        });
-        setSocketStatus("Streaming");
-        return;
-      }
-
-      if (payload.type === "agent_step") {
-        setSocketStatus(
-          typeof payload.message === "string"
-            ? payload.message
-            : `Agent step ${payload.step ?? ""}`,
-        );
-        return;
-      }
-
-      if (payload.type === "context_compressed") {
-        chatDispatch({
-          type: "runEventAppended",
-          id: `${payload.run_id}:context:${payload.seq}`,
-          sessionId: payload.session_id,
-          text: formatContextCompressed(payload),
-        });
-        return;
-      }
-
-      if (
-        payload.type === "skills_loaded" ||
-        payload.type === "skills_warning" ||
-        payload.type === "skill_injected"
-      ) {
-        onSkillEvent?.(payload);
-        if (payload.type === "skills_warning") {
-          setSocketStatus(payload.message);
-        }
-        return;
-      }
-
-      if (payload.type === "tool_call") {
-        runtime.agentSegment += 1;
-        const toolCallId = payload.tool_call_id || `tool-${payload.seq}`;
-        chatDispatch({
-          type: "toolCallStarted",
-          sessionId: payload.session_id,
-          payload,
-          messageId: `${payload.run_id}:tool:${toolCallId}`,
-          toolCallId,
-        });
-        setSocketStatus(payload.tool ? `Tool: ${payload.tool}` : "Calling tool");
-        return;
-      }
-
-      if (payload.type === "tool_result") {
-        runtime.agentSegment += 1;
-        const toolCallId = payload.tool_call_id || `tool-${payload.seq}`;
-        chatDispatch({
-          type: "toolCallCompleted",
-          sessionId: payload.session_id,
-          payload,
-          messageId: `${payload.run_id}:tool:${toolCallId}`,
-          toolCallId,
-        });
-        setSocketStatus(payload.tool ? `Tool complete: ${payload.tool}` : "Tool complete");
-        return;
-      }
-
-      if (payload.type === "tool_output_delta") {
-        const toolCallId = payload.tool_call_id || `tool-${payload.seq}`;
-        chatDispatch({
-          type: "toolOutputReceived",
-          sessionId: payload.session_id,
-          payload,
-          messageId: `${payload.run_id}:tool:${toolCallId}`,
-          toolCallId,
-        });
-        return;
-      }
-
-      if (payload.type === "token") {
-        chatDispatch({
-          type: "tokenReceived",
-          messageId: `${payload.run_id}:agent:${runtime.agentSegment}`,
-          sessionId: payload.session_id,
-          content: payload.content ?? "",
-        });
-        return;
-      }
-
-      if (payload.type === "plan_ready") {
-        runtime.executingPlanId = payload.plan_id;
-        chatDispatch({
-          type: "planReady",
-          messageId: `${payload.run_id}:plan:${payload.plan_id}`,
-          payload,
-        });
-        setSocketStatus("Plan ready");
-        return;
-      }
-
-      if (payload.type === "plan_approved") {
-        runtime.executingPlanId = payload.plan_id;
-        chatDispatch({
-          type: "planStatusChanged",
-          sessionId: payload.session_id,
-          planId: payload.plan_id,
-          status: "executing",
-        });
-        return;
-      }
-
-      if (payload.type === "tool_approval_required") {
-        chatDispatch({
-          type: "approvalRequired",
-          approval: payload as ToolApprovalRequest,
-        });
-        setSocketStatus(`Approval required: ${payload.tool}`);
-        return;
-      }
-
-      if (payload.type === "tool_approval_resolved") {
-        chatDispatch({
-          type: "approvalResolved",
-          runId: payload.run_id,
-          approvalId: payload.approval_id,
-        });
-        setSocketStatus("Streaming");
-        return;
-      }
-
-      if (payload.type === "run_cancel_requested") {
-        chatDispatch({
-          type: "runStatusChanged",
-          runId: payload.run_id,
-          sessionId: payload.session_id,
-          status: "cancelling",
-        });
-        setSocketStatus("Cancelling");
-        return;
-      }
-
-      if (payload.type === "done") {
-        runtime.terminal = true;
-        chatDispatch({
-          type: "runFinished",
-          runId: payload.run_id,
-          sessionId: payload.session_id,
-          status: "completed",
-          sequence: payload.seq,
-        });
-        if (runtime.executingPlanId) {
-          chatDispatch({
-            type: "planStatusChanged",
-            sessionId: payload.session_id,
-            planId: runtime.executingPlanId,
-            status: "executed",
-          });
-        }
-        updateActiveRun(payload.session_id);
-        setSocketStatus("Ready");
-        refreshCompletedRun(payload.session_id);
-        return;
-      }
-
-      if (payload.type === "run_cancelled" || payload.type === "run_interrupted") {
-        runtime.terminal = true;
-        const status = payload.type === "run_cancelled" ? "cancelled" : "interrupted";
-        chatDispatch({
-          type: "runFinished",
-          runId: payload.run_id,
-          sessionId: payload.session_id,
-          status,
-          sequence: payload.seq,
-        });
-        if (runtime.executingPlanId) {
-          chatDispatch({
-            type: "planStatusChanged",
-            sessionId: payload.session_id,
-            planId: runtime.executingPlanId,
-            status: "failed",
-          });
-        }
-        updateActiveRun(payload.session_id);
-        setSocketStatus(status === "cancelled" ? "Cancelled" : "Interrupted");
-        refreshCompletedRun(payload.session_id);
-        return;
-      }
-
-      if (payload.type === "error") {
-        runtime.terminal = true;
-        const message = payload.message ?? "Agent run failed";
-        chatDispatch({
-          type: "streamingFailed",
-          messageId: `${payload.run_id}:error`,
-          sessionId: payload.session_id,
-          errorText: message,
-        });
-        chatDispatch({
-          type: "runFinished",
-          runId: payload.run_id,
-          sessionId: payload.session_id,
-          status: "failed",
-          sequence: payload.seq,
-        });
-        if (runtime.executingPlanId) {
-          chatDispatch({
-            type: "planStatusChanged",
-            sessionId: payload.session_id,
-            planId: runtime.executingPlanId,
-            status: "failed",
-          });
-        }
-        updateActiveRun(payload.session_id);
-        setSocketStatus(message);
-        refreshCompletedRun(payload.session_id);
+  const applyProjectionEffect = useCallback(
+    (effect: RunProjectionEffect) => {
+      switch (effect.kind) {
+        case "status":
+          setSocketStatus(effect.status);
+          break;
+        case "skillEvent":
+          onSkillEvent?.(effect.payload);
+          break;
+        case "pendingSessionResolved":
+          pendingSessionsRef.current.delete(effect.sessionId);
+          break;
+        case "runActivated":
+          updateActiveRun(effect.sessionId, effect.runId);
+          break;
+        case "runDeactivated":
+          updateActiveRun(effect.sessionId);
+          break;
+        case "sessionRefreshRequested":
+          refreshCompletedRun(effect.sessionId);
+          break;
+        default:
+          break;
       }
     },
-    [
-      chatDispatch,
-      refreshCompletedRun,
-      requestResume,
-      runtimeFor,
-      onSkillEvent,
-      updateActiveRun,
-    ],
+    [onSkillEvent, refreshCompletedRun, updateActiveRun],
+  );
+
+  const applyProjection = useCallback(
+    (projection: RunProjection) => {
+      for (const action of projection.actions) {
+        chatDispatch(action);
+      }
+      for (const effect of projection.effects) {
+        applyProjectionEffect(effect);
+      }
+    },
+    [applyProjectionEffect, chatDispatch],
+  );
+
+  const requestResume = useCallback(
+    ({ runId, sessionId, afterSequence }: RunResumeRequest) => {
+      chatDispatch({ type: "runReplayChanged", runId, replaying: true });
+      getClient().send({
+        type: "resume_run",
+        session_id: sessionId,
+        run_id: runId,
+        after_sequence: afterSequence,
+      });
+    },
+    [chatDispatch, getClient],
   );
 
   const handlePayload = useCallback(
     (payload: SocketPayload) => {
+      const controller = getController();
+
       if (payload.type === "ready") {
         setSocketStatus(payload.message ?? "Ready");
         const activeRuns = payload.active_runs ?? [];
         const discoveredIds = new Set(activeRuns.map((run) => run.id));
         for (const run of activeRuns) {
-          const hadRuntime = Boolean(runtimesRef.current[run.id]);
-          runtimeFor(run.id, run.session_id);
+          const hadRuntime = Boolean(controller.runtimeIfKnown(run.id));
+          const runtime = controller.runtimeFor(run.id, run.session_id);
           updateActiveRun(run.session_id, run.id);
           chatDispatch({
             type: "runDiscovered",
             runId: run.id,
             sessionId: run.session_id,
             status: run.status,
-            lastSequence: hadRuntime ? runtimesRef.current[run.id].lastSequence : 0,
+            lastSequence: hadRuntime ? runtime.lastSequence : 0,
           });
-          requestResume(
+          controller.requestResume(
             run.id,
             run.session_id,
-            hadRuntime ? runtimesRef.current[run.id].lastSequence : 0,
+            hadRuntime ? runtime.lastSequence : 0,
           );
         }
         for (const [sessionId, runId] of Object.entries(activeRunsRef.current)) {
           if (discoveredIds.has(runId)) {
             continue;
           }
-          const runtime = runtimesRef.current[runId];
+          const runtime = controller.runtimeIfKnown(runId);
           if (runtime) {
-            requestResume(runId, sessionId, runtime.lastSequence);
+            controller.requestResume(runId, sessionId, runtime.lastSequence);
           }
         }
         return;
       }
 
       if (payload.type === "run_resume_started") {
-        runtimeFor(payload.run_id, payload.session_id).replaying = true;
+        controller.setReplaying(payload.run_id, payload.session_id, true);
         chatDispatch({ type: "runReplayChanged", runId: payload.run_id, replaying: true });
         return;
       }
 
       if (payload.type === "run_resume_complete") {
-        const runtime = runtimeFor(payload.run_id, payload.session_id);
-        runtime.replaying = false;
-        runtime.lastSequence = Math.max(runtime.lastSequence, payload.last_sequence);
+        const runtime = controller.completeReplay(
+          payload.run_id,
+          payload.session_id,
+          payload.last_sequence,
+        );
         chatDispatch({ type: "runReplayChanged", runId: payload.run_id, replaying: false });
         if (!runtime.terminal) {
           chatDispatch({
@@ -443,7 +221,7 @@ export function useAgentSocket({
             status: payload.status,
           });
         }
-        if (isTerminal(payload.status)) {
+        if (isTerminalRunStatus(payload.status)) {
           updateActiveRun(payload.session_id);
           refreshCompletedRun(payload.session_id);
         }
@@ -451,8 +229,11 @@ export function useAgentSocket({
       }
 
       if (payload.type === "plan_execution_created" || payload.type === "plan_execution_attached") {
-        const runtime = runtimeFor(payload.run_id, payload.session_id);
-        runtime.executingPlanId = payload.plan_id;
+        const runtime = controller.setExecutingPlanId(
+          payload.run_id,
+          payload.session_id,
+          payload.plan_id,
+        );
         pendingSessionsRef.current.delete(payload.session_id);
         delete planRequestIdsRef.current[payload.plan_id];
         updateActiveRun(payload.session_id, payload.run_id);
@@ -470,7 +251,7 @@ export function useAgentSocket({
           status: "executing",
         });
         if (payload.type === "plan_execution_attached") {
-          requestResume(payload.run_id, payload.session_id, runtime.lastSequence);
+          controller.requestResume(payload.run_id, payload.session_id, runtime.lastSequence);
         }
         return;
       }
@@ -498,57 +279,28 @@ export function useAgentSocket({
       }
 
       if (isSequencedRunEvent(payload)) {
-        applyRunEvent(payload);
+        controller.acceptEvent(payload);
       }
     },
-    [
-      applyRunEvent,
-      chatDispatch,
-      refreshCompletedRun,
-      requestResume,
-      runtimeFor,
-      updateActiveRun,
-    ],
+    [chatDispatch, getController, refreshCompletedRun, updateActiveRun],
   );
+
+  handlePayloadRef.current = handlePayload;
+  applyProjectionRef.current = applyProjection;
+  requestResumeRef.current = requestResume;
 
   const connectSocket = useCallback(
     (config = apiConfigRef.current) => {
-      clearReconnectTimer();
-      setSocketStatus("Connecting");
-      const socket = createAgentSocket(config.wsChatUrl, config.apiToken, {
-        onOpen: () => {
-          reconnectAttemptRef.current = 0;
-          setSocketStatus("Connected");
-        },
-        onPayload: handlePayload,
-        onInvalidPayload: () => setSocketStatus("Invalid backend event"),
-        onClose: (closedSocket) => {
-          if (socketRef.current !== closedSocket) {
-            return;
-          }
-          socketRef.current = null;
-          setSocketStatus("Reconnecting");
-          scheduleReconnect();
-        },
-        onError: () => {
-          if (socketRef.current === socket) {
-            setSocketStatus("Backend offline");
-          }
-        },
-      });
-      socketRef.current = socket;
+      getClient().connect({ url: config.wsChatUrl, apiToken: config.apiToken });
     },
-    [apiConfigRef, clearReconnectTimer, handlePayload, scheduleReconnect],
+    [apiConfigRef, getClient],
   );
 
   useEffect(
     () => () => {
-      shouldReconnectRef.current = false;
-      clearReconnectTimer();
-      socketRef.current?.close();
-      socketRef.current = null;
+      clientRef.current?.close();
     },
-    [clearReconnectTimer],
+    [],
   );
 
   const sendPrompt = useCallback(
@@ -558,10 +310,10 @@ export function useAgentSocket({
       skills: SkillSelection[] = [],
     ) => {
       const trimmedPrompt = prompt.trim();
-      const socket = socketRef.current;
-      if (!trimmedPrompt || socket?.readyState !== WebSocket.OPEN) {
+      const client = getClient();
+      if (!trimmedPrompt || !client.isOpen()) {
         setSocketStatus("Backend offline");
-        scheduleReconnect();
+        client.scheduleReconnect();
         return false;
       }
 
@@ -586,27 +338,27 @@ export function useAgentSocket({
       };
       chatDispatch({ type: "userMessageQueued", message: userMessage });
       setSocketStatus("Starting");
-      socket.send(JSON.stringify({
+      client.send({
         type: "prompt",
         session_id: sessionId,
         prompt: trimmedPrompt,
         ...(sendMode === "plan" ? { mode: "plan" } : {}),
         ...(skills.length ? { skills } : {}),
-      }));
+      });
       return true;
     },
-    [chatDispatch, ensureActiveSession, scheduleReconnect],
+    [chatDispatch, ensureActiveSession, getClient],
   );
 
   const approvePlan = useCallback(
     (message: ChatMessage) => {
-      const socket = socketRef.current;
+      const client = getClient();
       const sessionId = message.session_id;
       const planId = message.plan_id;
       if (
         !sessionId ||
         !planId ||
-        socket?.readyState !== WebSocket.OPEN ||
+        !client.isOpen() ||
         activeRunsRef.current[sessionId] ||
         pendingSessionsRef.current.has(sessionId)
       ) {
@@ -630,64 +382,58 @@ export function useAgentSocket({
         planId,
         status: "approving",
       });
-      socket.send(
-        JSON.stringify(
-          retry
-            ? {
-                type: "retry_plan",
-                session_id: sessionId,
-                plan_id: planId,
-                request_id: requestId,
-                confirm_possible_duplicate_side_effects: true,
-              }
-            : {
-                type: "approve_plan",
-                session_id: sessionId,
-                plan_id: planId,
-                request_id: requestId,
-              },
-        ),
+      client.send(
+        retry
+          ? {
+              type: "retry_plan",
+              session_id: sessionId,
+              plan_id: planId,
+              request_id: requestId,
+              confirm_possible_duplicate_side_effects: true,
+            }
+          : {
+              type: "approve_plan",
+              session_id: sessionId,
+              plan_id: planId,
+              request_id: requestId,
+            },
       );
     },
-    [chatDispatch],
+    [chatDispatch, getClient],
   );
 
   const respondToApproval = useCallback(
     (approval: ToolApprovalRequest, decision: ApprovalDecision) => {
-      const socket = socketRef.current;
-      if (socket?.readyState !== WebSocket.OPEN) {
+      const client = getClient();
+      if (!client.isOpen()) {
         setSocketStatus("Backend offline");
         return;
       }
-      socket.send(
-        JSON.stringify({
-          type: "tool_approval_response",
-          session_id: approval.session_id,
-          run_id: approval.run_id,
-          approval_id: approval.approval_id,
-          decision,
-        }),
-      );
+      client.send({
+        type: "tool_approval_response",
+        session_id: approval.session_id,
+        run_id: approval.run_id,
+        approval_id: approval.approval_id,
+        decision,
+      });
     },
-    [],
+    [getClient],
   );
 
   const cancelRun = useCallback(() => {
-    const socket = socketRef.current;
+    const client = getClient();
     const sessionId = activeSessionIdRef.current;
     const runId = sessionId ? activeRunsRef.current[sessionId] : undefined;
-    if (!sessionId || !runId || socket?.readyState !== WebSocket.OPEN) {
+    if (!sessionId || !runId || !client.isOpen()) {
       return;
     }
     setSocketStatus("Cancelling");
-    socket.send(
-      JSON.stringify({
-        type: "cancel_run",
-        session_id: sessionId,
-        run_id: runId,
-      }),
-    );
-  }, [activeSessionIdRef]);
+    client.send({
+      type: "cancel_run",
+      session_id: sessionId,
+      run_id: runId,
+    });
+  }, [activeSessionIdRef, getClient]);
 
   const activeSessionId = activeSessionIdRef.current;
   const isStreaming = Boolean(
@@ -713,8 +459,4 @@ export function useAgentSocket({
     respondToApproval,
     cancelRun,
   };
-}
-
-function isTerminal(status: PersistedRunStatus): boolean {
-  return ["completed", "failed", "cancelled", "interrupted"].includes(status);
 }
