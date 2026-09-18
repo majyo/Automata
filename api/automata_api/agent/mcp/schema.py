@@ -3,6 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+# ``McpPolicyDecision`` was the old name for the shared extension policy
+# contract, which the core now owns so it does not have to import MCP types.
+# The alias keeps existing imports working until M7 removes them.
+
 CallPolicy = Literal["allow", "deny", "prompt"]
 TrustLevel = Literal["trusted", "untrusted"]
 
@@ -64,9 +68,3 @@ class McpToolMetadata:
     remote: bool
     credentialed: bool
     trusted_server: bool
-
-
-@dataclass(frozen=True)
-class McpPolicyDecision:
-    action: CallPolicy
-    reason: str

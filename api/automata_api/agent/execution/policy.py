@@ -1,11 +1,18 @@
 from typing import Any, cast
 
-from automata_api.agent.execution.model import ToolPolicyDecision, ToolRisk
-from automata_api.agent.mcp.schema import McpPolicyDecision
+from automata_api.agent.extension_contracts import ExtensionPolicyDecision
 from automata_api.agent.tools.model import ToolDescriptor
+from automata_api.agent.tools.policy import ToolPolicyDecision, ToolRisk
 
 
 class ToolPolicyEngine:
+    """Decides allow / prompt / deny for one tool call.
+
+    Extensions may advise through ``policy_decision`` on the executor. The
+    core only depends on the small :class:`ExtensionPolicyDecision` contract,
+    so adding an extension does not require the core to know its types.
+    """
+
     def evaluate(
         self,
         *,
@@ -19,7 +26,7 @@ class ToolPolicyEngine:
         executor_decision = getattr(descriptor.executor, "policy_decision", None)
         if callable(executor_decision):
             result = cast(
-                McpPolicyDecision,
+                ExtensionPolicyDecision,
                 executor_decision(arguments, mode=mode),
             )
             if result.action == "deny":

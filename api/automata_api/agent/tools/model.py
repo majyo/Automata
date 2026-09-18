@@ -4,8 +4,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol
 
-from automata_api.agent.execution.model import ToolRisk
 from automata_api.agent.tools.base import AgentTool
+from automata_api.agent.tools.policy import ToolRisk
 
 if TYPE_CHECKING:
     from automata_api.agent.backends.base import Backend

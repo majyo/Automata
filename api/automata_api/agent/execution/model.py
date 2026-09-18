@@ -3,8 +3,14 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-ToolRisk = Literal["read", "write", "command", "destructive", "external"]
-PolicyAction = Literal["allow", "prompt", "deny"]
+from automata_api.agent.tools.policy import (
+    PolicyAction as PolicyAction,
+)
+from automata_api.agent.tools.policy import (
+    ToolPolicyDecision as ToolPolicyDecision,
+)
+from automata_api.agent.tools.policy import ToolRisk as ToolRisk
+
 ApprovalDecision = Literal["allow_once", "allow_for_run", "deny"]
 
 
@@ -44,15 +50,6 @@ class CancellationToken:
     def raise_if_cancelled(self) -> None:
         if self._event.is_set():
             raise RunCancelledError(self._reason)
-
-
-@dataclass(frozen=True)
-class ToolPolicyDecision:
-    action: PolicyAction
-    risk: ToolRisk
-    reason: str
-    approval_scope: str | None = None
-    allow_for_run: bool = False
 
 
 @dataclass(frozen=True)
