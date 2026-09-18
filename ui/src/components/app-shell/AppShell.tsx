@@ -1,129 +1,81 @@
 import { useEffect, useRef, useState } from "react";
 import { Moon, Search, Sun } from "lucide-react";
-import type { FormEvent, RefObject } from "react";
 import { ConversationPanel } from "../conversation/ConversationPanel";
 import { Sidebar } from "./Sidebar";
 import { InspectorSheet } from "./InspectorSheet";
 import { Topbar } from "./Topbar";
 import { AutomataMark } from "./AutomataMark";
 import type {
-  ApprovalDecision,
-  ChatMessage,
-  PersistedRunStatus,
-  SendMode,
-  ToolApprovalRequest,
-} from "../../types/chat";
-import type { PermissionPreset, SessionSummary } from "../../types/session";
-import type { SkillRecord, SkillRuntimeNotice } from "../../types/skills";
+  ComposerActions,
+  ComposerView,
+  ConnectionActions,
+  ConnectionView,
+  ConversationActions,
+  ConversationView,
+  SessionActions,
+  SessionView,
+  SkillsActions,
+  SkillsView,
+} from "./viewModel";
 
 type Theme = "light" | "dark";
 
 const THEME_STORAGE_KEY = "automata-theme";
 
 type AppShellProps = {
-  sessions: SessionSummary[];
-  activeSession: SessionSummary | null;
-  activeSessionId: string | null;
-  isNewSessionDraft: boolean;
-  displayedWorkingDirectory: string;
-  defaultWorkingDirectory: string;
-  editingSessionId: string | null;
-  editingTitle: string;
-  messages: ChatMessage[];
-  messagesRef: RefObject<HTMLDivElement | null>;
-  bridgeStatus: string;
-  socketStatus: string;
-  prompt: string;
-  sendMode: SendMode;
-  permissionPreset: PermissionPreset;
-  permissionUpdating: boolean;
-  sandboxSetupStatus: string;
-  isStreaming: boolean;
-  canSend: boolean;
-  approvals: ToolApprovalRequest[];
-  skills: SkillRecord[];
-  selectedSkillIds: Set<string>;
-  skillErrors: string[];
-  skillNotices: SkillRuntimeNotice[];
-  skillsLoading: boolean;
-  activeRunIdBySession: Record<string, string>;
-  runStatusBySession: Record<string, PersistedRunStatus>;
-  onCreateSession(): void;
-  onSelectSession(sessionId: string): void;
-  onStartRename(session: SessionSummary): void;
-  onEditingTitleChange(title: string): void;
-  onCommitRename(sessionId: string): void;
-  onCancelRename(): void;
-  onDeleteSession(sessionId: string): void;
-  onChooseDirectory(): void;
-  onWorkingDirectoryChange(workingDirectory: string): void;
-  onRunBridgeCheck(): void;
-  onSubmit(event: FormEvent<HTMLFormElement>): void;
-  onPromptChange(prompt: string): void;
-  onSendModeChange(sendMode: SendMode): void;
-  onPermissionPresetChange(permissionPreset: PermissionPreset): void;
-  onSandboxSetup(): void;
-  onApprovePlan(message: ChatMessage): void;
-  onRespondToApproval(
-    approval: ToolApprovalRequest,
-    decision: ApprovalDecision,
-  ): void;
-  onCancelRun(): void;
-  onToggleSkill(skillId: string): void;
-  onToggleSkillEnabled(skill: SkillRecord): Promise<void>;
-  onRefreshSkills(): void;
+  sessionView: SessionView;
+  sessionActions: SessionActions;
+  connectionView: ConnectionView;
+  connectionActions: ConnectionActions;
+  conversationView: ConversationView;
+  conversationActions: ConversationActions;
+  composerView: ComposerView;
+  composerActions: ComposerActions;
+  skillsView: SkillsView;
+  skillsActions: SkillsActions;
 };
 
 export function AppShell({
-  sessions,
-  activeSession,
-  activeSessionId,
-  isNewSessionDraft,
-  displayedWorkingDirectory,
-  defaultWorkingDirectory,
-  editingSessionId,
-  editingTitle,
-  messages,
-  messagesRef,
-  bridgeStatus,
-  socketStatus,
-  prompt,
-  sendMode,
-  permissionPreset,
-  permissionUpdating,
-  sandboxSetupStatus,
-  isStreaming,
-  canSend,
-  approvals,
-  skills,
-  selectedSkillIds,
-  skillErrors,
-  skillNotices,
-  skillsLoading,
-  activeRunIdBySession,
-  runStatusBySession,
-  onCreateSession,
-  onSelectSession,
-  onStartRename,
-  onEditingTitleChange,
-  onCommitRename,
-  onCancelRename,
-  onDeleteSession,
-  onChooseDirectory,
-  onWorkingDirectoryChange,
-  onRunBridgeCheck,
-  onSubmit,
-  onPromptChange,
-  onSendModeChange,
-  onPermissionPresetChange,
-  onSandboxSetup,
-  onApprovePlan,
-  onRespondToApproval,
-  onCancelRun,
-  onToggleSkill,
-  onToggleSkillEnabled,
-  onRefreshSkills,
+  sessionView,
+  sessionActions,
+  connectionView,
+  connectionActions,
+  conversationView,
+  conversationActions,
+  composerView,
+  composerActions,
+  skillsView,
+  skillsActions,
 }: AppShellProps) {
+  const {
+    sessions,
+    activeSession,
+    activeSessionId,
+    isNewSessionDraft,
+    displayedWorkingDirectory,
+    editingSessionId,
+    editingTitle,
+    activeRunIdBySession,
+    runStatusBySession,
+  } = sessionView;
+  const { messages, messagesRef, approvals, isStreaming } = conversationView;
+  const { bridgeStatus, socketStatus } = connectionView;
+  const {
+    prompt,
+    sendMode,
+    permissionPreset,
+    permissionUpdating,
+    defaultWorkingDirectory,
+    sandboxSetupStatus,
+    canSend,
+  } = composerView;
+  const {
+    skills,
+    selectedSkillIds,
+    skillErrors,
+    skillNotices,
+    skillsLoading,
+  } = skillsView;
   const [theme, setTheme] = useState<Theme>(readStoredTheme);
   const [isInspectorOpen, setIsInspectorOpen] = useState(
     () => window.innerWidth >= 1160,
@@ -261,18 +213,18 @@ export function AppShell({
           activeRunIdBySession={activeRunIdBySession}
           runStatusBySession={runStatusBySession}
           onCreateSession={() => {
-            onCreateSession();
+            sessionActions.createSession();
             setIsSidebarOpen(false);
           }}
           onSelectSession={(sessionId) => {
-            onSelectSession(sessionId);
+            sessionActions.selectSession(sessionId);
             setIsSidebarOpen(false);
           }}
-          onStartRename={onStartRename}
-          onEditingTitleChange={onEditingTitleChange}
-          onCommitRename={onCommitRename}
-          onCancelRename={onCancelRename}
-          onDeleteSession={onDeleteSession}
+          onStartRename={sessionActions.startRename}
+          onEditingTitleChange={sessionActions.setEditingTitle}
+          onCommitRename={sessionActions.commitRename}
+          onCancelRename={sessionActions.cancelRename}
+          onDeleteSession={sessionActions.deleteSession}
         />
 
         <main className="workspace" inert={sidebarModal || inspectorModal}>
@@ -311,19 +263,19 @@ export function AppShell({
               skillErrors={skillErrors}
               skillNotices={skillNotices}
               skillsLoading={skillsLoading}
-              onChooseDirectory={onChooseDirectory}
-              onWorkingDirectoryChange={onWorkingDirectoryChange}
-              onSubmit={onSubmit}
-              onPromptChange={onPromptChange}
-              onSendModeChange={onSendModeChange}
-              onPermissionPresetChange={onPermissionPresetChange}
-              onSandboxSetup={onSandboxSetup}
-              onApprovePlan={onApprovePlan}
-              onRespondToApproval={onRespondToApproval}
-              onCancelRun={onCancelRun}
-              onToggleSkill={onToggleSkill}
-              onToggleSkillEnabled={onToggleSkillEnabled}
-              onRefreshSkills={onRefreshSkills}
+              onChooseDirectory={composerActions.chooseDirectory}
+              onWorkingDirectoryChange={composerActions.workingDirectoryChange}
+              onSubmit={composerActions.submit}
+              onPromptChange={composerActions.promptChange}
+              onSendModeChange={composerActions.sendModeChange}
+              onPermissionPresetChange={composerActions.permissionPresetChange}
+              onSandboxSetup={composerActions.sandboxSetup}
+              onApprovePlan={conversationActions.approvePlan}
+              onRespondToApproval={conversationActions.respondToApproval}
+              onCancelRun={conversationActions.cancelRun}
+              onToggleSkill={skillsActions.toggleSkill}
+              onToggleSkillEnabled={skillsActions.toggleSkillEnabled}
+              onRefreshSkills={skillsActions.refreshSkills}
             />
           </div>
         </main>
@@ -346,7 +298,7 @@ export function AppShell({
           runStatus={
             activeSessionId ? runStatusBySession[activeSessionId] : undefined
           }
-          onRunBridgeCheck={onRunBridgeCheck}
+          onRunBridgeCheck={connectionActions.runBridgeCheck}
           open={isInspectorOpen}
           onClose={() => setIsInspectorOpen(false)}
         />

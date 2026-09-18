@@ -150,56 +150,73 @@ function App() {
 
   return (
     <AppShell
-      sessions={sessions.sessions}
-      activeSession={sessions.activeSession}
-      activeSessionId={sessions.activeSessionId}
-      isNewSessionDraft={sessions.isNewSessionDraft}
-      displayedWorkingDirectory={sessions.displayedWorkingDirectory}
-      defaultWorkingDirectory={apiConfig.defaultWorkingDirectory}
-      editingSessionId={sessions.editingSessionId}
-      editingTitle={sessions.editingTitle}
-      messages={messages}
-      messagesRef={messagesRef}
-      bridgeStatus={bridgeStatus}
-      socketStatus={agentSocket.socketStatus}
-      prompt={prompt}
-      sendMode={sendMode}
-      permissionPreset={sessions.permissionPreset}
-      permissionUpdating={sessions.permissionUpdating}
-      sandboxSetupStatus={sandboxSetupStatus}
-      isStreaming={agentSocket.isStreaming}
-      canSend={canSend}
-      approvals={approvals}
-      skills={skills.skills}
-      selectedSkillIds={skills.selectedIds}
-      skillErrors={skills.errors}
-      skillNotices={skills.notices}
-      skillsLoading={skills.isLoading}
-      activeRunIdBySession={agentSocket.activeRunIdBySession}
-      runStatusBySession={runStatusBySession}
-      onCreateSession={handleCreateSession}
-      onSelectSession={sessions.actions.selectSession}
-      onStartRename={sessions.actions.startRename}
-      onEditingTitleChange={sessions.actions.setEditingTitle}
-      onCommitRename={sessions.actions.commitRename}
-      onCancelRename={sessions.actions.cancelRename}
-      onDeleteSession={sessions.actions.deleteCurrentSession}
-      onChooseDirectory={handleChooseDirectory}
-      onWorkingDirectoryChange={sessions.actions.setDraftWorkingDirectory}
-      onRunBridgeCheck={runBridgeCheck}
-      onSubmit={handleSubmit}
-      onPromptChange={setPrompt}
-      onSendModeChange={setSendMode}
-      onPermissionPresetChange={(permissionPreset) =>
-        void sessions.actions.setPermissionPreset(permissionPreset)
-      }
-      onSandboxSetup={() => void handleSandboxSetup()}
-      onApprovePlan={agentSocket.approvePlan}
-      onRespondToApproval={agentSocket.respondToApproval}
-      onCancelRun={agentSocket.cancelRun}
-      onToggleSkill={skills.toggleSelected}
-      onToggleSkillEnabled={skills.toggleEnabled}
-      onRefreshSkills={() => void skills.refresh(true)}
+      sessionView={{
+        sessions: sessions.sessions,
+        activeSession: sessions.activeSession,
+        activeSessionId: sessions.activeSessionId,
+        isNewSessionDraft: sessions.isNewSessionDraft,
+        displayedWorkingDirectory: sessions.displayedWorkingDirectory,
+        editingSessionId: sessions.editingSessionId,
+        editingTitle: sessions.editingTitle,
+        activeRunIdBySession: agentSocket.activeRunIdBySession,
+        runStatusBySession,
+      }}
+      sessionActions={{
+        createSession: handleCreateSession,
+        selectSession: sessions.actions.selectSession,
+        startRename: sessions.actions.startRename,
+        setEditingTitle: sessions.actions.setEditingTitle,
+        commitRename: sessions.actions.commitRename,
+        cancelRename: sessions.actions.cancelRename,
+        deleteSession: sessions.actions.deleteCurrentSession,
+      }}
+      connectionView={{
+        bridgeStatus,
+        socketStatus: agentSocket.socketStatus,
+      }}
+      connectionActions={{ runBridgeCheck }}
+      conversationView={{
+        messages,
+        messagesRef,
+        approvals,
+        isStreaming: agentSocket.isStreaming,
+      }}
+      conversationActions={{
+        approvePlan: agentSocket.approvePlan,
+        respondToApproval: agentSocket.respondToApproval,
+        cancelRun: agentSocket.cancelRun,
+      }}
+      composerView={{
+        prompt,
+        sendMode,
+        canSend,
+        defaultWorkingDirectory: apiConfig.defaultWorkingDirectory,
+        permissionPreset: sessions.permissionPreset,
+        permissionUpdating: sessions.permissionUpdating,
+        sandboxSetupStatus,
+      }}
+      composerActions={{
+        chooseDirectory: handleChooseDirectory,
+        workingDirectoryChange: sessions.actions.setDraftWorkingDirectory,
+        submit: handleSubmit,
+        promptChange: setPrompt,
+        sendModeChange: setSendMode,
+        permissionPresetChange: (permissionPreset) =>
+          void sessions.actions.setPermissionPreset(permissionPreset),
+        sandboxSetup: () => void handleSandboxSetup(),
+      }}
+      skillsView={{
+        skills: skills.skills,
+        selectedSkillIds: skills.selectedIds,
+        skillErrors: skills.errors,
+        skillNotices: skills.notices,
+        skillsLoading: skills.isLoading,
+      }}
+      skillsActions={{
+        toggleSkill: skills.toggleSelected,
+        toggleSkillEnabled: skills.toggleEnabled,
+        refreshSkills: () => void skills.refresh(true),
+      }}
     />
   );
 }
