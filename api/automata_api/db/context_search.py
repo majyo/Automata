@@ -5,10 +5,16 @@ import re
 import sqlite3
 from typing import Any
 
+# The turn engine owns the source vocabulary; storage records it. Importing
+# rather than redefining keeps one definition of these string values, which
+# are part of the persisted data shape.
+from automata_api.context_sources import (
+    CONTEXT_SOURCE_CONVERSATION,
+    CONTEXT_SOURCE_SEARCH,
+)
+
 CONTEXT_SEARCH_DOCUMENTS_TABLE = "agent_context_search_documents"
 CONTEXT_SEARCH_FTS_TABLE = "agent_context_search_fts"
-CONTEXT_SOURCE_CONVERSATION = "conversation"
-CONTEXT_SOURCE_SEARCH = "context_search"
 
 DEFAULT_CONTEXT_SEARCH_LIMIT = 5
 MAX_CONTEXT_SEARCH_LIMIT = 8

@@ -4,12 +4,18 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from automata_api.agent import llm
+from automata_api.agent.adapters.chat_completions import (
+    assistant_message_for_provider,
+    default_model_provider,
+    tool_result_for_provider,
+)
 from automata_api.agent.context import (
     compress_loop_context_if_needed,
     fetch_agent_context,
 )
 from automata_api.agent.execution.model import CancellationToken, ToolExecutionContext
 from automata_api.agent.execution.orchestrator import ToolExecutionOrchestrator
+from automata_api.agent.ports import ModelProvider
 from automata_api.agent.prompts import (
     agent_system_prompt,
     approved_plan_message,
@@ -27,9 +33,10 @@ from automata_api.config import (
     get_agent_config,
     get_context_compression_config,
 )
-from automata_api.db.context_search import (
+from automata_api.context_sources import (
     CONTEXT_SOURCE_CONVERSATION,
-    CONTEXT_SOURCE_SEARCH,
+    source_for_assistant_message,
+    source_for_tool_result,
 )
 from automata_api.observability import (
     emit_content_record,
@@ -212,6 +219,7 @@ async def stream_model_loop(
     run_id: str | None = None,
     cancellation: CancellationToken | None = None,
     orchestrator: ToolExecutionOrchestrator | None = None,
+    provider: ModelProvider | None = None,
 ) -> AsyncIterator[AgentLoopEvent]:
     for step in range(1, max_steps + 1):
         async with observe_span(
@@ -238,12 +246,11 @@ async def stream_model_loop(
                     else (tools or [])
                 )
             step_span.set_attributes(tool_spec_count=len(current_tools))
-            accumulator = llm.AssistantStreamAccumulator()
+            provider = provider or default_model_provider
+            accumulator = provider.accumulator()
             tool_call_started = False
             emitted_text = False
-            async for delta in llm.stream_chat_completion(
-                messages, tools=current_tools
-            ):
+            async for delta in provider.stream(messages, tools=current_tools):
                 if cancellation is not None:
                     cancellation.raise_if_cancelled()
                 accumulator.add(delta)
@@ -530,10 +537,8 @@ async def _stream_execute_tool_call_inner(
         store=store,
         session_id=session_id,
         message=provider_message,
-        source=(
-            CONTEXT_SOURCE_SEARCH
-            if result.name == SEARCH_THREAD_CONTEXT_NAME
-            else CONTEXT_SOURCE_CONVERSATION
+        source=source_for_tool_result(
+            result.name, search_tool_name=SEARCH_THREAD_CONTEXT_NAME
         ),
     )
 
@@ -561,25 +566,9 @@ async def save_context_message_if_possible(
 
 
 def context_source_for_assistant_message(message: dict[str, Any]) -> str:
-    tool_calls = message.get("tool_calls")
-    if not isinstance(tool_calls, list) or not tool_calls:
-        return CONTEXT_SOURCE_CONVERSATION
-
-    names: list[str] = []
-    for tool_call in tool_calls:
-        if not isinstance(tool_call, dict):
-            return CONTEXT_SOURCE_CONVERSATION
-        function = tool_call.get("function")
-        if not isinstance(function, dict):
-            return CONTEXT_SOURCE_CONVERSATION
-        name = function.get("name")
-        if not isinstance(name, str) or not name.strip():
-            return CONTEXT_SOURCE_CONVERSATION
-        names.append(name)
-
-    if names and all(name == SEARCH_THREAD_CONTEXT_NAME for name in names):
-        return CONTEXT_SOURCE_SEARCH
-    return CONTEXT_SOURCE_CONVERSATION
+    return source_for_assistant_message(
+        message, search_tool_name=SEARCH_THREAD_CONTEXT_NAME
+    )
 
 
 def insert_skill_messages(
@@ -639,32 +628,3 @@ def blocked_tool_result(
         ),
         success=False,
     )
-
-
-def assistant_message_for_provider(message: dict[str, Any]) -> dict[str, Any]:
-    content = message.get("content")
-    provider_message: dict[str, Any] = {
-        "role": "assistant",
-        "content": content if isinstance(content, str) and content else None,
-    }
-
-    tool_calls = message.get("tool_calls")
-    if isinstance(tool_calls, list) and tool_calls:
-        provider_message["tool_calls"] = tool_calls
-
-    reasoning_content = message.get("reasoning_content")
-    if isinstance(reasoning_content, str):
-        provider_message["reasoning_content"] = reasoning_content
-
-    return provider_message
-
-
-def tool_result_for_provider(
-    tool_call: dict[str, Any], result: ToolResult
-) -> dict[str, Any]:
-    call_id = tool_call.get("id")
-    return {
-        "role": "tool",
-        "tool_call_id": call_id if isinstance(call_id, str) else "",
-        "content": result.content,
-    }

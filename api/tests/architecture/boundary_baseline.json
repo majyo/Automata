@@ -11,6 +11,7 @@
   ],
   "violations": [
     "agent -> config",
+    "agent -> context_sources",
     "agent -> db",
     "agent -> execution",
     "agent -> observability",
@@ -26,6 +27,7 @@
     "bootstrap -> sessions",
     "bootstrap -> storage",
     "db -> config",
+    "db -> context_sources",
     "execution -> config",
     "main -> bootstrap",
     "main -> routers",
