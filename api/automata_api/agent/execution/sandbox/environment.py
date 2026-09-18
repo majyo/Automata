@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 
-from automata_api.agent.execution.permissions import CompiledPermissionProfile
+from automata_api.execution.permissions import CompiledPermissionProfile
 
 _SAFE_EXACT = {
     "ALLUSERSPROFILE",

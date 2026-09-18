@@ -7,13 +7,13 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from automata_api.agent.execution.permissions import (
-    compile_run_permission_profile,
-)
 from automata_api.agent.execution.sandbox.errors import SandboxError
 from automata_api.agent.execution.sandbox.setup import (
     prepare_windows_sandbox,
     windows_sandbox_status,
+)
+from automata_api.execution.permissions import (
+    compile_run_permission_profile,
 )
 
 router = APIRouter(prefix="/sandbox", tags=["sandbox"])

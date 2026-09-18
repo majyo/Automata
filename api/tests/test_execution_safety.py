@@ -19,7 +19,6 @@ from automata_api.agent.execution.orchestrator import (
     tool_operation_attributes,
     tool_result_attributes,
 )
-from automata_api.agent.execution.permissions import PermissionPreset
 from automata_api.agent.execution.process import (
     process_execution_scope,
     subprocess_group_kwargs,
@@ -28,6 +27,7 @@ from automata_api.agent.tools._core import ToolResult, capture_process_output
 from automata_api.agent.tools.base import AgentTool
 from automata_api.agent.tools.model import ToolDescriptor
 from automata_api.agent.tools.router import ToolRouter
+from automata_api.execution.permissions import PermissionPreset
 
 
 class RecordingTool(AgentTool):

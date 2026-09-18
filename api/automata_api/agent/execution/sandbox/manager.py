@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import sys
 
-from automata_api.agent.execution.permissions import CompiledPermissionProfile
 from automata_api.agent.execution.sandbox.backends import (
     DirectSandboxBackend,
     LinuxSandboxBackend,
@@ -12,6 +11,7 @@ from automata_api.agent.execution.sandbox.backends import (
     WindowsSandboxBackend,
 )
 from automata_api.agent.execution.sandbox.errors import SandboxError
+from automata_api.execution.permissions import CompiledPermissionProfile
 
 
 class SandboxManager:

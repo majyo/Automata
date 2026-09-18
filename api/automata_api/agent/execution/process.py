@@ -11,8 +11,8 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
-from automata_api.agent.execution.permissions import CompiledPermissionProfile
 from automata_api.agent.execution.windows_job import WindowsJob
+from automata_api.execution.permissions import CompiledPermissionProfile
 
 logger = logging.getLogger(__name__)
 

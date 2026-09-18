@@ -2,13 +2,13 @@ import json
 import sqlite3
 from typing import Any
 
-from automata_api.agent.execution.permissions import (
-    DEFAULT_PERMISSION_PRESET,
-    PermissionPreset,
-)
 from automata_api.agent.prompts import agent_workspace
 from automata_api.db import context_search as context_search_db
 from automata_api.db.connection import connect_db, db_lock
+from automata_api.execution.permissions import (
+    DEFAULT_PERMISSION_PRESET,
+    PermissionPreset,
+)
 from automata_api.sessions import domain as session_domain
 from automata_api.sessions.domain import (
     InvalidBackendError as InvalidBackendError,

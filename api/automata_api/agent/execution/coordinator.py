@@ -24,12 +24,6 @@ from automata_api.agent.execution.model import (
     PublicRunError,
     RunOutcome,
 )
-from automata_api.agent.execution.permissions import (
-    CompiledPermissionProfile,
-    PermissionPreset,
-    normalize_permission_preset,
-    permission_profile_from_json,
-)
 from automata_api.agent.execution.process import (
     ProcessSupervisor,
 )
@@ -41,6 +35,12 @@ from automata_api.agent.execution.process_sessions import (
 )
 from automata_api.agent.execution.process_sessions import (
     process_session_manager as default_process_session_manager,
+)
+from automata_api.execution.permissions import (
+    CompiledPermissionProfile,
+    PermissionPreset,
+    normalize_permission_preset,
+    permission_profile_from_json,
 )
 from automata_api.observability import observe_span
 from automata_api.repositories import runs as run_repository

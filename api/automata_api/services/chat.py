@@ -16,14 +16,14 @@ from automata_api.agent.execution.model import (
     RunOutcome,
 )
 from automata_api.agent.execution.orchestrator import ToolExecutionOrchestrator
-from automata_api.agent.execution.permissions import (
-    CompiledPermissionProfile,
-    PermissionPreset,
-)
 from automata_api.agent.llm import AgentProviderError
 from automata_api.agent.runtime import stream_agent_loop, stream_plan_loop
 from automata_api.agent.types import AgentLoopEvent
 from automata_api.config import AgentConfigurationError
+from automata_api.execution.permissions import (
+    CompiledPermissionProfile,
+    PermissionPreset,
+)
 from automata_api.extensions.mcp.lookup import mcp_config_lookup
 from automata_api.extensions.mcp.runtime import create_mcp_tool_runtime
 from automata_api.extensions.skills.runtime import (

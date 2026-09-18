@@ -5,11 +5,11 @@ import sqlite3
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, Protocol
 
-from automata_api.agent.execution.permissions import (
+from automata_api.db.connection import connect_db, db_lock
+from automata_api.execution.permissions import (
     compile_run_permission_profile,
     sandbox_backend_for_profile,
 )
-from automata_api.db.connection import connect_db, db_lock
 from automata_api.utils import new_id, now_iso
 
 RunKind = Literal["chat_act", "chat_plan", "plan_execution"]

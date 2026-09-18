@@ -11,11 +11,6 @@ from automata_api.agent.execution.model import (
     ToolExecutionContext,
 )
 from automata_api.agent.execution.orchestrator import ToolExecutionOrchestrator
-from automata_api.agent.execution.permissions import (
-    compile_permission_profile,
-    permission_profile_from_json,
-    sandbox_backend_for_profile,
-)
 from automata_api.agent.execution.process import current_process_scope
 from automata_api.agent.execution.sandbox import process_launcher
 from automata_api.agent.execution.sandbox.backends.linux import (
@@ -41,6 +36,11 @@ from automata_api.agent.tools._core import ToolResult
 from automata_api.agent.tools.base import AgentTool
 from automata_api.agent.tools.model import ToolDescriptor
 from automata_api.agent.tools.router import ToolRouter
+from automata_api.execution.permissions import (
+    compile_permission_profile,
+    permission_profile_from_json,
+    sandbox_backend_for_profile,
+)
 
 
 class RetryTool(AgentTool):

@@ -2,7 +2,7 @@ from typing import Any, Literal, NotRequired, TypedDict
 
 from pydantic import BaseModel, Field, model_validator
 
-from automata_api.agent.execution.permissions import PermissionPreset
+from automata_api.execution.permissions import PermissionPreset
 
 
 class CreateSessionRequest(BaseModel):

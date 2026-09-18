@@ -5,13 +5,13 @@ import base64
 import os
 from typing import Any
 
-from automata_api.agent.execution.permissions import CompiledPermissionProfile
 from automata_api.agent.execution.sandbox.backends.windows import (
     find_windows_sandbox_host,
     write_windows_sandbox_request,
 )
 from automata_api.agent.execution.sandbox.errors import SandboxError
 from automata_api.agent.execution.sandbox.protocol import classify_sandbox_failure
+from automata_api.execution.permissions import CompiledPermissionProfile
 
 
 async def prepare_windows_sandbox(

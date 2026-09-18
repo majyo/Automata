@@ -4,16 +4,16 @@ import os
 from pathlib import Path
 from typing import Any, Mapping
 
-from automata_api.agent.execution.permissions import (
-    CompiledPermissionProfile,
-    compile_permission_profile,
-)
 from automata_api.agent.execution.sandbox.environment import build_tool_environment
 from automata_api.agent.execution.sandbox.errors import SandboxError
 from automata_api.agent.execution.sandbox.manager import SandboxManager, sandbox_manager
 from automata_api.agent.execution.sandbox.model import (
     ProcessLaunchRequest,
     SandboxMetadata,
+)
+from automata_api.execution.permissions import (
+    CompiledPermissionProfile,
+    compile_permission_profile,
 )
 
 

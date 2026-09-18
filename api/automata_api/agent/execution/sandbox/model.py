@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Mapping
 
-from automata_api.agent.execution.permissions import CompiledPermissionProfile
+from automata_api.execution.permissions import CompiledPermissionProfile
 
 StdioMode = Literal["inherit", "pipe", "null"]
 
