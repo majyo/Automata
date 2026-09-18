@@ -7,13 +7,13 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Mapping
 
-from automata_api.agent.mcp.config import (
+from automata_api.config import get_database_config
+from automata_api.extensions.mcp.config import (
     McpServerDefinition,
     McpStdioTransportDefinition,
     McpStreamableHttpTransportDefinition,
 )
-from automata_api.agent.mcp.schema import CallPolicy, TrustLevel
-from automata_api.config import get_database_config
+from automata_api.extensions.mcp.schema import CallPolicy, TrustLevel
 
 GrantScope = Literal["global", "workspace"]
 

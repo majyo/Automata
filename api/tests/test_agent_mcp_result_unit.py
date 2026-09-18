@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import json
 
-from automata_api.agent.mcp.result import (
+from automata_api.extensions.mcp.result import (
     MAX_TEXT_CHARS,
     mcp_result_to_tool_result,
 )
-from automata_api.agent.mcp.schema import McpCallResult, McpToolMetadata
+from automata_api.extensions.mcp.schema import McpCallResult, McpToolMetadata
 
 
 def metadata():

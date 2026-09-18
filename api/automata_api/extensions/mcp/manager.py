@@ -6,9 +6,9 @@ import logging
 from dataclasses import replace
 from typing import Callable
 
-from automata_api.agent.mcp.client import McpClient, McpSdkClientAdapter
-from automata_api.agent.mcp.config import McpServerDefinition
-from automata_api.agent.mcp.schema import (
+from automata_api.extensions.mcp.client import McpClient, McpSdkClientAdapter
+from automata_api.extensions.mcp.config import McpServerDefinition
+from automata_api.extensions.mcp.schema import (
     McpCallResult,
     McpDiscoveryLimits,
     McpError,

@@ -6,12 +6,12 @@ from urllib.parse import urlparse
 
 from jsonschema import Draft202012Validator, SchemaError, ValidationError
 
-from automata_api.agent.mcp.schema import (
+from automata_api.agent.tools._core import ToolResult
+from automata_api.extensions.mcp.schema import (
     McpCallResult,
     McpError,
     McpToolMetadata,
 )
-from automata_api.agent.tools._core import ToolResult
 
 MAX_TEXT_CHARS = 64_000
 MAX_STRUCTURED_CHARS = 32_000

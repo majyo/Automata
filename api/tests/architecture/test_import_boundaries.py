@@ -13,8 +13,9 @@ import pytest
 from tests.architecture.boundaries import (
     collect_imports,
     cross_module_edges,
-    find_import_cycles,
+    find_forbidden_edges,
     load_baseline,
+    prohibited_cycles,
 )
 
 # Two package-level cycles exist in the pre-refactoring tree and are the
@@ -62,10 +63,30 @@ def test_baseline_has_no_stale_entries(refs):
 
 
 def test_only_known_package_cycles_remain(refs):
-    cycles = find_import_cycles(refs)
+    """Only the two pre-existing, declared cycles may remain.
+
+    Cycles that necessarily use a forbidden edge are reported by
+    ``test_no_forbidden_layering_edges`` instead, with a clearer message.
+    """
+    cycles = prohibited_cycles(refs)
     unexpected = [cycle for cycle in cycles if frozenset(cycle) not in KNOWN_CYCLES]
 
     assert unexpected == [], f"New import cycles detected: {unexpected!r}"
+
+
+def test_no_forbidden_layering_edges(refs):
+    """Plan 3.3: enforce the direction of each cross-package edge.
+
+    ``extensions`` may build on the agent's public tool surface; the agent
+    core must not depend on an extension. ``workspace``/``execution`` must
+    not depend on ``agent``/``tools``. No business package may depend on the
+    transport layer.
+    """
+    offenders = sorted(find_forbidden_edges(refs))
+
+    assert offenders == [], (
+        "Forbidden layering edges were introduced:\n  " + "\n  ".join(offenders)
+    )
 
 
 def test_workspace_and_execution_never_import_tools(refs):

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from automata_api.agent.extension_contracts import ExtensionPolicyDecision
-from automata_api.agent.mcp.schema import McpToolMetadata
-from automata_api.agent.mcp.trust import McpServerGrant
+from automata_api.extensions.mcp.schema import McpToolMetadata
+from automata_api.extensions.mcp.trust import McpServerGrant
 
 
 class McpPolicyEngine:

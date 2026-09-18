@@ -15,6 +15,7 @@ from automata_api.agent.skills.model import (
     SkillToolDependency,
 )
 from automata_api.agent.tools.router import ToolRouter
+from automata_api.extensions.mcp.lookup import mcp_config_lookup
 from automata_api.schemas import (
     SkillDependenciesRecord,
     SkillDependencyDiagnosticRecord,
@@ -86,6 +87,7 @@ async def get_skill_diagnostics(
         skill,
         router=ToolRouter.default_for_workspace(normalized_workspace),
         workspace=normalized_workspace,
+        mcp_lookup=mcp_config_lookup,
     )
     return SkillDiagnosticsResponse(
         skill_id=skill.skill_id,
@@ -139,6 +141,7 @@ def skill_record(
         skill,
         router=diagnostic_router,
         workspace=workspace,
+        mcp_lookup=mcp_config_lookup,
     )
     return SkillRecord(
         skill_id=skill.skill_id,

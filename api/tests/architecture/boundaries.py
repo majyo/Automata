@@ -187,6 +187,30 @@ def runtime_edges_by_file(refs: list[ImportRef]) -> dict[str, set[str]]:
 
 def find_import_cycles(refs: list[ImportRef]) -> list[list[str]]:
     """Detect cycles between project sub-packages (coarse module graph)."""
+    return _find_cycles(_package_graph(refs))
+
+
+def prohibited_cycles(refs: list[ImportRef]) -> list[list[str]]:
+    """Cycles that are architecturally forbidden rather than declared.
+
+    Plan section 3.3 fixes the allowed direction of every cross-package
+    edge, so a coarse cycle is only a defect when none of its edges is
+    already a forbidden edge. For example ``extensions -> agent.tools`` is
+    the documented way an extension plugs in, so
+    ``agent.tools -> ... -> extensions -> agent.tools`` is expected, whereas
+    ``agent -> extensions`` must not exist at all and is reported by
+    :func:`find_forbidden_edges` with a far clearer message.
+    """
+    cycles: list[list[str]] = []
+    for cycle in find_import_cycles(refs):
+        edges = list(zip(cycle, cycle[1:], strict=False))
+        if any(_is_forbidden_edge(source, target) for source, target in edges):
+            continue
+        cycles.append(cycle)
+    return cycles
+
+
+def _package_graph(refs: list[ImportRef]) -> dict[str, set[str]]:
     graph: dict[str, set[str]] = {}
     for ref in refs:
         if ref.type_checking_only:
@@ -195,7 +219,45 @@ def find_import_cycles(refs: list[ImportRef]) -> list[list[str]]:
         right = imported_group(ref.imported_module)
         if left != right:
             graph.setdefault(left, set()).add(right)
+    return graph
 
+
+# Packages whose dependency on the agent core is the whole point of the
+# extension mechanism, and therefore allowed to close a cycle with it.
+EXTENSION_PACKAGES = frozenset({"extensions"})
+
+
+def _is_forbidden_edge(source: str, target: str) -> bool:
+    """Return whether ``source -> target`` breaks a layering rule."""
+    if source in {"agent", "runs", "sessions"} and target in EXTENSION_PACKAGES:
+        return True
+    if source in {"workspace", "execution"} and target in {"agent", "tools"}:
+        return True
+    if source in {"agent", "runs", "sessions"} and target in {
+        "routers",
+        "services",
+        "transport",
+    }:
+        return True
+    return False
+
+
+def find_forbidden_edges(refs: list[ImportRef]) -> set[str]:
+    """Return every real cross-package edge that violates a layering rule."""
+    offenders: set[str] = set()
+    for ref in refs:
+        if ref.type_checking_only:
+            continue
+        source = source_group(ref.source_module)
+        target = imported_group(ref.imported_module)
+        if source == target:
+            continue
+        if _is_forbidden_edge(source, target):
+            offenders.add(f"{source} -> {target}")
+    return offenders
+
+
+def _find_cycles(graph: dict[str, set[str]]) -> list[list[str]]:
     cycles: list[list[str]] = []
     seen: set[frozenset[str]] = set()
 

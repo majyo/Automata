@@ -6,21 +6,22 @@ import logging
 
 from jsonschema import Draft202012Validator, SchemaError
 
-from automata_api.agent.mcp.config import (
-    McpServerDefinition,
-    McpStdioTransportDefinition,
-    is_remote_http_transport,
-)
-from automata_api.agent.mcp.manager import McpConnectionManager
-from automata_api.agent.mcp.policy import McpPolicyEngine
-from automata_api.agent.mcp.schema import McpError, McpToolInfo, McpToolMetadata
-from automata_api.agent.mcp.trust import McpServerGrant, server_fingerprint
-from automata_api.agent.tools.mcp_tool import McpAgentTool, mcp_tool_alias
 from automata_api.agent.tools.model import (
     ToolDescriptor,
     ToolDiscoveryContext,
     ToolExposure,
 )
+from automata_api.extensions.mcp.config import (
+    McpServerDefinition,
+    McpStdioTransportDefinition,
+    is_remote_http_transport,
+)
+from automata_api.extensions.mcp.manager import McpConnectionManager
+from automata_api.extensions.mcp.policy import McpPolicyEngine
+from automata_api.extensions.mcp.schema import McpError, McpToolInfo, McpToolMetadata
+from automata_api.extensions.mcp.trust import McpServerGrant, server_fingerprint
+
+from .tool import McpAgentTool, mcp_tool_alias
 
 logger = logging.getLogger(__name__)
 

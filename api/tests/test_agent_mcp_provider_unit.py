@@ -2,22 +2,22 @@ import asyncio
 import json
 import re
 
-from automata_api.agent.mcp.config import (
+from automata_api.agent.tools.model import ToolDiscoveryContext, ToolExposure
+from automata_api.agent.tools.router import ToolRouter
+from automata_api.agent.tools.tool_search import TOOL_SEARCH_NAME
+from automata_api.extensions.mcp.config import (
     McpServerDefinition,
     McpStdioTransportDefinition,
     McpStreamableHttpTransportDefinition,
 )
-from automata_api.agent.mcp.schema import (
+from automata_api.extensions.mcp.provider import McpToolProvider
+from automata_api.extensions.mcp.schema import (
     McpCallResult,
     McpDiscoveryLimits,
     McpToolInfo,
 )
-from automata_api.agent.mcp.trust import create_grant
-from automata_api.agent.tools.mcp_provider import McpToolProvider
-from automata_api.agent.tools.mcp_tool import mcp_tool_alias
-from automata_api.agent.tools.model import ToolDiscoveryContext, ToolExposure
-from automata_api.agent.tools.router import ToolRouter
-from automata_api.agent.tools.tool_search import TOOL_SEARCH_NAME
+from automata_api.extensions.mcp.tool import mcp_tool_alias
+from automata_api.extensions.mcp.trust import create_grant
 
 
 class FakeManager:

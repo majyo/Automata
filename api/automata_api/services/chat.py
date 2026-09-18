@@ -21,7 +21,6 @@ from automata_api.agent.execution.permissions import (
     PermissionPreset,
 )
 from automata_api.agent.llm import AgentProviderError
-from automata_api.agent.mcp.runtime import create_mcp_tool_runtime
 from automata_api.agent.runtime import stream_agent_loop, stream_plan_loop
 from automata_api.agent.skills.runtime import (
     create_skill_turn_context,
@@ -29,6 +28,8 @@ from automata_api.agent.skills.runtime import (
 )
 from automata_api.agent.types import AgentLoopEvent
 from automata_api.config import AgentConfigurationError
+from automata_api.extensions.mcp.lookup import mcp_config_lookup
+from automata_api.extensions.mcp.runtime import create_mcp_tool_runtime
 from automata_api.observability import observe_span
 from automata_api.repositories.agent_store import SessionAgentContextStore
 from automata_api.repositories.sessions import (
@@ -115,6 +116,7 @@ async def stream_agent_reply(
                             selected_skills
                         ),
                         router=mcp_runtime.router,
+                        mcp_lookup=mcp_config_lookup,
                     )
                 await send_skill_runtime_events(websocket, skill_context, run_id)
                 response = await forward_agent_events(
@@ -215,6 +217,7 @@ async def stream_plan_reply(
                             selected_skills
                         ),
                         router=mcp_runtime.router,
+                        mcp_lookup=mcp_config_lookup,
                     )
                 await send_skill_runtime_events(websocket, skill_context, run_id)
                 response = await forward_agent_events(

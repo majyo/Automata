@@ -7,27 +7,27 @@ from datetime import timedelta
 from typing import Protocol
 
 import httpx
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import get_default_environment
-from mcp.client.streamable_http import streamable_http_client
 
-from automata_api.agent.execution.permissions import (
+from automata_api.execution.permissions import (
     CompiledPermissionProfile,
     compile_permission_profile,
 )
-from automata_api.agent.mcp.config import (
+from automata_api.extensions.mcp.config import (
     McpServerDefinition,
     McpStdioTransportDefinition,
     McpStreamableHttpTransportDefinition,
     resolve_stdio_transport,
     resolve_streamable_http_transport,
 )
-from automata_api.agent.mcp.sandbox_stdio import sandboxed_stdio_client
-from automata_api.agent.mcp.schema import (
+from automata_api.extensions.mcp.sandbox_stdio import sandboxed_stdio_client
+from automata_api.extensions.mcp.schema import (
     McpCallResult,
     McpListToolsPage,
     McpToolInfo,
 )
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import get_default_environment
+from mcp.client.streamable_http import streamable_http_client
 
 
 class McpClient(Protocol):

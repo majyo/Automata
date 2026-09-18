@@ -11,12 +11,12 @@ from pathlib import Path
 
 import pytest
 
-from automata_api.agent.mcp.config import (
+from automata_api.extensions.mcp.config import (
     McpServerDefinition,
     McpStreamableHttpTransportDefinition,
 )
-from automata_api.agent.mcp.manager import McpConnectionManager
-from automata_api.agent.mcp.schema import McpError
+from automata_api.extensions.mcp.manager import McpConnectionManager
+from automata_api.extensions.mcp.schema import McpError
 
 FIXTURE = Path(__file__).parent / "fixtures" / "fake_mcp_http_server.py"
 

@@ -5,18 +5,19 @@ from dataclasses import dataclass
 from typing import AsyncIterator
 
 from automata_api.agent.backends.base import Backend
-from automata_api.agent.execution.permissions import CompiledPermissionProfile
 from automata_api.agent.execution.process import process_execution_scope
-from automata_api.agent.mcp.client import McpSdkClientAdapter
-from automata_api.agent.mcp.config import load_mcp_config
-from automata_api.agent.mcp.manager import McpConnectionManager
-from automata_api.agent.mcp.trust import McpTrustStore, server_fingerprint
-from automata_api.agent.tools.mcp_provider import McpToolProvider
 from automata_api.agent.tools.model import ToolDiscoveryContext
 from automata_api.agent.tools.providers import BackendToolProvider, ContextToolProvider
 from automata_api.agent.tools.router import ToolRouter, ToolRouterBuilder
+from automata_api.execution.permissions import CompiledPermissionProfile
+from automata_api.extensions.mcp.client import McpSdkClientAdapter
+from automata_api.extensions.mcp.config import load_mcp_config
+from automata_api.extensions.mcp.manager import McpConnectionManager
+from automata_api.extensions.mcp.trust import McpTrustStore, server_fingerprint
 from automata_api.observability import observe_span
 from automata_api.repositories.agent_store import SessionAgentContextStore
+
+from .provider import McpToolProvider
 
 
 @dataclass(frozen=True)

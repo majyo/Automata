@@ -4,8 +4,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 
-from automata_api.agent.mcp.config import load_mcp_config, transport_type
-from automata_api.agent.mcp.trust import (
+from automata_api.extensions.mcp.config import load_mcp_config, transport_type
+from automata_api.extensions.mcp.trust import (
     McpTrustStore,
     create_grant,
     server_fingerprint,

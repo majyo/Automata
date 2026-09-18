@@ -2,12 +2,12 @@ import asyncio
 
 import pytest
 
-from automata_api.agent.mcp.config import (
+from automata_api.extensions.mcp.config import (
     McpServerDefinition,
     McpStdioTransportDefinition,
 )
-from automata_api.agent.mcp.manager import McpConnectionManager
-from automata_api.agent.mcp.schema import (
+from automata_api.extensions.mcp.manager import McpConnectionManager
+from automata_api.extensions.mcp.schema import (
     McpCallResult,
     McpDiscoveryLimits,
     McpError,

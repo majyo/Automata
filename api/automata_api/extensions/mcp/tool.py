@@ -5,16 +5,16 @@ import re
 import time
 from typing import Any
 
-from automata_api.agent.mcp.manager import McpConnectionManager
-from automata_api.agent.mcp.policy import McpPolicyEngine
-from automata_api.agent.mcp.result import (
+from automata_api.agent.tools._core import ToolResult
+from automata_api.agent.tools.base import AgentTool
+from automata_api.extensions.mcp.manager import McpConnectionManager
+from automata_api.extensions.mcp.policy import McpPolicyEngine
+from automata_api.extensions.mcp.result import (
     mcp_error_tool_result,
     mcp_result_to_tool_result,
     validate_arguments,
 )
-from automata_api.agent.mcp.schema import McpError, McpToolMetadata
-from automata_api.agent.tools._core import ToolResult
-from automata_api.agent.tools.base import AgentTool
+from automata_api.extensions.mcp.schema import McpError, McpToolMetadata
 
 _NON_NAME_CHARACTERS = re.compile(r"[^a-zA-Z0-9_-]+")
 _MULTIPLE_UNDERSCORES = re.compile(r"_+")

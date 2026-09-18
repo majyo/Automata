@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from automata_api.agent.mcp.config import load_mcp_config
-from automata_api.agent.mcp.trust import McpTrustStore
+from typing import Protocol
+
 from automata_api.agent.skills.model import (
     SkillDependencyDiagnostic,
     SkillMetadata,
@@ -12,17 +12,49 @@ from automata_api.agent.tools.router import ToolRouter
 from automata_api.agent.tools.tool_search import search_tool_descriptors
 
 
+class McpServerLookup(Protocol):
+    """Answers whether an MCP server is configured and granted.
+
+    Skills diagnostics need this one fact. Injecting it keeps the agent core
+    free of any MCP dependency: the extension supplies the answer.
+    """
+
+    def is_server_granted(self, server: str, workspace: str) -> bool: ...
+
+    def is_server_configured(self, server: str, workspace: str) -> bool: ...
+
+
+class UnavailableMcpLookup:
+    """Used when no MCP extension is wired in.
+
+    Reports "not configured", which is the truthful answer for a run that
+    has no MCP runtime.
+    """
+
+    def is_server_granted(self, server: str, workspace: str) -> bool:
+        return False
+
+    def is_server_configured(self, server: str, workspace: str) -> bool:
+        return False
+
+
 def diagnose_skill_dependencies(
     skill: SkillMetadata,
     *,
     router: ToolRouter | None,
     workspace: str,
+    mcp_lookup: McpServerLookup | None = None,
 ) -> tuple[SkillDependencyDiagnostic, ...]:
     dependencies = skill.dependencies
     if dependencies is None:
         return ()
     return tuple(
-        diagnose_dependency(dependency, router=router, workspace=workspace)
+        diagnose_dependency(
+            dependency,
+            router=router,
+            workspace=workspace,
+            mcp_lookup=mcp_lookup,
+        )
         for dependency in dependencies.tools
     )
 
@@ -32,6 +64,7 @@ def diagnose_dependency(
     *,
     router: ToolRouter | None,
     workspace: str,
+    mcp_lookup: McpServerLookup | None = None,
 ) -> SkillDependencyDiagnostic:
     dependency_type = dependency.type.lower().strip()
     descriptors = router.descriptors() if router is not None else ()
@@ -41,7 +74,7 @@ def diagnose_dependency(
     if dependency_type in {"deferred", "tool_search"}:
         return diagnose_deferred(dependency, descriptors)
     if dependency_type == "mcp":
-        return diagnose_mcp(dependency, descriptors, workspace)
+        return diagnose_mcp(dependency, descriptors, workspace, mcp_lookup)
     return diagnostic(
         dependency,
         "unknown",
@@ -92,6 +125,7 @@ def diagnose_mcp(
     dependency: SkillToolDependency,
     descriptors: tuple[ToolDescriptor, ...],
     workspace: str,
+    mcp_lookup: McpServerLookup | None = None,
 ) -> SkillDependencyDiagnostic:
     server = dependency.server or ""
     tool = dependency.tool or ""
@@ -110,19 +144,14 @@ def diagnose_mcp(
     if candidates:
         return descriptor_diagnostic(dependency, candidates[0])
 
-    config = load_mcp_config(workspace)
-    definition = next(
-        (candidate for candidate in config.definitions if candidate.name == server),
-        None,
-    )
-    if definition is None:
+    lookup = mcp_lookup or UnavailableMcpLookup()
+    if not lookup.is_server_configured(server, workspace):
         return diagnostic(
             dependency,
             "not_found",
             f"MCP server is not configured: {server}",
         )
-    grant = McpTrustStore().grant_for(definition, workspace)
-    if grant is None or grant.connection != "allow":
+    if not lookup.is_server_granted(server, workspace):
         return diagnostic(
             dependency,
             "not_granted",

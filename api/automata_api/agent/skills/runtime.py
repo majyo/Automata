@@ -3,7 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from automata_api.agent.skills.config import get_skills_config
-from automata_api.agent.skills.diagnostics import diagnose_skill_dependencies
+from automata_api.agent.skills.diagnostics import (
+    McpServerLookup,
+    diagnose_skill_dependencies,
+)
 from automata_api.agent.skills.injection import (
     build_skill_messages,
     resolve_selected_skills,
@@ -27,6 +30,7 @@ async def create_skill_turn_context(
     router: ToolRouter | None = None,
     manager: SkillManager | None = None,
     force_reload: bool = False,
+    mcp_lookup: McpServerLookup | None = None,
 ) -> SkillTurnContext:
     config = get_skills_config()
     if not config.enabled:
@@ -56,6 +60,7 @@ async def create_skill_turn_context(
             skill,
             router=router,
             workspace=workspace,
+            mcp_lookup=mcp_lookup,
         )
         if diagnostic.status not in {"available", "deferred"}
     )

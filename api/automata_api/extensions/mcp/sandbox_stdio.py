@@ -12,14 +12,14 @@ from typing import TextIO
 
 import anyio
 import anyio.lowlevel
-import mcp.types as types
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from mcp import StdioServerParameters
-from mcp.shared.message import SessionMessage
 
-from automata_api.agent.execution.permissions import CompiledPermissionProfile
+import mcp.types as types
 from automata_api.agent.execution.process import process_supervisor
 from automata_api.agent.execution.sandbox import process_launcher
+from automata_api.execution.permissions import CompiledPermissionProfile
+from mcp import StdioServerParameters
+from mcp.shared.message import SessionMessage
 
 
 @asynccontextmanager

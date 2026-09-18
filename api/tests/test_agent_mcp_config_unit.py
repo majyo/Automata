@@ -1,16 +1,16 @@
 import json
 
-from automata_api.agent.mcp.config import (
+from automata_api.agent.tools.model import ToolExposure
+from automata_api.extensions.mcp.config import (
     McpStreamableHttpTransportDefinition,
     load_mcp_config,
     resolve_streamable_http_transport,
 )
-from automata_api.agent.mcp.trust import (
+from automata_api.extensions.mcp.trust import (
     McpTrustStore,
     create_grant,
     server_fingerprint,
 )
-from automata_api.agent.tools.model import ToolExposure
 
 
 def write_config(path, payload):
