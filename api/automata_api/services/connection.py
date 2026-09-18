@@ -21,6 +21,7 @@ from automata_api.repositories.sessions import (
     save_context_message,
     session_exists,
 )
+from automata_api.runs.replay import ReplayService
 from automata_api.security import authenticate_websocket
 from automata_api.services.chat import (
     receive_payload,
@@ -105,10 +106,12 @@ class AgentConnection:
         *,
         coordinator: RunCoordinator,
         event_hub: RunEventHub,
+        replay: ReplayService | None = None,
     ) -> None:
         self.websocket = websocket
         self.coordinator = coordinator
         self.event_hub = event_hub
+        self.replay = replay or ReplayService()
         self.sender = SerializedWebSocketSender(websocket)
         self.connection_id = uuid.uuid4().hex
 
@@ -396,61 +399,15 @@ class AgentConnection:
             after_sequence = int(payload.get("after_sequence", 0))
         except (TypeError, ValueError):
             after_sequence = -1
-        try:
-            run = await run_repository_call(
-                run_repository.get_session_run,
-                session_id,
-                run_id,
-            )
-        except (ValueError, run_repository.RunNotFoundError):
-            await self._send_cursor_error(session_id, run_id)
-            return
-        if after_sequence < 0 or after_sequence > int(run["last_sequence"]):
-            await self._send_cursor_error(session_id, run_id)
-            return
 
-        watermark = int(run["last_sequence"])
-        await self.sender.begin_replay(run_id)
-        await self.sender.send_json(
-            {
-                "type": "run_resume_started",
-                "session_id": session_id,
-                "run_id": run_id,
-                "after_sequence": after_sequence,
-                "through_sequence": watermark,
-            }
+        outcome = await self.replay.resume(
+            sender=self.sender,
+            session_id=session_id,
+            run_id=run_id,
+            after_sequence=after_sequence,
         )
-        cursor = after_sequence
-        while cursor < watermark:
-            try:
-                events = await run_repository_call(
-                    run_repository.list_events,
-                    run_id,
-                    after_sequence=cursor,
-                    through_sequence=watermark,
-                    limit=1000,
-                )
-            except run_repository.EventCursorError:
-                await self.sender.abort_replay(run_id)
-                await self._send_cursor_error(session_id, run_id)
-                return
-            if not events:
-                break
-            for event in events:
-                await self.sender.send_replay_event(event)
-            cursor = int(events[-1]["seq"])
-        latest = await run_repository_call(run_repository.get_run, run_id)
-        await self.sender.finish_replay(
-            run_id,
-            watermark,
-            {
-                "type": "run_resume_complete",
-                "session_id": session_id,
-                "run_id": run_id,
-                "status": latest["status"],
-                "last_sequence": latest["last_sequence"],
-            },
-        )
+        if not outcome.ok and outcome.cursor_error:
+            await self._send_cursor_error(session_id, run_id)
 
     async def _session_id_for_run(
         self, payload: Mapping[str, Any], run_id: str
