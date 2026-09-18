@@ -13,16 +13,36 @@ environment variable is missing, local development falls back to
 ## Project layout
 
 ```text
-main.py                  Thin compatibility entrypoint for uvicorn and PyInstaller
-automata_api/main.py     FastAPI app factory, CORS, lifespan startup
-automata_api/routers/    HTTP and WebSocket routes
-automata_api/services/   API transport and application orchestration
-automata_api/agent/      Agent runtime, context, prompts, tools, and LLM integration
-automata_api/db/         SQLite connection and schema initialization
-automata_api/observability/ Structured logs, spans, profile samples, and retention
-automata_api/repositories/ Session and message persistence
-tests/                   FastAPI TestClient coverage
+main.py                       Thin compatibility entrypoint for uvicorn and PyInstaller
+automata_api/main.py          Thin create_app compatibility entrypoint
+automata_api/bootstrap/       Dependency assembly: settings, AppContainer, lifecycle
+automata_api/transport/       Dependency helpers for the FastAPI routers
+automata_api/contracts/       External protocol DTOs and shared primitives
+automata_api/routers/         HTTP and WebSocket routes
+automata_api/services/        WebSocket connection handling and turn dispatch
+automata_api/agent/           Agent turn engine, context, prompts and the model port
+automata_api/agent/tools/     Tool catalog, dispatch policy and builtin tools
+automata_api/agent/adapters/  Model provider adapters (chat completions)
+automata_api/agent/execution/ Process execution, output capture and sandboxing
+automata_api/workspace/       Path constraints, file capabilities and patch algorithms
+automata_api/runs/            Run lifecycle, approvals and event replay
+automata_api/sessions/        Session domain rules and storage ports
+automata_api/extensions/      MCP and Skills extensions
+automata_api/storage/sqlite/  SQLite adapters for the storage ports
+automata_api/execution/       Permission vocabulary and runtime paths
+automata_api/db/              SQLite connection, schema and baseline
+automata_api/observability/   Structured logs, spans, profile samples and retention
+automata_api/repositories/    SQLite-backed persistence used by the adapters
+tests/architecture/           Import boundary and layering rules
+tests/contracts/              Frozen protocol and payload fixtures
+tests/                        FastAPI TestClient and unit coverage
 ```
+
+Dependencies point one way. `transport` calls application use cases;
+`agent`/`runs`/`sessions` do not import `extensions`; `workspace` and
+`execution` never import `tools`; and only `bootstrap` chooses concrete
+implementations. `tests/architecture` enforces those rules, so a new
+cross-layer import fails the suite rather than being discovered later.
 
 ## Database schema
 

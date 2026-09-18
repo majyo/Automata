@@ -55,13 +55,18 @@ flowchart LR
 
 | 层 | 当前职责 | 主要代码 |
 | --- | --- | --- |
-| API 与连接 | HTTP 鉴权、会话/Run/MCP/Skills 路由、WebSocket 消息分发与事件恢复 | [`main.py`](../api/automata_api/main.py)、[`services/connection.py`](../api/automata_api/services/connection.py) |
-| Run 协调 | 创建后台任务、限制同会话并发、取消、审批、结束状态和启动恢复 | [`execution/coordinator.py`](../api/automata_api/agent/execution/coordinator.py) |
+| 传输接入 | HTTP 鉴权、会话/Run/MCP/Skills 路由、WebSocket 消息分发 | [`bootstrap/`](../api/automata_api/bootstrap/)、[`routers/`](../api/automata_api/routers/)、[`transport/`](../api/automata_api/transport/) |
+| 连接与回放 | 连接作用域的发送串行化、订阅关系；断线恢复由 `runs/replay.py` 承接 | [`services/connection.py`](../api/automata_api/services/connection.py)、[`runs/replay.py`](../api/automata_api/runs/replay.py) |
+| Run 协调 | 创建后台任务、限制同会话并发、取消、审批、结束状态和启动恢复 | [`agent/execution/coordinator.py`](../api/automata_api/agent/execution/coordinator.py) |
 | 应用编排 | 为每次回复装配 Backend、MCP、Skills、上下文和工具执行器 | [`services/chat.py`](../api/automata_api/services/chat.py) |
-| Agent 循环 | 调用模型、累积流式响应、执行工具调用、回填工具结果、控制最大步数 | [`agent/runtime.py`](../api/automata_api/agent/runtime.py) |
-| 工具路由 | 工具发现、直接/延迟/隐藏暴露、`tool_search` 激活和统一 dispatch | [`tools/router.py`](../api/automata_api/agent/tools/router.py) |
-| 执行安全 | 风险分类、审批、取消令牌和子进程树终止 | [`execution/`](../api/automata_api/agent/execution/) |
-| 持久化 | SQLite schema、会话、消息、上下文摘要、计划、Run 和顺序事件 | [`db/`](../api/automata_api/db/)、[`repositories/`](../api/automata_api/repositories/) |
+| Agent 循环 | 调用模型、累积流式响应、执行工具调用、回填工具结果、控制最大步数 | [`agent/runtime.py`](../api/automata_api/agent/runtime.py)、[`agent/ports.py`](../api/automata_api/agent/ports.py)、[`agent/adapters/`](../api/automata_api/agent/adapters/) |
+| 工具路由 | 工具发现、直接/延迟/隐藏暴露、`tool_search` 激活和统一 dispatch | [`tools/router.py`](../api/automata_api/agent/tools/router.py)、[`tools/api.py`](../api/automata_api/agent/tools/api.py) |
+| 工作区能力 | 路径约束、补丁解析与内容变换、文件读写与检索 | [`workspace/`](../api/automata_api/workspace/) |
+| 执行安全 | 风险分类、审批、取消令牌、进程输出与子进程树终止、平台沙盒 | [`execution/`](../api/automata_api/execution/)、[`agent/execution/`](../api/automata_api/agent/execution/) |
+| 扩展 | MCP 信任/传输/工具提供器与 Skills 发现、加载、注入 | [`extensions/mcp/`](../api/automata_api/extensions/mcp/)、[`extensions/skills/`](../api/automata_api/extensions/skills/) |
+| 持久化 | SQLite schema、会话、消息、上下文摘要、计划、Run 和顺序事件 | [`storage/sqlite/`](../api/automata_api/storage/sqlite/)、[`db/`](../api/automata_api/db/)、[`repositories/`](../api/automata_api/repositories/) |
+
+依赖方向由 [`tests/architecture/`](../api/tests/architecture/) 自动检查：传输层不直接依赖 SQLite；`agent`/`runs`/`sessions` 不导入 `extensions`；`workspace`/`execution` 不导入 `tools`。
 
 ## 一次任务如何运行
 
