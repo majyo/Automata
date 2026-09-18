@@ -63,6 +63,48 @@ from automata_api.agent.tools.constants import (
     SUPPORTED_EXEC_SHELLS,
 )
 from automata_api.agent.tools.models import ToolResult
+from automata_api.agent.tools.results import (
+    bash_error_result as bash_error_result,
+)
+from automata_api.agent.tools.results import (
+    build_exec_output as build_exec_output,
+)
+from automata_api.agent.tools.results import (
+    decode_output as decode_output,
+)
+from automata_api.agent.tools.results import (
+    exec_command_error_result as exec_command_error_result,
+)
+from automata_api.agent.tools.results import (
+    file_error_result as file_error_result,
+)
+from automata_api.agent.tools.results import (
+    patch_error_result as patch_error_result,
+)
+from automata_api.agent.tools.results import (
+    process_session_error_result as process_session_error_result,
+)
+from automata_api.agent.tools.results import (
+    search_error_result as search_error_result,
+)
+from automata_api.agent.tools.results import (
+    search_result_was_no_match as search_result_was_no_match,
+)
+from automata_api.agent.tools.results import (
+    search_tool_result as search_tool_result,
+)
+from automata_api.agent.tools.results import (
+    truncate_output as truncate_output,
+)
+from automata_api.agent.tools.text import (
+    select_line_range as select_line_range,
+)
+from automata_api.agent.tools.text import (
+    truncate_content as truncate_content,
+)
+from automata_api.agent.tools.text import (
+    truncate_head_tail_content as truncate_head_tail_content,
+)
 from automata_api.workspace.patches.parsing import (
     PatchFile as PatchFile,
 )
@@ -407,90 +449,8 @@ async def run_process(
     }
 
 
-def search_tool_result(
-    *,
-    tool_name: str,
-    arguments: dict[str, Any],
-    pattern: str,
-    path: str,
-    cwd: str,
-    engine: str,
-    command: str,
-    timeout_seconds: float,
-    process_result: dict[str, Any],
-    attempts: list[dict[str, Any]],
-) -> ToolResult:
-    exit_code = process_result["exit_code"]
-    ok = search_exit_code_is_ok(exit_code)
-    payload = {
-        "simulated": False,
-        "ok": ok,
-        "matched": exit_code == 0,
-        "tool": tool_name,
-        "engine": engine,
-        "pattern": pattern,
-        "path": path,
-        "cwd": cwd,
-        "command": command,
-        "timeout_seconds": timeout_seconds,
-        "exit_code": exit_code,
-        "timed_out": process_result["timed_out"],
-        "stdout": process_result["stdout"],
-        "stderr": process_result["stderr"],
-        "stdout_truncated": process_result["stdout_truncated"],
-        "stderr_truncated": process_result["stderr_truncated"],
-        "attempts": attempts,
-        "error_code": process_result.get("error_code"),
-        "sandbox": process_result.get("sandbox"),
-    }
-    return ToolResult(
-        name=tool_name,
-        arguments=arguments,
-        content=json_response(payload),
-        success=ok,
-        error_code=process_result.get("error_code"),
-        sandbox=process_result.get("sandbox"),
-    )
 
 
-def search_error_result(
-    *,
-    tool_name: str,
-    arguments: dict[str, Any],
-    pattern: str,
-    path: str,
-    cwd: str,
-    timeout_seconds: float,
-    engine: str | None,
-    error: str,
-    attempts: list[dict[str, Any]] | None = None,
-) -> ToolResult:
-    return ToolResult(
-        name=tool_name,
-        arguments=arguments,
-        content=json_response(
-            {
-                "simulated": False,
-                "ok": False,
-                "matched": False,
-                "tool": tool_name,
-                "engine": engine,
-                "pattern": pattern,
-                "path": path,
-                "cwd": cwd,
-                "command": "",
-                "timeout_seconds": timeout_seconds,
-                "exit_code": None,
-                "timed_out": False,
-                "stdout": "",
-                "stderr": error,
-                "stdout_truncated": False,
-                "stderr_truncated": False,
-                "attempts": attempts or [],
-            }
-        ),
-        success=False,
-    )
 
 
 def bash_search_command(preferred_engine: str, pattern: str, path: str) -> str:
@@ -526,13 +486,6 @@ def search_exit_code_is_ok(exit_code: Any) -> bool:
     return exit_code in (0, 1)
 
 
-def search_result_was_no_match(result: ToolResult) -> bool:
-    try:
-        payload = json.loads(result.content)
-    except json.JSONDecodeError:
-        return False
-
-    return payload.get("ok") is True and payload.get("matched") is False
 
 
 def run_read_file(arguments: dict[str, Any], workspace: str) -> ToolResult:
@@ -1159,92 +1112,14 @@ def plan_patch_file(
     )
 
 
-def patch_error_result(
-    *,
-    tool_name: str,
-    arguments: dict[str, Any],
-    dry_run: bool,
-    error: str,
-    path: str = "",
-    syntax: str | None = None,
-    error_code: str | None = None,
-) -> ToolResult:
-    payload = {
-        "simulated": False,
-        "ok": False,
-        "tool": tool_name,
-        "dry_run": dry_run,
-        "path": path,
-        "error": error,
-        "error_code": error_code,
-    }
-    if syntax is not None:
-        payload["syntax"] = syntax
-    return ToolResult(
-        name=tool_name,
-        arguments=arguments,
-        content=json_response(payload),
-        success=False,
-        error_code=error_code,
-    )
 
 
-def select_line_range(
-    content: str, raw_start_line: Any, raw_end_line: Any
-) -> tuple[str, int | None, int | None, int]:
-    lines = content.splitlines(keepends=True)
-    total_lines = len(lines)
-    start_line = positive_int_argument(raw_start_line)
-    end_line = positive_int_argument(raw_end_line)
-    if start_line is None and end_line is None:
-        return content, None, None, total_lines
-
-    start = start_line if start_line is not None else 1
-    end = end_line if end_line is not None else total_lines
-    if end < start:
-        return "", start, end, total_lines
-
-    return "".join(lines[start - 1 : end]), start, end, total_lines
 
 
-def truncate_content(content: str, limit: int) -> tuple[str, bool]:
-    if len(content) <= limit:
-        return content, False
-
-    return content[:limit], True
 
 
-def truncate_head_tail_content(content: str, limit: int) -> tuple[str, bool]:
-    buffer = HeadTailTextBuffer(limit)
-    buffer.append(content)
-    return buffer.text, buffer.truncated
 
 
-def file_error_result(
-    tool_name: str,
-    arguments: dict[str, Any],
-    *,
-    error: str,
-    path: Path | None = None,
-    error_code: str | None = None,
-) -> ToolResult:
-    return ToolResult(
-        name=tool_name,
-        arguments=arguments,
-        content=json_response(
-            {
-                "simulated": False,
-                "ok": False,
-                "path": str(path) if path else "",
-                "absolute_path": str(path) if path else "",
-                "encoding": "utf-8",
-                "error": error,
-                "error_code": error_code,
-            }
-        ),
-        success=False,
-        error_code=error_code,
-    )
 
 
 async def run_exec_command(arguments: dict[str, Any], workspace: str) -> ToolResult:
@@ -1425,62 +1300,8 @@ async def run_exec_command(arguments: dict[str, Any], workspace: str) -> ToolRes
     )
 
 
-def exec_command_error_result(
-    *,
-    arguments: dict[str, Any],
-    cmd: str,
-    shell: str,
-    workdir: str,
-    cwd: str,
-    timeout_seconds: float,
-    error: str,
-    shell_path: str | None = None,
-    duration_seconds: float = 0.0,
-    supported_shells: tuple[str, ...] | None = None,
-    error_code: str | None = None,
-) -> ToolResult:
-    output, output_truncated = truncate_content(
-        build_exec_output("", error), DEFAULT_EXEC_OUTPUT_CHARS
-    )
-    payload: dict[str, Any] = {
-        "simulated": False,
-        "ok": False,
-        "tool": "exec_command",
-        "cmd": cmd,
-        "shell": shell,
-        "workdir": workdir,
-        "cwd": cwd,
-        "shell_path": shell_path,
-        "timeout_seconds": timeout_seconds,
-        "duration_seconds": duration_seconds,
-        "exit_code": None,
-        "timed_out": False,
-        "stdout": "",
-        "stderr": error,
-        "output": output,
-        "stdout_truncated": False,
-        "stderr_truncated": False,
-        "output_truncated": output_truncated,
-    }
-    if supported_shells is not None:
-        payload["supported_shells"] = list(supported_shells)
-    if error_code is not None:
-        payload["error_code"] = error_code
-    return ToolResult(
-        name="exec_command",
-        arguments=arguments,
-        content=json_response(payload),
-        success=False,
-        error_code=error_code,
-    )
 
 
-def build_exec_output(stdout: str, stderr: str) -> str:
-    if stdout and stderr:
-        return f"{stdout}\n\nstderr:\n{stderr}"
-    if stderr:
-        return f"stderr:\n{stderr}"
-    return stdout
 
 
 async def run_write_stdin(
@@ -1613,28 +1434,6 @@ def bound_process_session_snapshot(
     )
 
 
-def process_session_error_result(
-    name: str,
-    arguments: dict[str, Any],
-    error_code: str,
-    message: str,
-) -> ToolResult:
-    return ToolResult(
-        name=name,
-        arguments=arguments,
-        content=json_response(
-            {
-                "simulated": False,
-                "ok": False,
-                "tool": name,
-                "running": False,
-                "error_code": error_code,
-                "error": message,
-            }
-        ),
-        success=False,
-        error_code=error_code,
-    )
 
 
 async def run_bash(arguments: dict[str, Any], workspace: str) -> ToolResult:
@@ -1828,47 +1627,7 @@ def is_wsl_bash(path: str) -> bool:
     )
 
 
-def bash_error_result(
-    *,
-    arguments: dict[str, Any],
-    command: str,
-    cwd: str,
-    timeout_seconds: float,
-    error: str,
-    shell: str | None = None,
-    error_code: str | None = None,
-) -> ToolResult:
-    return ToolResult(
-        name="run_bash",
-        arguments=arguments,
-        content=json_response(
-            {
-                "simulated": False,
-                "ok": False,
-                "command": command,
-                "cwd": cwd,
-                "shell": shell,
-                "timeout_seconds": timeout_seconds,
-                "exit_code": None,
-                "timed_out": False,
-                "stdout": "",
-                "stderr": error,
-                "stdout_truncated": False,
-                "stderr_truncated": False,
-                "error_code": error_code,
-            }
-        ),
-        success=False,
-        error_code=error_code,
-    )
 
 
-def decode_output(output: bytes) -> str:
-    return output.decode("utf-8", errors="replace")
 
 
-def truncate_output(output: str) -> tuple[str, bool]:
-    if len(output) <= OUTPUT_LIMIT:
-        return output, False
-
-    return output[:OUTPUT_LIMIT], True
