@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import uuid
 from collections.abc import Mapping
 from typing import Any
@@ -28,64 +27,9 @@ from automata_api.services.chat import (
     stream_plan_reply,
 )
 from automata_api.sessions.ports import SessionStore
-
-
-class SerializedWebSocketSender:
-    def __init__(self, websocket: WebSocket) -> None:
-        self._websocket = websocket
-        self._lock = asyncio.Lock()
-        self._closed = False
-        self._replay_buffers: dict[str, list[dict[str, Any]]] = {}
-
-    @property
-    def closed(self) -> bool:
-        return self._closed
-
-    def close(self) -> None:
-        self._closed = True
-        self._replay_buffers.clear()
-
-    async def send_json(self, data: Any) -> None:
-        async with self._lock:
-            await self._send_locked(data)
-
-    async def publish_json(self, data: Any) -> None:
-        async with self._lock:
-            if isinstance(data, dict):
-                run_id = data.get("run_id")
-                if isinstance(run_id, str) and run_id in self._replay_buffers:
-                    self._replay_buffers[run_id].append(data)
-                    return
-            await self._send_locked(data)
-
-    async def begin_replay(self, run_id: str) -> None:
-        async with self._lock:
-            self._replay_buffers.setdefault(run_id, [])
-
-    async def send_replay_event(self, event: dict[str, Any]) -> None:
-        async with self._lock:
-            await self._send_locked(event)
-
-    async def abort_replay(self, run_id: str) -> None:
-        async with self._lock:
-            self._replay_buffers.pop(run_id, None)
-
-    async def finish_replay(
-        self,
-        run_id: str,
-        watermark: int,
-        completion: dict[str, Any],
-    ) -> None:
-        async with self._lock:
-            buffered = self._replay_buffers.pop(run_id, [])
-            for event in sorted(buffered, key=lambda item: int(item.get("seq", 0))):
-                if int(event.get("seq", 0)) > watermark:
-                    await self._send_locked(event)
-            await self._send_locked(completion)
-
-    async def _send_locked(self, data: Any) -> None:
-        if not self._closed:
-            await self._websocket.send_json(data)
+from automata_api.transport.websocket.sender import (
+    SerializedWebSocketSender,
+)
 
 
 class AgentConnection:
