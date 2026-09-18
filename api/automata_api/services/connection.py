@@ -17,10 +17,7 @@ from automata_api.agent.execution.model import RunOutcome
 from automata_api.agent.status import agent_ready_message
 from automata_api.config import get_api_config
 from automata_api.repositories import runs as run_repository
-from automata_api.repositories.sessions import (
-    save_context_message,
-    session_exists,
-)
+from automata_api.repositories.sessions import save_context_message
 from automata_api.runs.replay import ReplayService
 from automata_api.security import authenticate_websocket
 from automata_api.services.chat import (
@@ -30,6 +27,7 @@ from automata_api.services.chat import (
     stream_approved_plan_reply,
     stream_plan_reply,
 )
+from automata_api.sessions.ports import SessionStore
 
 
 class SerializedWebSocketSender:
@@ -106,11 +104,13 @@ class AgentConnection:
         *,
         coordinator: RunCoordinator,
         event_hub: RunEventHub,
+        session_store: SessionStore,
         replay: ReplayService | None = None,
     ) -> None:
         self.websocket = websocket
         self.coordinator = coordinator
         self.event_hub = event_hub
+        self.session_store = session_store
         self.replay = replay or ReplayService()
         self.sender = SerializedWebSocketSender(websocket)
         self.connection_id = uuid.uuid4().hex
@@ -173,7 +173,9 @@ class AgentConnection:
                 {"type": "error", "message": "Missing session_id"}
             )
             return
-        if not await run_repository_call(session_exists, session_id):
+        if not await run_repository_call(
+            self.session_store.session_exists, session_id
+        ):
             await self.sender.send_json(
                 {"type": "error", "message": "Session not found"}
             )

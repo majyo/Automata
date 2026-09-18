@@ -13,4 +13,6 @@ async def chat(websocket: WebSocket) -> None:
         websocket,
         coordinator=container.coordinator,
         event_hub=container.event_hub,
+        session_store=container.session_store,
+        replay=container.replay,
     ).serve()

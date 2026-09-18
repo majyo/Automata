@@ -20,7 +20,11 @@
     "bootstrap -> config",
     "bootstrap -> db",
     "bootstrap -> observability",
+    "bootstrap -> repositories",
+    "bootstrap -> runs",
     "bootstrap -> security",
+    "bootstrap -> sessions",
+    "bootstrap -> storage",
     "db -> config",
     "execution -> config",
     "main -> bootstrap",
@@ -46,7 +50,10 @@
     "services -> runs",
     "services -> schemas",
     "services -> security",
+    "services -> sessions",
     "sessions -> execution",
+    "storage -> execution",
+    "storage -> repositories",
     "transport -> bootstrap"
   ]
 }

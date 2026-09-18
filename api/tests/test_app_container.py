@@ -69,6 +69,64 @@ def test_container_receives_the_settings_snapshot(settings):
     )
 
 
+def test_container_shares_one_run_store_across_collaborators(settings):
+    """The coordinator, the event sink and replay must agree on the store.
+
+    A second store instance would mean two places deciding how run state is
+    persisted, so the container builds exactly one.
+    """
+    container = create_container(settings)
+
+    assert container.coordinator._store is container.run_store
+    assert container.replay._store is container.run_store
+    assert container.replay is container.replay
+
+
+def test_container_exposes_a_session_store_by_default(settings):
+    container = create_container(settings)
+
+    from automata_api.storage.sqlite.stores import SqliteSessionStore
+
+    assert isinstance(container.session_store, SqliteSessionStore)
+
+
+def test_connection_uses_the_injected_session_store(settings, monkeypatch):
+    """Session validation must go through the injected store, not a global."""
+    from automata_api.services.connection import AgentConnection
+
+    container = create_container(settings)
+    calls: list[str] = []
+
+    class FakeSessionStore:
+        def session_exists(self, session_id: str) -> bool:
+            calls.append(session_id)
+            return False
+
+    connection = AgentConnection(
+        websocket=None,  # type: ignore[arg-type]
+        coordinator=container.coordinator,
+        event_hub=container.event_hub,
+        session_store=FakeSessionStore(),
+        replay=container.replay,
+    )
+
+    sent: list[dict[str, object]] = []
+
+    class FakeSender:
+        async def send_json(self, data):
+            sent.append(data)
+
+    connection.sender = FakeSender()  # type: ignore[assignment]
+    import asyncio
+
+    asyncio.run(
+        connection._handle_payload({"type": "prompt", "session_id": "missing"})
+    )
+
+    assert calls == ["missing"]
+    assert sent == [{"type": "error", "message": "Session not found"}]
+
+
 def test_partial_startup_failure_still_releases_observability(
     settings, monkeypatch
 ):

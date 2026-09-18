@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+from automata_api.execution.permissions import PermissionPreset
+
 
 class SessionStore(Protocol):
     """Session metadata, permission presets and backend selection."""
@@ -21,7 +23,7 @@ class SessionStore(Protocol):
         title: str | None,
         working_directory: str | None,
         backend: str | None,
-        permission_preset: str | None,
+        permission_preset: PermissionPreset,
     ) -> dict[str, Any]: ...
 
     def update_session(
@@ -29,7 +31,7 @@ class SessionStore(Protocol):
         session_id: str,
         *,
         title: str | None = None,
-        permission_preset: str | None = None,
+        permission_preset: PermissionPreset | None = None,
     ) -> dict[str, Any]: ...
 
     def delete_session(self, session_id: str) -> None: ...
@@ -59,8 +61,8 @@ class ConversationStore(Protocol):
 
     def save_tool_run_message(
         self,
-        session_id: str,
         *,
+        session_id: str,
         tool_call_id: str,
         tool: str,
         arguments: str,
@@ -68,8 +70,8 @@ class ConversationStore(Protocol):
 
     def update_tool_run_result(
         self,
-        session_id: str,
         *,
+        session_id: str,
         message_id: str,
         success: bool,
         content: str,
@@ -122,24 +124,4 @@ class ContextStore(Protocol):
 
     def upsert_context_summary(
         self, session_id: str, content: str, through_sequence: int
-    ) -> dict[str, Any]: ...
-
-
-class PlanStore(Protocol):
-    """Plan records owned by the runs module but stored with the session."""
-
-    def create_plan(
-        self,
-        session_id: str,
-        content: str,
-        *,
-        status: str = "pending",
-    ) -> dict[str, Any]: ...
-
-    def fetch_plan(self, session_id: str, plan_id: str) -> dict[str, Any]: ...
-
-    def approve_plan(self, session_id: str, plan_id: str) -> dict[str, Any]: ...
-
-    def mark_plan_executed(
-        self, session_id: str, plan_id: str
     ) -> dict[str, Any]: ...
