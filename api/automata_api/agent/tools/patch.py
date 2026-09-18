@@ -1,9 +1,20 @@
 from typing import Any
 
 from automata_api.agent.backends.base import Backend, BackendError
+from automata_api.agent.tools.args import (
+    bool_argument,
+    json_response,
+)
+from automata_api.agent.tools.models import ToolResult
+from automata_api.agent.tools.results import patch_error_result
+from automata_api.workspace.patches.parsing import (
+    PatchFile,
+    apply_hunks_to_content,
+    parse_unified_patch,
+    patch_file_status,
+    patch_summary,
+)
 
-from . import _core as core
-from ._core import ToolResult
 from .base import AgentTool
 from .patch_codex import (
     CodexPatchFile,
@@ -113,11 +124,11 @@ async def run_apply_patch(
         raise RuntimeError("Tool instance is not bound to a backend.")
 
     patch = arguments.get("patch")
-    dry_run = core.bool_argument(arguments, "dry_run", True)
-    create_dirs = core.bool_argument(arguments, "create_dirs", True)
+    dry_run = bool_argument(arguments, "dry_run", True)
+    create_dirs = bool_argument(arguments, "create_dirs", True)
 
     if not isinstance(patch, str) or not patch.strip():
-        return core.patch_error_result(
+        return patch_error_result(
             tool_name=tool_name,
             arguments=arguments,
             dry_run=dry_run,
@@ -155,7 +166,7 @@ async def run_codex_apply_patch(
 ) -> ToolResult:
     parsed_patch, parse_error = parse_codex_patch(patch)
     if parse_error:
-        return core.patch_error_result(
+        return patch_error_result(
             tool_name=tool_name,
             arguments=arguments,
             dry_run=dry_run,
@@ -169,7 +180,7 @@ async def run_codex_apply_patch(
     for file_patch in parsed_patch.files:
         plan, error = await plan_codex_patch_file(file_patch, backend)
         if error:
-            return core.patch_error_result(
+            return patch_error_result(
                 tool_name=tool_name,
                 arguments=arguments,
                 dry_run=dry_run,
@@ -195,7 +206,7 @@ async def run_codex_apply_patch(
         backend, planned_changes, create_dirs=create_dirs
     )
     if parent_error and not dry_run:
-        return core.patch_error_result(
+        return patch_error_result(
             tool_name=tool_name,
             arguments=arguments,
             dry_run=dry_run,
@@ -208,7 +219,7 @@ async def run_codex_apply_patch(
     if not dry_run:
         apply_error = await apply_planned_changes(backend, planned_changes)
         if apply_error:
-            return core.patch_error_result(
+            return patch_error_result(
                 tool_name=tool_name,
                 arguments=arguments,
                 dry_run=dry_run,
@@ -225,12 +236,12 @@ async def run_codex_apply_patch(
         "syntax": "codex_patch",
         "dry_run": dry_run,
         "files": file_results,
-        "summary": core.patch_summary(file_results),
+        "summary": patch_summary(file_results),
     }
     return ToolResult(
         name=tool_name,
         arguments=arguments,
-        content=core.json_response(payload),
+        content=json_response(payload),
         success=True,
     )
 
@@ -244,9 +255,9 @@ async def run_unified_apply_patch(
     dry_run: bool,
     create_dirs: bool,
 ) -> ToolResult:
-    parsed_files, parse_error = core.parse_unified_patch(patch)
+    parsed_files, parse_error = parse_unified_patch(patch)
     if parse_error:
-        return core.patch_error_result(
+        return patch_error_result(
             tool_name=tool_name,
             arguments=arguments,
             dry_run=dry_run,
@@ -259,7 +270,7 @@ async def run_unified_apply_patch(
     for file_patch in parsed_files:
         plan, error = await plan_patch_file(file_patch, backend)
         if error:
-            return core.patch_error_result(
+            return patch_error_result(
                 tool_name=tool_name,
                 arguments=arguments,
                 dry_run=dry_run,
@@ -285,7 +296,7 @@ async def run_unified_apply_patch(
         backend, planned_changes, create_dirs=create_dirs
     )
     if parent_error and not dry_run:
-        return core.patch_error_result(
+        return patch_error_result(
             tool_name=tool_name,
             arguments=arguments,
             dry_run=dry_run,
@@ -298,7 +309,7 @@ async def run_unified_apply_patch(
     if not dry_run:
         apply_error = await apply_planned_changes(backend, planned_changes)
         if apply_error:
-            return core.patch_error_result(
+            return patch_error_result(
                 tool_name=tool_name,
                 arguments=arguments,
                 dry_run=dry_run,
@@ -315,12 +326,12 @@ async def run_unified_apply_patch(
         "syntax": "unified_diff",
         "dry_run": dry_run,
         "files": file_results,
-        "summary": core.patch_summary(file_results),
+        "summary": patch_summary(file_results),
     }
     return ToolResult(
         name=tool_name,
         arguments=arguments,
-        content=core.json_response(payload),
+        content=json_response(payload),
         success=True,
     )
 
@@ -435,9 +446,9 @@ async def plan_codex_patch_file(
 
 
 async def plan_patch_file(
-    file_patch: core.PatchFile, backend: Backend
+    file_patch: PatchFile, backend: Backend
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    status = core.patch_file_status(file_patch)
+    status = patch_file_status(file_patch)
     if status is None:
         return None, {
             "path": file_patch.new_path or file_patch.old_path or "",
@@ -492,7 +503,7 @@ async def plan_patch_file(
                 "error_code": error.error_code,
             }
 
-    new_content, apply_error = core.apply_hunks_to_content(
+    new_content, apply_error = apply_hunks_to_content(
         original_content, file_patch.hunks, relative_path
     )
     if apply_error:
