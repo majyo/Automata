@@ -26,6 +26,10 @@ from automata_api.agent.execution.process import (
     current_process_scope,
     process_supervisor,
 )
+from automata_api.agent.execution.process_sessions import (
+    ProcessSessionError,
+    process_session_manager,
+)
 from automata_api.agent.execution.processes import (
     bash_search_command,
     display_command,
@@ -40,11 +44,32 @@ from automata_api.agent.execution.sandbox.model import SandboxMetadata
 from automata_api.agent.execution.sandbox.protocol import (
     classify_sandbox_failure,
 )
-from automata_api.agent.tools import _core as core
+from automata_api.agent.tools._core import (
+    resolve_exec_shell,
+    shell_argument,
+)
+from automata_api.agent.tools.args import (
+    json_response,
+    max_output_chars_argument,
+    string_argument,
+    timeout_argument,
+    yield_time_ms_argument,
+)
 from automata_api.agent.tools.constants import (
     OUTPUT_LIMIT,
     PROCESS_OUTPUT_CHUNK_BYTES,
+    SUPPORTED_EXEC_SHELLS,
 )
+from automata_api.agent.tools.models import ToolResult
+from automata_api.agent.tools.results import (
+    build_exec_output,
+    exec_command_error_result,
+)
+from automata_api.agent.tools.sessions import (
+    emit_process_session_output,
+    process_session_tool_result,
+)
+from automata_api.agent.tools.text import truncate_content
 from automata_api.execution.runtime_paths import (
     managed_runtime_roots,
 )
@@ -380,8 +405,191 @@ class LocalBackend(Backend):
             shell=powershell_path,
         )
 
-    async def run_exec_command(self, arguments: dict[str, Any]):
-        return await core.run_exec_command(arguments, self.workspace_label)
+    async def run_exec_command(
+        self, arguments: dict[str, Any]
+    ) -> ToolResult:
+        """Execute a command in the workspace through the sandbox.
+
+        This is the implementation behind the ``exec_command`` tool; the
+        tool wrapper delegates here.
+        """
+        cmd = string_argument(arguments, "cmd", "")
+        shell_name = shell_argument(arguments)
+        timeout_seconds = timeout_argument(arguments)
+        max_output_chars = max_output_chars_argument(arguments)
+        yield_time_ms = yield_time_ms_argument(arguments)
+        requested_workdir = string_argument(arguments, "workdir", ".")
+        workspace_path = Path(self.workspace_label).expanduser().resolve()
+        cwd_result = workspace_paths.resolve_tool_cwd(
+            workspace_path, arguments.get("workdir")
+        )
+
+        if not cmd:
+            return exec_command_error_result(
+                arguments=arguments,
+                cmd=cmd,
+                shell=shell_name,
+                workdir=requested_workdir,
+                cwd=str(workspace_path),
+                timeout_seconds=timeout_seconds,
+                error="Missing required cmd.",
+            )
+
+        if isinstance(cwd_result, str):
+            return exec_command_error_result(
+                arguments=arguments,
+                cmd=cmd,
+                shell=shell_name,
+                workdir=requested_workdir,
+                cwd=str(workspace_path),
+                timeout_seconds=timeout_seconds,
+                error=cwd_result,
+            )
+
+        shell_resolution = resolve_exec_shell(shell_name)
+        if shell_resolution.error:
+            return exec_command_error_result(
+                arguments=arguments,
+                cmd=cmd,
+                shell=shell_name,
+                workdir=requested_workdir,
+                cwd=str(cwd_result),
+                timeout_seconds=timeout_seconds,
+                error=shell_resolution.error,
+                supported_shells=SUPPORTED_EXEC_SHELLS
+                if shell_name not in SUPPORTED_EXEC_SHELLS
+                else None,
+            )
+
+        started_at = time.monotonic()
+        try:
+            process = await process_launcher.spawn(
+                *shell_resolution.argv(cmd),
+                cwd=str(cwd_result),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                stdin=asyncio.subprocess.PIPE if yield_time_ms is not None else None,
+                scope_name="exec-command",
+            )
+        except SandboxError as error:
+            duration_seconds = round(time.monotonic() - started_at, 3)
+            return exec_command_error_result(
+                arguments=arguments,
+                cmd=cmd,
+                shell=shell_name,
+                workdir=requested_workdir,
+                cwd=str(cwd_result),
+                timeout_seconds=timeout_seconds,
+                error=error.public_message,
+                shell_path=shell_resolution.path,
+                duration_seconds=duration_seconds,
+                error_code=error.code,
+            )
+        except OSError as error:
+            duration_seconds = round(time.monotonic() - started_at, 3)
+            return exec_command_error_result(
+                arguments=arguments,
+                cmd=cmd,
+                shell=shell_name,
+                workdir=requested_workdir,
+                cwd=str(cwd_result),
+                timeout_seconds=timeout_seconds,
+                error=f"Failed to start command: {error}",
+                shell_path=shell_resolution.path,
+                duration_seconds=duration_seconds,
+            )
+
+        if yield_time_ms is not None:
+            try:
+                process_session_id = await process_session_manager.start(
+                    process,
+                    timeout_seconds=timeout_seconds,
+                    pending_limit=max_output_chars,
+                )
+                session_output = await process_session_manager.interact(
+                    process_session_id,
+                    chars="",
+                    yield_time_ms=yield_time_ms,
+                )
+            except ProcessSessionError as error:
+                return exec_command_error_result(
+                    arguments=arguments,
+                    cmd=cmd,
+                    shell=shell_name,
+                    workdir=requested_workdir,
+                    cwd=str(cwd_result),
+                    timeout_seconds=timeout_seconds,
+                    error=str(error),
+                    shell_path=shell_resolution.path,
+                    duration_seconds=round(time.monotonic() - started_at, 3),
+                    error_code=error.code,
+                )
+            await emit_process_session_output(session_output)
+            duration_seconds = round(time.monotonic() - started_at, 3)
+            return process_session_tool_result(
+                name="exec_command",
+                arguments=arguments,
+                snapshot=session_output,
+                max_output_chars=max_output_chars,
+                extra={
+                    "cmd": cmd,
+                    "shell": shell_name,
+                    "workdir": requested_workdir,
+                    "cwd": str(cwd_result),
+                    "shell_path": shell_resolution.path,
+                    "timeout_seconds": timeout_seconds,
+                    "duration_seconds": duration_seconds,
+                },
+                include_session_id=session_output.running,
+            )
+
+        output = await capture_process_output(
+            process,
+            timeout_seconds,
+            stdout_limit=max_output_chars,
+            stderr_limit=max_output_chars,
+        )
+        duration_seconds = round(time.monotonic() - started_at, 3)
+        combined_output, combined_output_truncated = truncate_content(
+            build_exec_output(output.stdout.text, output.stderr.text), max_output_chars
+        )
+        output_truncated = (
+            combined_output_truncated or output.stdout.truncated or output.stderr.truncated
+        )
+        payload = {
+            "simulated": False,
+            "ok": output.exit_code == 0 and not output.timed_out,
+            "tool": "exec_command",
+            "cmd": cmd,
+            "shell": shell_name,
+            "workdir": requested_workdir,
+            "cwd": str(cwd_result),
+            "shell_path": shell_resolution.path,
+            "timeout_seconds": timeout_seconds,
+            "duration_seconds": duration_seconds,
+            "exit_code": output.exit_code,
+            "timed_out": output.timed_out,
+            "stdout": output.stdout.text,
+            "stderr": output.stderr.text,
+            "output": combined_output,
+            "stdout_truncated": output.stdout.truncated,
+            "stderr_truncated": output.stderr.truncated,
+            "output_truncated": output_truncated,
+            "error_code": (
+                output.sandbox_failure.code
+                if output.sandbox_failure is not None
+                else None
+            ),
+            "sandbox": output.sandbox.to_dict() if output.sandbox is not None else None,
+        }
+        return ToolResult(
+            name="exec_command",
+            arguments=arguments,
+            content=json_response(payload),
+            success=payload["ok"],
+            error_code=payload["error_code"],
+            sandbox=payload["sandbox"],
+        )
 
     async def search(
         self,
