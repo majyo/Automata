@@ -458,7 +458,7 @@ def test_run_bash_times_out(tmp_path):
 
 def test_run_bash_reports_missing_bash(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "automata_api.agent.tools._core.resolve_bash_executable", lambda: None
+        "automata_api.agent.backends.local.resolve_bash_executable", lambda: None
     )
 
     result = asyncio.run(
@@ -680,7 +680,7 @@ def test_rg_files_mode_falls_back_to_git(tmp_path, monkeypatch):
     (tmp_path / "ignored.txt").write_text("", encoding="utf-8")
     original_resolve = tools.resolve_executable
     monkeypatch.setattr(
-        "automata_api.agent.tools._core.resolve_executable",
+        "automata_api.workspace.paths.resolve_executable",
         lambda name: None if name == "rg" else original_resolve(name),
     )
 
@@ -699,7 +699,7 @@ def test_rg_files_mode_falls_back_to_git(tmp_path, monkeypatch):
 def test_rg_files_mode_falls_back_to_filesystem(tmp_path, monkeypatch):
     (tmp_path / "visible.txt").write_text("", encoding="utf-8")
     monkeypatch.setattr(
-        "automata_api.agent.tools._core.resolve_executable",
+        "automata_api.workspace.paths.resolve_executable",
         lambda _name: None,
     )
 
@@ -726,7 +726,7 @@ def test_rg_files_mode_filesystem_fallback_skips_symlinks(
     except OSError:
         pytest.skip("symbolic links are unavailable")
     monkeypatch.setattr(
-        "automata_api.agent.tools._core.resolve_executable",
+        "automata_api.workspace.paths.resolve_executable",
         lambda _name: None,
     )
 
@@ -806,7 +806,7 @@ def test_rg_search_falls_back_to_bash_when_native_tools_missing(tmp_path, monkey
 
     source = tmp_path / "sample.txt"
     source.write_text("fallback-value\n", encoding="utf-8")
-    monkeypatch.setattr("automata_api.agent.tools._core.resolve_executable", lambda _: None)
+    monkeypatch.setattr("automata_api.workspace.paths.resolve_executable", lambda _: None)
 
     result = asyncio.run(
         tools.run_tool(

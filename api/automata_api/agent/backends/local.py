@@ -18,9 +18,21 @@ from automata_api.agent.backends.base import (
     FileStat,
     SearchResult,
 )
+from automata_api.agent.execution.output import (
+    capture_process_output,
+    read_limited_stream,
+)
 from automata_api.agent.execution.process import (
     current_process_scope,
     process_supervisor,
+)
+from automata_api.agent.execution.processes import (
+    bash_search_command,
+    display_command,
+    resolve_bash_executable,
+    resolve_powershell_executable,
+    run_process,
+    search_exit_code_is_ok,
 )
 from automata_api.agent.execution.sandbox import process_launcher
 from automata_api.agent.execution.sandbox.errors import SandboxError
@@ -29,9 +41,14 @@ from automata_api.agent.execution.sandbox.protocol import (
     classify_sandbox_failure,
 )
 from automata_api.agent.tools import _core as core
+from automata_api.agent.tools.constants import (
+    OUTPUT_LIMIT,
+    PROCESS_OUTPUT_CHUNK_BYTES,
+)
 from automata_api.execution.runtime_paths import (
     managed_runtime_roots,
 )
+from automata_api.workspace import paths as workspace_paths
 
 
 @dataclass(frozen=True)
@@ -199,7 +216,7 @@ class LocalBackend(Backend):
                 is_file=bool(managed_result["is_file"]),
                 is_dir=bool(managed_result["is_dir"]),
                 size_bytes=int(managed_result["size_bytes"]),
-                path=core.path_argument_for_cwd(path_result, self.workspace_path),
+                path=workspace_paths.path_argument_for_cwd(path_result, self.workspace_path),
                 absolute_path=str(path_result),
             )
         exists = path_result.exists()
@@ -208,7 +225,7 @@ class LocalBackend(Backend):
             is_file=path_result.is_file() if exists else False,
             is_dir=path_result.is_dir() if exists else False,
             size_bytes=path_result.stat().st_size if exists else 0,
-            path=core.path_argument_for_cwd(path_result, self.workspace_path),
+            path=workspace_paths.path_argument_for_cwd(path_result, self.workspace_path),
             absolute_path=str(path_result),
         )
 
@@ -327,7 +344,7 @@ class LocalBackend(Backend):
         self, command: str, *, cwd: str | None = None, timeout_seconds: float
     ) -> ExecResult:
         cwd_path = self._resolve_tool_cwd(cwd)
-        bash_path = core.resolve_bash_executable()
+        bash_path = resolve_bash_executable()
         if bash_path is None:
             raise BackendError(
                 "Could not find bash. Install Git Bash on Windows or bash on PATH.",
@@ -344,7 +361,7 @@ class LocalBackend(Backend):
         self, command: str, *, cwd: str | None = None, timeout_seconds: float
     ) -> ExecResult:
         cwd_path = self._resolve_tool_cwd(cwd)
-        powershell_path = core.resolve_powershell_executable()
+        powershell_path = resolve_powershell_executable()
         if powershell_path is None:
             raise BackendError(
                 "Could not find PowerShell. Install PowerShell or ensure it is on PATH.",
@@ -391,7 +408,7 @@ class LocalBackend(Backend):
                     attempts=attempts,
                 )
 
-            executable = core.resolve_executable(engine)
+            executable = workspace_paths.resolve_executable(engine)
             if executable is None:
                 attempts.append({"engine": engine, "ok": False, "error": "not found"})
                 continue
@@ -434,7 +451,7 @@ class LocalBackend(Backend):
                 cwd=str(cwd_path),
             )
 
-        requested_path = core.path_argument_for_cwd(search_path, cwd_path)
+        requested_path = workspace_paths.path_argument_for_cwd(search_path, cwd_path)
         normalize = self._file_list_normalizer(
             cwd_path=cwd_path,
             search_path=search_path,
@@ -445,7 +462,7 @@ class LocalBackend(Backend):
         )
         attempts: list[dict[str, Any]] = []
 
-        rg_executable = core.resolve_executable("rg")
+        rg_executable = workspace_paths.resolve_executable("rg")
         if rg_executable is None:
             attempts.append({"engine": "rg", "ok": False, "error": "not found"})
         else:
@@ -560,19 +577,19 @@ class LocalBackend(Backend):
         )
 
     def _resolve_file_path(self, raw_path: Any) -> Path:
-        path_result = core.resolve_file_path(self.workspace_path, raw_path)
+        path_result = workspace_paths.resolve_file_path(self.workspace_path, raw_path)
         if isinstance(path_result, str):
             raise BackendError(path_result)
         return path_result
 
     def _resolve_tool_cwd(self, raw_cwd: Any) -> Path:
-        cwd_result = core.resolve_tool_cwd(self.workspace_path, raw_cwd)
+        cwd_result = workspace_paths.resolve_tool_cwd(self.workspace_path, raw_cwd)
         if isinstance(cwd_result, str):
             raise BackendError(cwd_result, cwd=self.workspace_label)
         return cwd_result
 
     def _resolve_search_path(self, cwd_path: Path, raw_path: Any) -> Path:
-        path_result = core.resolve_search_path(
+        path_result = workspace_paths.resolve_search_path(
             workspace_path=self.workspace_path,
             cwd_path=cwd_path,
             raw_path=raw_path,
@@ -611,11 +628,11 @@ class LocalBackend(Backend):
                 shell=shell,
             ) from error
 
-        output = await core.capture_process_output(
+        output = await capture_process_output(
             process,
             timeout_seconds,
-            stdout_limit=core.OUTPUT_LIMIT,
-            stderr_limit=core.OUTPUT_LIMIT,
+            stdout_limit=OUTPUT_LIMIT,
+            stderr_limit=OUTPUT_LIMIT,
         )
         return ExecResult(
             exit_code=output.exit_code,
@@ -665,12 +682,12 @@ class LocalBackend(Backend):
                 stderr=f"Failed to start process: {error}",
             )
 
-        managed = await core.process_supervisor.register(process)
+        managed = await process_supervisor.register(process)
         wait_task = asyncio.create_task(process.wait())
         stderr_task = asyncio.create_task(
-            core.read_limited_stream(
+            read_limited_stream(
                 process.stderr,
-                core.OUTPUT_LIMIT,
+                OUTPUT_LIMIT,
                 stream_name=None,
             )
         )
@@ -690,7 +707,7 @@ class LocalBackend(Backend):
                     if process.stdout is None:
                         break
                     chunk = await process.stdout.read(
-                        core.PROCESS_OUTPUT_CHUNK_BYTES
+                        PROCESS_OUTPUT_CHUNK_BYTES
                     )
                     if not chunk:
                         break
@@ -712,15 +729,15 @@ class LocalBackend(Backend):
                         pending.decode("utf-8", errors="replace")
                     )
                 if terminated_for_limit:
-                    await core.process_supervisor.terminate(managed)
+                    await process_supervisor.terminate(managed)
                 exit_code = await asyncio.shield(wait_task)
         except TimeoutError:
             timed_out = True
-            await core.process_supervisor.terminate(managed)
+            await process_supervisor.terminate(managed)
             await asyncio.shield(wait_task)
             exit_code = None
         except asyncio.CancelledError:
-            await core.process_supervisor.terminate(managed)
+            await process_supervisor.terminate(managed)
             await asyncio.gather(
                 wait_task,
                 stderr_task,
@@ -728,7 +745,7 @@ class LocalBackend(Backend):
             )
             raise
         except BaseException:
-            await core.process_supervisor.terminate(managed)
+            await process_supervisor.terminate(managed)
             await asyncio.gather(
                 wait_task,
                 stderr_task,
@@ -737,7 +754,7 @@ class LocalBackend(Backend):
             raise
         finally:
             stderr = await stderr_task
-            await core.process_supervisor.unregister(managed)
+            await process_supervisor.unregister(managed)
 
         truncation_reason = accumulator.truncation_reason
         truncated = accumulator.truncated
@@ -764,7 +781,7 @@ class LocalBackend(Backend):
         timeout_seconds: float,
         attempts: list[dict[str, Any]],
     ) -> PathProcessResult | None:
-        git_executable = core.resolve_executable("git")
+        git_executable = workspace_paths.resolve_executable("git")
         if git_executable is None:
             attempts.append(
                 {"engine": "git", "ok": False, "error": "not found"}
@@ -796,7 +813,7 @@ class LocalBackend(Backend):
                 }
             )
             return None
-        relative_path = core.path_argument_for_cwd(
+        relative_path = workspace_paths.path_argument_for_cwd(
             search_path,
             repository_root,
         )
@@ -865,7 +882,7 @@ class LocalBackend(Backend):
             )
         except OSError:
             return None
-        output = await core.capture_process_output(
+        output = await capture_process_output(
             process,
             timeout_seconds,
             stdout_limit=4_096,
@@ -996,7 +1013,7 @@ class LocalBackend(Backend):
             if max_depth is not None and depth > max_depth:
                 return None
 
-            normalized = core.path_argument_for_cwd(resolved, cwd_path)
+            normalized = workspace_paths.path_argument_for_cwd(resolved, cwd_path)
             if include_globs and not any(
                 file_list_glob_matches(normalized, pattern)
                 for pattern in include_globs
@@ -1047,7 +1064,7 @@ class LocalBackend(Backend):
         timeout_seconds: float,
         attempts: list[dict[str, Any]],
     ) -> SearchResult:
-        relative_path = core.path_argument_for_cwd(search_path, cwd_path)
+        relative_path = workspace_paths.path_argument_for_cwd(search_path, cwd_path)
         if engine == "rg":
             command = [
                 executable,
@@ -1061,24 +1078,24 @@ class LocalBackend(Backend):
         else:
             command = [executable, "-R", "-n", "--", pattern, relative_path]
 
-        process_result = await core.run_process(command, cwd_path, timeout_seconds)
+        process_result = await run_process(command, cwd_path, timeout_seconds)
         attempts.append(
             {
                 "engine": engine,
-                "ok": core.search_exit_code_is_ok(process_result["exit_code"]),
+                "ok": search_exit_code_is_ok(process_result["exit_code"]),
                 "exit_code": process_result["exit_code"],
                 "timed_out": process_result["timed_out"],
             }
         )
         exit_code = process_result["exit_code"]
         return SearchResult(
-            ok=core.search_exit_code_is_ok(exit_code),
+            ok=search_exit_code_is_ok(exit_code),
             matched=exit_code == 0,
             engine=engine,
             pattern=pattern,
             path=relative_path,
             cwd=str(cwd_path),
-            command=core.display_command(command),
+            command=display_command(command),
             timeout_seconds=timeout_seconds,
             exit_code=exit_code,
             timed_out=process_result["timed_out"],
@@ -1099,23 +1116,23 @@ class LocalBackend(Backend):
         preferred_engine: str,
         attempts: list[dict[str, Any]],
     ) -> SearchResult:
-        relative_path = core.path_argument_for_cwd(search_path, cwd_path)
-        command = core.bash_search_command(preferred_engine, pattern, relative_path)
+        relative_path = workspace_paths.path_argument_for_cwd(search_path, cwd_path)
+        command = bash_search_command(preferred_engine, pattern, relative_path)
         result = await self.exec_shell(
             command,
-            cwd=core.path_argument_for_cwd(cwd_path, self.workspace_path),
+            cwd=workspace_paths.path_argument_for_cwd(cwd_path, self.workspace_path),
             timeout_seconds=timeout_seconds,
         )
         attempts.append(
             {
                 "engine": "bash",
-                "ok": core.search_exit_code_is_ok(result.exit_code),
+                "ok": search_exit_code_is_ok(result.exit_code),
                 "exit_code": result.exit_code,
                 "timed_out": result.timed_out,
             }
         )
         return SearchResult(
-            ok=core.search_exit_code_is_ok(result.exit_code),
+            ok=search_exit_code_is_ok(result.exit_code),
             matched=result.exit_code == 0,
             engine="bash",
             pattern=pattern,
