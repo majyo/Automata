@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { CheckCircle2, ChevronDown, ChevronRight, Play, RotateCcw } from "lucide-react";
 import { MarkdownContent } from "./MarkdownContent";
-import type { ChatMessage } from "../../types/chat";
-import { formatPlanStatus } from "../../utils/format";
+import type { ChatMessage } from "../../../types/chat";
+import { formatPlanStatus } from "../../../utils/format";
 
 type PlanBubbleProps = {
   message: ChatMessage;

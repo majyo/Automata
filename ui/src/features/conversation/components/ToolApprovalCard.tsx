@@ -1,5 +1,5 @@
 import { ShieldAlert } from "lucide-react";
-import type { ApprovalDecision, ToolApprovalRequest } from "../../types/chat";
+import type { ApprovalDecision, ToolApprovalRequest } from "../../../types/chat";
 
 type ToolApprovalCardProps = {
   approval: ToolApprovalRequest;

@@ -1,17 +1,17 @@
 import type { FormEvent, RefObject } from "react";
 import { ArrowUpRight } from "lucide-react";
 import { MessageList } from "./MessageList";
-import { PromptComposer } from "../composer/PromptComposer";
-import { WorkspacePicker } from "../sessions/WorkspacePicker";
+import { PromptComposer } from "../../../components/composer/PromptComposer";
+import { WorkspacePicker } from "./WorkspacePicker";
 import { ToolApprovalCard } from "./ToolApprovalCard";
 import type {
   ApprovalDecision,
   ChatMessage,
   SendMode,
   ToolApprovalRequest,
-} from "../../types/chat";
-import type { PermissionPreset } from "../../types/session";
-import type { SkillRecord, SkillRuntimeNotice } from "../../types/skills";
+} from "../../../types/chat";
+import type { PermissionPreset } from "../../../types/session";
+import type { SkillRecord, SkillRuntimeNotice } from "../../../types/skills";
 
 type ConversationPanelProps = {
   isNewSessionDraft: boolean;

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Activity, CheckCircle2, ChevronDown, ChevronRight, Terminal, X } from "lucide-react";
-import type { ChatMessage, ToolRunMetadata, ToolRunStatus } from "../../types/chat";
-import { formatToolRunStatus } from "../../utils/format";
+import type { ChatMessage, ToolRunMetadata, ToolRunStatus } from "../../../types/chat";
+import { formatToolRunStatus } from "../../../utils/format";
 
 type ToolCardProps = {
   metadata: ToolRunMetadata | null;

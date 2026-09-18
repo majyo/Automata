@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Moon, Search, Sun } from "lucide-react";
-import { ConversationPanel } from "../conversation/ConversationPanel";
+import { ConversationPanel } from "../../features/conversation/components/ConversationPanel";
 import { Sidebar } from "./Sidebar";
 import { InspectorSheet } from "./InspectorSheet";
 import { Topbar } from "./Topbar";

@@ -1,6 +1,6 @@
 import { ArrowUpRight, FolderOpen, Plus, Search, X } from "lucide-react";
 import { useState } from "react";
-import { SessionList } from "../sessions/SessionList";
+import { SessionList } from "./SessionList";
 import type { PersistedRunStatus } from "../../types/chat";
 import type { SessionSummary } from "../../types/session";
 

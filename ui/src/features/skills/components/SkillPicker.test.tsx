@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { SkillPicker } from "./SkillPicker";
-import type { SkillRecord } from "../../types/skills";
+import type { SkillRecord } from "../../../types/skills";
 
 function skill(skillId: string, relativeDir: string): SkillRecord {
   return {

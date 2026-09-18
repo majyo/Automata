@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { Check, Copy, UserRound } from "lucide-react";
-import { AutomataMark } from "../app-shell/AutomataMark";
+import { AutomataMark } from "../../../components/app-shell/AutomataMark";
 import { MarkdownContent } from "./MarkdownContent";
 import { PlanBubble } from "./PlanBubble";
 import { ToolCard } from "./ToolCard";
-import type { ChatMessage } from "../../types/chat";
+import type { ChatMessage } from "../../../types/chat";
 
 type MessageBubbleProps = {
   message: ChatMessage;

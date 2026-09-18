@@ -1,6 +1,6 @@
 import { Check, ChevronDown, RefreshCw, Wrench } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { SkillRecord, SkillRuntimeNotice } from "../../types/skills";
+import type { SkillRecord, SkillRuntimeNotice } from "../../../types/skills";
 
 type SkillPickerProps = {
   skills: SkillRecord[];

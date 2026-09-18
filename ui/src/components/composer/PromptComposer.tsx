@@ -2,7 +2,7 @@ import { ArrowUp, Square } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { PermissionPresetToggle } from "./PermissionPresetToggle";
 import { SendModeToggle } from "./SendModeToggle";
-import { SkillPicker } from "./SkillPicker";
+import { SkillPicker } from "../../features/skills/components/SkillPicker";
 import type { SendMode } from "../../types/chat";
 import type { PermissionPreset } from "../../types/session";
 import type { SkillRecord, SkillRuntimeNotice } from "../../types/skills";

@@ -1,8 +1,8 @@
 import type { RefObject } from "react";
-import { AutomataMark } from "../app-shell/AutomataMark";
+import { AutomataMark } from "../../../components/app-shell/AutomataMark";
 import { MessageBubble } from "./MessageBubble";
 import { ToolRunGroup } from "./ToolCard";
-import type { ChatMessage } from "../../types/chat";
+import type { ChatMessage } from "../../../types/chat";
 
 type MessageListProps = {
   messages: ChatMessage[];
