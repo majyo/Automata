@@ -1,9 +1,8 @@
 import asyncio
-import json
 from collections.abc import AsyncIterator
 from typing import Any
 
-from automata_api.agent import llm
+from automata_api.agent import llm, turn
 from automata_api.agent.adapters.chat_completions import (
     assistant_message_for_provider,
     default_model_provider,
@@ -48,12 +47,8 @@ MAX_TOOL_OUTPUT_EVENT_CHARS = 8_192
 MAX_TOOL_OUTPUT_CHARS_PER_CALL = 262_144
 
 
-class EventCollector:
-    def __init__(self) -> None:
-        self.events: list[dict[str, Any]] = []
-
-    async def emit(self, event: dict[str, Any]) -> None:
-        self.events.append(event)
+class EventCollector(turn.EventCollector):
+    """Compatibility alias for the collector now owned by ``agent.turn``."""
 
 
 async def stream_agent_loop(
@@ -577,32 +572,18 @@ def insert_skill_messages(
     *,
     index: int,
 ) -> None:
-    if skill_context is None or not skill_context.injected_messages:
-        return
-
-    bounded_index = max(1, min(index, len(messages)))
-    messages[bounded_index:bounded_index] = [
-        dict(message) for message in skill_context.injected_messages
-    ]
+    """Delegates to :mod:`automata_api.agent.turn`; kept for callers."""
+    turn.insert_skill_messages(messages, skill_context, index=index)
 
 
 def tool_specs_for_names(
     tools: list[dict[str, Any]], allowed_names: set[str]
 ) -> list[dict[str, Any]]:
-    return [
-        tool
-        for tool in tools
-        if tool_name(tool) is not None and tool_name(tool) in allowed_names
-    ]
+    return turn.tool_specs_for_names(tools, allowed_names)
 
 
 def tool_name(tool: dict[str, Any]) -> str | None:
-    function = tool.get("function")
-    if not isinstance(function, dict):
-        return None
-
-    name = function.get("name")
-    return name if isinstance(name, str) and name else None
+    return turn.tool_name(tool)
 
 
 def blocked_tool_result(
@@ -611,20 +592,6 @@ def blocked_tool_result(
     mode: str,
     allowed_tool_names: set[str],
 ) -> ToolResult:
-    arguments = raw_arguments if isinstance(raw_arguments, dict) else {}
-    return ToolResult(
-        name=name,
-        arguments=arguments,
-        content=json.dumps(
-            {
-                "simulated": False,
-                "ok": False,
-                "tool": name,
-                "mode": mode,
-                "error": "blocked_by_plan_mode",
-                "allowed_tools": sorted(allowed_tool_names),
-            },
-            ensure_ascii=True,
-        ),
-        success=False,
-    )
+    result = turn.blocked_tool_result(name, raw_arguments, mode, allowed_tool_names)
+    assert isinstance(result, ToolResult)
+    return result
