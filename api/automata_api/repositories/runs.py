@@ -132,6 +132,18 @@ class RunStore(Protocol):
         limit: int = 500,
     ) -> list[dict[str, Any]]: ...
 
+    def list_runs(
+        self,
+        *,
+        session_id: str | None = None,
+        non_terminal_only: bool = False,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]: ...
+
+    def list_plan_attempts(
+        self, session_id: str, plan_id: str
+    ) -> list[dict[str, Any]]: ...
+
 
 class SqliteRunStore:
     """SQLite adapter for :class:`RunStore`.
@@ -174,6 +186,14 @@ class SqliteRunStore:
 
     def list_events(self, run_id: str, **kwargs: Any) -> list[dict[str, Any]]:
         return list_events(run_id, **kwargs)
+
+    def list_runs(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list_runs(**kwargs)
+
+    def list_plan_attempts(
+        self, session_id: str, plan_id: str
+    ) -> list[dict[str, Any]]:
+        return list_plan_attempts(session_id, plan_id)
 
 
 _default_run_store: RunStore = SqliteRunStore()

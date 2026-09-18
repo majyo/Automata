@@ -69,6 +69,8 @@
     "storage -> execution",
     "storage -> repositories",
     "transport -> bootstrap",
-    "transport -> security"
+    "transport -> repositories",
+    "transport -> security",
+    "transport -> sessions"
   ]
 }

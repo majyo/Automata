@@ -22,8 +22,11 @@ from automata_api.agent.execution.process_sessions import ProcessSessionManager
 from automata_api.bootstrap.settings import AppSettings, load_settings
 from automata_api.repositories.runs import RunStore, get_default_run_store
 from automata_api.runs.replay import ReplayService
-from automata_api.sessions.ports import SessionStore
-from automata_api.storage.sqlite.stores import SqliteSessionStore
+from automata_api.sessions.ports import ConversationStore, SessionStore
+from automata_api.storage.sqlite.stores import (
+    SqliteConversationStore,
+    SqliteSessionStore,
+)
 
 
 @dataclass
@@ -44,6 +47,9 @@ class AppContainer:
     )
     run_store: RunStore = field(default_factory=get_default_run_store)
     session_store: SessionStore = field(default_factory=SqliteSessionStore)
+    conversation_store: ConversationStore = field(
+        default_factory=SqliteConversationStore
+    )
     _coordinator: RunCoordinator | None = field(default=None, repr=False)
     _replay: ReplayService | None = field(default=None, repr=False)
 

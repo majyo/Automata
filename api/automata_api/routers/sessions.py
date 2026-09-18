@@ -1,9 +1,8 @@
 import asyncio
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
-from automata_api.repositories import sessions as session_repository
 from automata_api.schemas import (
     CreateSessionRequest,
     MessageRecord,
@@ -17,20 +16,27 @@ from automata_api.sessions.domain import (
     SessionHasActiveRunError,
     SessionNotFoundError,
 )
+from automata_api.sessions.ports import ConversationStore, SessionStore
+from automata_api.transport.dependencies import conversation_store, session_store
 
 router = APIRouter()
 
 
 @router.get("/sessions", response_model=list[SessionSummary])
-async def list_sessions() -> list[dict[str, Any]]:
-    return await run_repository_call(session_repository.list_sessions)
+async def list_sessions(
+    store: SessionStore = Depends(session_store),
+) -> list[dict[str, Any]]:
+    return await store_call(store.list_sessions)
 
 
 @router.post("/sessions", response_model=SessionSummary, status_code=201)
-async def create_session(request: CreateSessionRequest) -> dict[str, Any]:
+async def create_session(
+    request: CreateSessionRequest,
+    store: SessionStore = Depends(session_store),
+) -> dict[str, Any]:
     try:
-        return await run_repository_call(
-            session_repository.create_session,
+        return await store_call(
+            store.create_session,
             request.title,
             request.working_directory,
             request.backend,
@@ -46,11 +52,13 @@ async def create_session(request: CreateSessionRequest) -> dict[str, Any]:
 
 @router.patch("/sessions/{session_id}", response_model=SessionSummary)
 async def update_session(
-    session_id: str, request: UpdateSessionRequest
+    session_id: str,
+    request: UpdateSessionRequest,
+    store: SessionStore = Depends(session_store),
 ) -> dict[str, Any]:
     try:
-        return await run_repository_call(
-            session_repository.update_session,
+        return await store_call(
+            store.update_session,
             session_id,
             title=request.title,
             permission_preset=request.permission_preset,
@@ -62,9 +70,12 @@ async def update_session(
 
 
 @router.delete("/sessions/{session_id}", status_code=204)
-async def delete_session(session_id: str) -> None:
+async def delete_session(
+    session_id: str,
+    store: SessionStore = Depends(session_store),
+) -> None:
     try:
-        await run_repository_call(session_repository.delete_session, session_id)
+        await store_call(store.delete_session, session_id)
     except SessionNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except SessionHasActiveRunError as error:
@@ -79,12 +90,20 @@ async def delete_session(session_id: str) -> None:
 
 
 @router.get("/sessions/{session_id}/messages", response_model=list[MessageRecord])
-async def list_messages(session_id: str) -> list[dict[str, Any]]:
+async def list_messages(
+    session_id: str,
+    store: ConversationStore = Depends(conversation_store),
+) -> list[dict[str, Any]]:
     try:
-        return await run_repository_call(session_repository.list_messages, session_id)
+        return await store_call(store.list_messages, session_id)
     except SessionNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
-async def run_repository_call(function, /, *args, **kwargs):
+async def store_call(function, /, *args, **kwargs):
+    """Run a blocking store call off the event loop.
+
+    Every storage port method owns its transaction; this only moves the
+    synchronous SQLite work to a thread.
+    """
     return await asyncio.to_thread(function, *args, **kwargs)
