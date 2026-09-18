@@ -44,10 +44,6 @@ from automata_api.agent.execution.sandbox.model import SandboxMetadata
 from automata_api.agent.execution.sandbox.protocol import (
     classify_sandbox_failure,
 )
-from automata_api.agent.tools._core import (
-    resolve_exec_shell,
-    shell_argument,
-)
 from automata_api.agent.tools.args import (
     json_response,
     max_output_chars_argument,
@@ -59,6 +55,10 @@ from automata_api.agent.tools.constants import (
     OUTPUT_LIMIT,
     PROCESS_OUTPUT_CHUNK_BYTES,
     SUPPORTED_EXEC_SHELLS,
+)
+from automata_api.agent.tools.exec_shell import (
+    resolve_exec_shell,
+    shell_argument,
 )
 from automata_api.agent.tools.models import ToolResult
 from automata_api.agent.tools.results import (

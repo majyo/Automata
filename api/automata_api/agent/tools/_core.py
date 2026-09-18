@@ -62,6 +62,15 @@ from automata_api.agent.tools.constants import (
     SEARCH_TIMEOUT_SECONDS,
     SUPPORTED_EXEC_SHELLS,
 )
+from automata_api.agent.tools.exec_shell import (
+    ExecShellResolution as ExecShellResolution,
+)
+from automata_api.agent.tools.exec_shell import (
+    resolve_exec_shell as resolve_exec_shell,
+)
+from automata_api.agent.tools.exec_shell import (
+    shell_argument as shell_argument,
+)
 from automata_api.agent.tools.models import ToolResult
 from automata_api.agent.tools.results import (
     bash_error_result as bash_error_result,
@@ -167,32 +176,6 @@ from .patch_codex import (
 # star-imports this module, so an explicit list would silently stop
 # re-exporting every helper that callers and tests reach through the
 # package. M7 narrows the surface deliberately, together with callers.
-
-
-@dataclass(frozen=True)
-class ExecShellResolution:
-    shell: str
-    path: str | None
-    error: str | None = None
-
-    @classmethod
-    def error_result(cls, shell: str, error: str) -> "ExecShellResolution":
-        return cls(shell=shell, path=None, error=error)
-
-    def argv(self, cmd: str) -> list[str]:
-        if self.path is None:
-            return []
-        if self.shell == "bash":
-            return [self.path, "-lc", cmd]
-        if self.shell == "powershell":
-            return [
-                self.path,
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                cmd,
-            ]
-        return []
 
 
 async def run_rg(arguments: dict[str, Any], workspace: str) -> ToolResult:
@@ -1271,44 +1254,8 @@ def resolve_bash_executable() -> str | None:
     return None
 
 
-def shell_argument(arguments: dict[str, Any]) -> str:
-    raw_value = arguments.get("shell", "bash")
-    if not isinstance(raw_value, str) or not raw_value.strip():
-        return "bash"
-
-    return raw_value.strip().lower()
 
 
-def resolve_exec_shell(shell: str) -> ExecShellResolution:
-    if shell == "bash":
-        bash_path = resolve_bash_executable()
-        if bash_path is None:
-            return ExecShellResolution.error_result(
-                shell=shell,
-                error=(
-                    "Could not find bash. Install Git Bash on Windows or bash on PATH."
-                ),
-            )
-        return ExecShellResolution(shell=shell, path=bash_path)
-
-    if shell == "powershell":
-        powershell_path = resolve_powershell_executable()
-        if powershell_path is None:
-            return ExecShellResolution.error_result(
-                shell=shell,
-                error=(
-                    "Could not find PowerShell. Install PowerShell or ensure it is on PATH."
-                ),
-            )
-        return ExecShellResolution(shell=shell, path=powershell_path)
-
-    return ExecShellResolution.error_result(
-        shell=shell,
-        error=(
-            f"Unsupported shell: {shell}. Supported shells: "
-            f"{', '.join(SUPPORTED_EXEC_SHELLS)}."
-        ),
-    )
 
 
 def resolve_powershell_executable() -> str | None:
