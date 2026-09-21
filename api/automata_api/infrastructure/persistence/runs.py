@@ -8,10 +8,12 @@ from typing import Any, Literal
 from automata_api.core.runs.state import (
     TERMINAL_STATUSES,
     EventCursorError,
+    InputConflictError,
     PlanNotRetryableError,
     RunKind,
     RunMode,
     RunNotFoundError,
+    RunNotSteerableError,
     RunStateError,
     RunStatus,
     SessionBusyError,
@@ -42,6 +44,45 @@ class SqliteRunStore:
 
     def create_prompt_run(self, **kwargs: Any) -> tuple[dict[str, Any], dict[str, Any]]:
         return create_prompt_run(**kwargs)
+
+    def enqueue_steering_input(
+        self, **kwargs: Any
+    ) -> tuple[dict[str, Any], bool]:
+        return enqueue_steering_input(**kwargs)
+
+    def enqueue_queued_input(
+        self, **kwargs: Any
+    ) -> tuple[dict[str, Any], bool]:
+        return enqueue_queued_input(**kwargs)
+
+    def get_input(
+        self, *, session_id: str, request_id: str
+    ) -> dict[str, Any] | None:
+        return get_input(session_id=session_id, request_id=request_id)
+
+    def claim_steering_inputs(self, run_id: str) -> list[dict[str, Any]]:
+        return claim_steering_inputs(run_id)
+
+    def mark_input_applied(
+        self, input_id: str, **kwargs: Any
+    ) -> dict[str, Any]:
+        return mark_input_applied(input_id, **kwargs)
+
+    def reject_input(self, input_id: str, **kwargs: Any) -> dict[str, Any]:
+        return reject_input(input_id, **kwargs)
+
+    def cancel_unapplied_inputs_for_run(
+        self, run_id: str, **kwargs: Any
+    ) -> int:
+        return cancel_unapplied_inputs_for_run(run_id, **kwargs)
+
+    def claim_next_queued_input(
+        self, **kwargs: Any
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]] | None:
+        return claim_next_queued_input(**kwargs)
+
+    def pending_queue_session_ids(self) -> list[str]:
+        return pending_queue_session_ids()
 
     def begin_plan_execution(
         self, **kwargs: Any
@@ -142,6 +183,504 @@ def create_prompt_run(
             "created_at": now,
         },
     )
+
+
+def enqueue_steering_input(
+    *,
+    session_id: str,
+    target_run_id: str,
+    prompt: str,
+    request_id: str,
+) -> tuple[dict[str, Any], bool]:
+    """Append a steering input while the target Run is still accepting it."""
+    with db_lock, connect_db() as db:
+        db.execute("BEGIN IMMEDIATE")
+        ensure_session(db, session_id)
+        existing = input_row_by_request_id(db, session_id, request_id)
+        if existing is not None:
+            ensure_same_input(
+                existing,
+                delivery="steer",
+                prompt=prompt,
+                target_run_id=target_run_id,
+            )
+            db.commit()
+            return input_row_from_db(existing), True
+
+        run = db.execute(
+            "SELECT id, session_id, status, mode FROM agent_runs WHERE id = ?",
+            (target_run_id,),
+        ).fetchone()
+        if run is None or str(run["session_id"]) != session_id:
+            db.rollback()
+            raise RunNotFoundError("Run not found")
+        if str(run["status"]) not in {"queued", "running", "waiting_approval"}:
+            db.rollback()
+            raise RunNotSteerableError(
+                f"Run cannot accept steering input while {run['status']}."
+            )
+
+        input_row = insert_input(
+            db,
+            session_id=session_id,
+            request_id=request_id,
+            delivery="steer",
+            mode=str(run["mode"]),
+            prompt=prompt,
+            skills=None,
+            target_run_id=target_run_id,
+            predecessor_run_id=None,
+        )
+        db.commit()
+        return input_row, False
+
+
+def enqueue_queued_input(
+    *,
+    session_id: str,
+    prompt: str,
+    mode: RunMode,
+    skills: Any,
+    request_id: str,
+) -> tuple[dict[str, Any], bool]:
+    """Persist a FIFO follow-up without creating a second active Run."""
+    skills_json = encode_input_skills(skills)
+    with db_lock, connect_db() as db:
+        db.execute("BEGIN IMMEDIATE")
+        ensure_session(db, session_id)
+        existing = input_row_by_request_id(db, session_id, request_id)
+        if existing is not None:
+            ensure_same_input(
+                existing,
+                delivery="queue",
+                prompt=prompt,
+                mode=mode,
+                skills_json=skills_json,
+            )
+            db.commit()
+            return input_row_from_db(existing), True
+
+        active = active_run_for_session_in_db(db, session_id)
+        input_row = insert_input(
+            db,
+            session_id=session_id,
+            request_id=request_id,
+            delivery="queue",
+            mode=mode,
+            prompt=prompt,
+            skills=skills_json,
+            target_run_id=None,
+            predecessor_run_id=(str(active["id"]) if active is not None else None),
+        )
+        db.commit()
+        return input_row, False
+
+
+def claim_steering_inputs(run_id: str) -> list[dict[str, Any]]:
+    """Claim all currently pending steering inputs in FIFO order."""
+    with db_lock, connect_db() as db:
+        db.execute("BEGIN IMMEDIATE")
+        run = run_row(db, run_id)
+        if run is None:
+            db.rollback()
+            raise RunNotFoundError("Run not found")
+        rows = db.execute(
+            """
+            SELECT *
+            FROM agent_inputs
+            WHERE target_run_id = ?
+              AND delivery = 'steer'
+              AND status = 'pending'
+            ORDER BY position ASC
+            """,
+            (run_id,),
+        ).fetchall()
+        if rows:
+            db.execute(
+                """
+                UPDATE agent_inputs
+                SET status = 'applying'
+                WHERE target_run_id = ?
+                  AND delivery = 'steer'
+                  AND status = 'pending'
+                """,
+                (run_id,),
+            )
+            rows = db.execute(
+                """
+                SELECT *
+                FROM agent_inputs
+                WHERE target_run_id = ?
+                  AND delivery = 'steer'
+                  AND status = 'applying'
+                ORDER BY position ASC
+                """,
+                (run_id,),
+            ).fetchall()
+        db.commit()
+        return [input_row_from_db(row) for row in rows]
+
+
+def get_input(*, session_id: str, request_id: str) -> dict[str, Any] | None:
+    with db_lock, connect_db() as db:
+        row = input_row_by_request_id(db, session_id, request_id)
+        return input_row_from_db(row) if row is not None else None
+
+
+def mark_input_applied(
+    input_id: str,
+    *,
+    run_id: str,
+    message_id: str,
+) -> dict[str, Any]:
+    now = now_iso()
+    with db_lock, connect_db() as db:
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute(
+            "SELECT * FROM agent_inputs WHERE id = ?",
+            (input_id,),
+        ).fetchone()
+        if row is None:
+            db.rollback()
+            raise RunNotFoundError("Input not found")
+        if row["status"] == "applied":
+            db.commit()
+            return input_row_from_db(row)
+        if row["status"] != "applying":
+            db.rollback()
+            raise RunStateError(
+                f"Input cannot be applied from state {row['status']}."
+            )
+        cursor = db.execute(
+            """
+            UPDATE agent_inputs
+            SET status = 'applied', run_id = ?, message_id = ?, applied_at = ?
+            WHERE id = ? AND status = 'applying'
+            """,
+            (run_id, message_id, now, input_id),
+        )
+        if cursor.rowcount != 1:
+            db.rollback()
+            raise RunStateError("Input was claimed by another delivery attempt.")
+        updated = db.execute(
+            "SELECT * FROM agent_inputs WHERE id = ?", (input_id,)
+        ).fetchone()
+        db.commit()
+        if updated is None:
+            raise RunNotFoundError("Input not found")
+        return input_row_from_db(updated)
+
+
+def reject_input(input_id: str, *, error_code: str) -> dict[str, Any]:
+    with db_lock, connect_db() as db:
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute(
+            "SELECT * FROM agent_inputs WHERE id = ?",
+            (input_id,),
+        ).fetchone()
+        if row is None:
+            db.rollback()
+            raise RunNotFoundError("Input not found")
+        db.execute(
+            """
+            UPDATE agent_inputs
+            SET status = 'rejected', error_code = ?
+            WHERE id = ? AND status IN ('pending', 'applying')
+            """,
+            (error_code, input_id),
+        )
+        updated = db.execute(
+            "SELECT * FROM agent_inputs WHERE id = ?", (input_id,)
+        ).fetchone()
+        db.commit()
+        if updated is None:
+            raise RunNotFoundError("Input not found")
+        return input_row_from_db(updated)
+
+
+def cancel_unapplied_inputs_for_run(run_id: str, *, error_code: str) -> int:
+    with db_lock, connect_db() as db:
+        cursor = db.execute(
+            """
+            UPDATE agent_inputs
+            SET status = 'cancelled', error_code = ?
+            WHERE target_run_id = ?
+              AND status IN ('pending', 'applying')
+            """,
+            (error_code, run_id),
+        )
+        db.commit()
+        return int(cursor.rowcount)
+
+
+def claim_next_queued_input(
+    *,
+    session_id: str,
+    owner_instance_id: str,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]] | None:
+    """Atomically materialize the next eligible queue item into a Run."""
+    run_id = new_id()
+    message_id = new_id()
+    now = now_iso()
+    with db_lock, connect_db() as db:
+        db.execute("BEGIN IMMEDIATE")
+        ensure_session(db, session_id)
+        if active_run_for_session_in_db(db, session_id) is not None:
+            db.commit()
+            return None
+        pending_plan = db.execute(
+            """
+            SELECT 1
+            FROM session_plans
+            WHERE session_id = ? AND status = 'pending'
+            LIMIT 1
+            """,
+            (session_id,),
+        ).fetchone()
+        if pending_plan is not None:
+            db.commit()
+            return None
+
+        input_db = db.execute(
+            """
+            SELECT *
+            FROM agent_inputs
+            WHERE session_id = ?
+              AND delivery = 'queue'
+              AND status = 'pending'
+            ORDER BY position ASC
+            LIMIT 1
+            """,
+            (session_id,),
+        ).fetchone()
+        if input_db is None:
+            db.commit()
+            return None
+
+        predecessor_id = input_db["predecessor_run_id"]
+        if predecessor_id is not None:
+            predecessor = db.execute(
+                "SELECT status FROM agent_runs WHERE id = ?",
+                (predecessor_id,),
+            ).fetchone()
+            if predecessor is None or predecessor["status"] != "completed":
+                db.commit()
+                return None
+
+        input_row = input_row_from_db(input_db)
+        message_sequence = next_message_sequence(db, session_id)
+        metadata = {
+            "input_id": input_row["id"],
+            "delivery": "queue",
+            "request_id": input_row["request_id"],
+        }
+        db.execute(
+            """
+            INSERT INTO messages (
+                id, session_id, role, kind, content, metadata_json, sequence, created_at
+            )
+            VALUES (?, ?, 'user', 'message', ?, ?, ?, ?)
+            """,
+            (
+                message_id,
+                session_id,
+                input_row["prompt"],
+                json.dumps(metadata, ensure_ascii=False, sort_keys=True),
+                message_sequence,
+                now,
+            ),
+        )
+        db.execute("UPDATE sessions SET updated_at = ? WHERE id = ?", (now, session_id))
+        kind: RunKind = "chat_plan" if input_row["mode"] == "plan" else "chat_act"
+        insert_run(
+            db,
+            run_id=run_id,
+            session_id=session_id,
+            kind=kind,
+            mode=input_row["mode"],
+            owner_instance_id=owner_instance_id,
+            request_message_id=message_id,
+        )
+        cursor = db.execute(
+            """
+            UPDATE agent_inputs
+            SET status = 'applied', run_id = ?, message_id = ?, applied_at = ?
+            WHERE id = ? AND status = 'pending'
+            """,
+            (run_id, message_id, now, input_row["id"]),
+        )
+        if cursor.rowcount != 1:
+            db.rollback()
+            raise RunStateError("Queued input was claimed by another worker.")
+        input_db = db.execute(
+            "SELECT * FROM agent_inputs WHERE id = ?", (input_row["id"],)
+        ).fetchone()
+        if input_db is None:
+            db.rollback()
+            raise RunNotFoundError("Input not found")
+        input_row = input_row_from_db(input_db)
+        db.execute(
+            """
+            UPDATE agent_inputs
+            SET predecessor_run_id = ?
+            WHERE session_id = ?
+              AND delivery = 'queue'
+              AND status = 'pending'
+              AND position > ?
+            """,
+            (run_id, session_id, input_row["position"]),
+        )
+        db.commit()
+
+    message = {
+        "id": message_id,
+        "session_id": session_id,
+        "role": "user",
+        "kind": "message",
+        "content": input_row["prompt"],
+        "metadata": metadata,
+        "sequence": message_sequence,
+        "created_at": now,
+    }
+    return get_run(run_id), input_row, message
+
+
+def pending_queue_session_ids() -> list[str]:
+    with db_lock, connect_db() as db:
+        rows = db.execute(
+            """
+            SELECT DISTINCT session_id
+            FROM agent_inputs
+            WHERE delivery = 'queue' AND status = 'pending'
+            ORDER BY session_id ASC
+            """
+        ).fetchall()
+        return [str(row["session_id"]) for row in rows]
+
+
+def input_row_by_request_id(
+    db: sqlite3.Connection,
+    session_id: str,
+    request_id: str,
+) -> sqlite3.Row | None:
+    return db.execute(
+        """
+        SELECT *
+        FROM agent_inputs
+        WHERE session_id = ? AND request_id = ?
+        """,
+        (session_id, request_id),
+    ).fetchone()
+
+
+def ensure_same_input(
+    row: sqlite3.Row,
+    *,
+    delivery: str,
+    prompt: str,
+    target_run_id: str | None = None,
+    mode: str | None = None,
+    skills_json: str | None = None,
+) -> None:
+    if (
+        row["delivery"] != delivery
+        or row["prompt"] != prompt
+        or (target_run_id is not None and row["target_run_id"] != target_run_id)
+        or (mode is not None and row["mode"] != mode)
+        or (mode is not None and row["skills_json"] != skills_json)
+    ):
+        raise InputConflictError(
+            "request_id was already used for a different input."
+        )
+
+
+def encode_input_skills(skills: Any) -> str | None:
+    if skills is None:
+        return None
+    try:
+        return json.dumps(skills, ensure_ascii=False, sort_keys=True)
+    except (TypeError, ValueError) as error:
+        raise ValueError("Input skills must be JSON serializable.") from error
+
+
+def decode_input_skills(skills_json: str | None) -> Any:
+    if not skills_json:
+        return None
+    try:
+        return json.loads(skills_json)
+    except json.JSONDecodeError:
+        return None
+
+
+def insert_input(
+    db: sqlite3.Connection,
+    *,
+    session_id: str,
+    request_id: str,
+    delivery: str,
+    mode: str,
+    prompt: str,
+    skills: str | None,
+    target_run_id: str | None,
+    predecessor_run_id: str | None,
+) -> dict[str, Any]:
+    input_id = new_id()
+    now = now_iso()
+    row = db.execute(
+        """
+        SELECT COALESCE(MAX(position), 0) + 1 AS next_position
+        FROM agent_inputs
+        WHERE session_id = ?
+        """,
+        (session_id,),
+    ).fetchone()
+    position = int(row["next_position"])
+    db.execute(
+        """
+        INSERT INTO agent_inputs (
+            id,
+            session_id,
+            request_id,
+            delivery,
+            status,
+            mode,
+            prompt,
+            skills_json,
+            target_run_id,
+            predecessor_run_id,
+            position,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            input_id,
+            session_id,
+            request_id,
+            delivery,
+            mode,
+            prompt,
+            skills,
+            target_run_id,
+            predecessor_run_id,
+            position,
+            now,
+        ),
+    )
+    created = db.execute(
+        "SELECT * FROM agent_inputs WHERE id = ?", (input_id,)
+    ).fetchone()
+    if created is None:
+        raise RuntimeError("Input insert did not return a row.")
+    return input_row_from_db(created)
+
+
+def input_row_from_db(row: sqlite3.Row) -> dict[str, Any]:
+    result = dict(row)
+    result["skills"] = decode_input_skills(
+        str(result["skills_json"]) if result.get("skills_json") else None
+    )
+    return result
 
 
 def create_run(

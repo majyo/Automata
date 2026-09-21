@@ -45,6 +45,14 @@ class SessionBusyError(ValueError):
         self.run_id = run_id
 
 
+class RunNotSteerableError(ValueError):
+    """The requested Run cannot accept a steering message."""
+
+
+class InputConflictError(ValueError):
+    """An idempotency key was reused with different input data."""
+
+
 class PlanNotRetryableError(ValueError):
     pass
 

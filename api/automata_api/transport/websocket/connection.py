@@ -13,6 +13,7 @@ from automata_api.core.runs import state as run_repository
 from automata_api.core.runs.approval import ApprovalResolutionError
 from automata_api.core.runs.coordinator import RunCoordinator
 from automata_api.core.runs.event_hub import RunEventHub
+from automata_api.core.runs.model import PromptSubmission
 from automata_api.core.runs.replay import ReplayService
 from automata_api.core.runs.service import RunService
 from automata_api.core.runs.turns import run_repository_call
@@ -70,6 +71,7 @@ class AgentConnection:
 
         await self.event_hub.register(self.sender)
         try:
+            await self.runs.resume_queued_inputs()
             active_runs = await self.runs.active_runs()
             await self.sender.send_json(
                 {
@@ -139,14 +141,88 @@ class AgentConnection:
         mode = command.mode
 
         try:
-            await self.runs.start_prompt(
+            submission = await self.runs.start_prompt(
                 session_id=session_id,
                 prompt=prompt,
                 mode=mode,
                 skills=command.skills,
+                delivery=command.delivery,
+                run_id=command.run_id,
+                request_id=command.request_id,
             )
         except run_repository.SessionBusyError as error:
             await self._send_session_busy(session_id, error.run_id)
+            return
+        except run_repository.RunNotFoundError:
+            await self.sender.send_json(
+                {
+                    "type": "run_error",
+                    "code": "run_not_found",
+                    "session_id": session_id,
+                    "run_id": command.run_id,
+                }
+            )
+            return
+        except run_repository.RunNotSteerableError as error:
+            await self.sender.send_json(
+                {
+                    "type": "run_error",
+                    "code": "run_not_steerable",
+                    "session_id": session_id,
+                    "run_id": command.run_id,
+                    "message": str(error),
+                }
+            )
+            return
+        except run_repository.InputConflictError as error:
+            await self.sender.send_json(
+                {
+                    "type": "run_error",
+                    "code": "input_request_conflict",
+                    "session_id": session_id,
+                    "run_id": command.run_id,
+                    "request_id": command.request_id,
+                    "message": str(error),
+                }
+            )
+            return
+
+        if command.delivery != "new":
+            await self._send_input_accepted(
+                session_id=session_id,
+                request_id=command.request_id,
+                delivery=command.delivery,
+                submission=submission,
+                target_run_id=command.run_id,
+            )
+
+    async def _send_input_accepted(
+        self,
+        *,
+        session_id: str,
+        request_id: str,
+        delivery: str,
+        submission: PromptSubmission,
+        target_run_id: str,
+    ) -> None:
+        input_row = submission.input or {}
+        run = submission.run or {}
+        await self.sender.send_json(
+            {
+                "type": "input_accepted",
+                "session_id": session_id,
+                "request_id": request_id,
+                "input_id": input_row.get("id"),
+                "delivery": delivery,
+                "status": input_row.get("status"),
+                "position": input_row.get("position"),
+                "run_id": run.get("id") or input_row.get("run_id"),
+                "target_run_id": (
+                    input_row.get("target_run_id") or target_run_id or None
+                ),
+                "idempotent": submission.idempotent,
+            }
+        )
 
     async def _start_plan_execution(self, command: PlanExecutionCommand) -> None:
         session_id = command.session_id

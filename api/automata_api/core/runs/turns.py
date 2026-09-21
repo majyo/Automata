@@ -6,6 +6,7 @@ from typing import Any
 
 from automata_api.config import AgentConfigurationError
 from automata_api.core.agent.messages import AgentProviderError, ModelTransportError
+from automata_api.core.agent.ports import AgentInputChannel
 from automata_api.core.agent.resources import EventSender, TurnResourcesFactory
 from automata_api.core.agent.runtime import stream_agent_loop, stream_plan_loop
 from automata_api.core.agent.types import AgentLoopEvent
@@ -51,6 +52,8 @@ class TurnService:
         selected_skills: object = None,
         approved_plan_content: str | None = None,
         approved_plan_id: str | None = None,
+        input_channel: AgentInputChannel | None = None,
+        input_id: str | None = None,
     ) -> RunOutcome:
         return await self._reply(
             websocket,
@@ -64,6 +67,8 @@ class TurnService:
             selected_skills,
             mode="act",
             approved_plan_content=approved_plan_content,
+            input_channel=input_channel,
+            input_id=input_id,
         )
 
     async def stream_plan_reply(
@@ -78,6 +83,8 @@ class TurnService:
         permission_preset: PermissionPreset,
         permission_profile: CompiledPermissionProfile | None = None,
         selected_skills: object = None,
+        input_channel: AgentInputChannel | None = None,
+        input_id: str | None = None,
     ) -> RunOutcome:
         return await self._reply(
             websocket,
@@ -90,6 +97,8 @@ class TurnService:
             permission_profile,
             selected_skills,
             mode="plan",
+            input_channel=input_channel,
+            input_id=input_id,
         )
 
     async def _reply(
@@ -106,6 +115,8 @@ class TurnService:
         *,
         mode: str,
         approved_plan_content: str | None = None,
+        input_channel: AgentInputChannel | None = None,
+        input_id: str | None = None,
     ) -> RunOutcome:
         started: dict[str, Any] = {
             "type": "started",
@@ -114,6 +125,8 @@ class TurnService:
             "prompt": prompt,
             "permission_preset": permission_preset,
         }
+        if input_id:
+            started["input_id"] = input_id
         if mode == "plan":
             started["mode"] = mode
         await sender.send_json(started)
@@ -148,6 +161,7 @@ class TurnService:
                         permission_preset=permission_preset,
                         permission_profile=permission_profile,
                     ),
+                    input_channel=input_channel,
                 )
                 events = (
                     stream_plan_loop(**options)
@@ -188,6 +202,7 @@ class TurnService:
         approval_broker: ApprovalBroker,
         permission_preset: PermissionPreset,
         permission_profile: CompiledPermissionProfile | None = None,
+        input_channel: AgentInputChannel | None = None,
     ) -> RunOutcome:
         plan_id = str(plan["id"])
         await websocket.send_json(
@@ -207,6 +222,7 @@ class TurnService:
             approval_broker=approval_broker,
             permission_preset=permission_preset,
             permission_profile=permission_profile,
+            input_channel=input_channel,
             approved_plan_content=str(plan["content"]),
             approved_plan_id=plan_id,
         )
@@ -237,6 +253,22 @@ async def forward_agent_events(
             content = event.get("content")
             if isinstance(content, str):
                 final_content = content
+            continue
+
+        if event_type == "agent_segment_boundary":
+            await save_pending_agent_message(
+                conversation, session_id, pending_agent_parts
+            )
+            continue
+
+        if event_type == "input_applied":
+            # A boundary is emitted before final-turn steering. Tool calls
+            # already flush the preceding segment; this is a defensive flush
+            # for other safe points and keeps visible message order durable.
+            await save_pending_agent_message(
+                conversation, session_id, pending_agent_parts
+            )
+            await websocket.send_json(event)
             continue
 
         if event_type == "tool_call":

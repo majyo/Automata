@@ -23,16 +23,20 @@ ALL_COMMAND_TYPES = PROMPT_TYPES | {
 }
 
 AgentMode = Literal["act", "plan"]
+InputDelivery = Literal["new", "steer", "queue"]
 
 
 @dataclass(frozen=True)
 class PromptCommand:
-    """Start a new Run for a prompt, in act or plan mode."""
+    """Deliver a prompt as a new Run, steering input, or queued follow-up."""
 
     session_id: str
     prompt: str
     mode: AgentMode
     skills: Any = None
+    delivery: InputDelivery = "new"
+    run_id: str = ""
+    request_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -92,6 +96,8 @@ Command = (
 UNSUPPORTED_MESSAGE = "Unsupported message type"
 MISSING_SESSION_ID = "Missing session_id"
 MISSING_PROMPT = "Missing prompt"
+MISSING_RUN_ID = "Missing run_id for steering input"
+INVALID_DELIVERY = "Invalid prompt delivery"
 MISSING_PLAN_ID = "Missing plan_id"
 DUPLICATE_SIDE_EFFECT_CODE = "duplicate_side_effect_confirmation_required"
 DUPLICATE_SIDE_EFFECT_MESSAGE = (
@@ -133,11 +139,20 @@ def decode_command(payload: Mapping[str, Any]) -> Command:
         prompt = _text(payload, "prompt")
         if not prompt:
             return InvalidCommand(MISSING_PROMPT)
+        delivery_value = _text(payload, "delivery") or "new"
+        if delivery_value not in {"new", "steer", "queue"}:
+            return InvalidCommand(INVALID_DELIVERY)
+        run_id = _text(payload, "run_id")
+        if delivery_value == "steer" and not run_id:
+            return InvalidCommand(MISSING_RUN_ID)
         return PromptCommand(
             session_id=session_id,
             prompt=prompt,
             mode="plan" if _text(payload, "mode") == "plan" else "act",
             skills=payload.get("skills"),
+            delivery=delivery_value,  # type: ignore[arg-type]
+            run_id=run_id,
+            request_id=_text(payload, "request_id") or uuid.uuid4().hex,
         )
 
     plan_id = _text(payload, "plan_id")

@@ -27,6 +27,62 @@ class RunStore(Protocol):
         permission_preset: str | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]: ...
 
+    def enqueue_steering_input(
+        self,
+        *,
+        session_id: str,
+        target_run_id: str,
+        prompt: str,
+        request_id: str,
+    ) -> tuple[dict[str, Any], bool]: ...
+
+    def enqueue_queued_input(
+        self,
+        *,
+        session_id: str,
+        prompt: str,
+        mode: RunMode,
+        skills: Any,
+        request_id: str,
+    ) -> tuple[dict[str, Any], bool]: ...
+
+    def get_input(
+        self, *, session_id: str, request_id: str
+    ) -> dict[str, Any] | None: ...
+
+    def claim_steering_inputs(self, run_id: str) -> list[dict[str, Any]]: ...
+
+    def mark_input_applied(
+        self,
+        input_id: str,
+        *,
+        run_id: str,
+        message_id: str,
+    ) -> dict[str, Any]: ...
+
+    def reject_input(
+        self,
+        input_id: str,
+        *,
+        error_code: str,
+    ) -> dict[str, Any]: ...
+
+    def cancel_unapplied_inputs_for_run(
+        self,
+        run_id: str,
+        *,
+        error_code: str,
+    ) -> int: ...
+
+    def claim_next_queued_input(
+        self,
+        *,
+        session_id: str,
+        owner_instance_id: str,
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]] | None: ...
+
+    def pending_queue_session_ids(self) -> list[str]: ...
+
     def begin_plan_execution(
         self,
         *,

@@ -44,6 +44,7 @@ async def app_lifespan(container: AppContainer) -> AsyncIterator[AppContainer]:
         get_api_token()
         init_db()
         await container.coordinator.startup()
+        await container.runs.resume_queued_inputs()
         started = True
         yield container
     finally:

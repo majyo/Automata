@@ -46,6 +46,38 @@ def test_prompt_honours_plan_mode_and_skills():
     assert command.skills == ["refactor"]
 
 
+def test_prompt_delivery_carries_run_and_idempotency_fields():
+    command = decode_command(
+        {
+            "type": "prompt",
+            "session_id": "s1",
+            "prompt": "focus",
+            "delivery": "steer",
+            "run_id": "run-1",
+            "request_id": "input-1",
+        }
+    )
+
+    assert isinstance(command, PromptCommand)
+    assert command.delivery == "steer"
+    assert command.run_id == "run-1"
+    assert command.request_id == "input-1"
+
+
+def test_steering_requires_a_target_run():
+    command = decode_command(
+        {
+            "type": "prompt",
+            "session_id": "s1",
+            "prompt": "focus",
+            "delivery": "steer",
+        }
+    )
+
+    assert isinstance(command, InvalidCommand)
+    assert command.message == "Missing run_id for steering input"
+
+
 def test_unknown_mode_falls_back_to_act():
     command = decode_command(
         {"type": "prompt", "session_id": "s1", "prompt": "x", "mode": "weird"}

@@ -15,7 +15,7 @@ from automata_api.core.agent.messages import (
     assistant_message_for_provider,
     tool_result_for_provider,
 )
-from automata_api.core.agent.ports import ModelProvider
+from automata_api.core.agent.ports import AgentInputChannel, ModelProvider
 from automata_api.core.agent.prompts import (
     agent_system_prompt,
     approved_plan_message,
@@ -65,6 +65,7 @@ async def stream_agent_loop(
     cancellation: CancellationToken | None = None,
     orchestrator: ToolExecutionOrchestrator | None = None,
     tool_runner: RunTool | None = None,
+    input_channel: AgentInputChannel | None = None,
 ) -> AsyncIterator[AgentLoopEvent]:
     if cancellation is not None:
         cancellation.raise_if_cancelled()
@@ -118,6 +119,7 @@ async def stream_agent_loop(
         cancellation=cancellation,
         orchestrator=orchestrator,
         tool_runner=tool_runner,
+        input_channel=input_channel,
     ):
         yield event
 
@@ -138,6 +140,7 @@ async def stream_plan_loop(
     cancellation: CancellationToken | None = None,
     orchestrator: ToolExecutionOrchestrator | None = None,
     tool_runner: RunTool | None = None,
+    input_channel: AgentInputChannel | None = None,
 ) -> AsyncIterator[AgentLoopEvent]:
     if cancellation is not None:
         cancellation.raise_if_cancelled()
@@ -200,6 +203,7 @@ async def stream_plan_loop(
         cancellation=cancellation,
         orchestrator=orchestrator,
         tool_runner=tool_runner,
+        input_channel=input_channel,
     ):
         yield event
 
@@ -223,6 +227,7 @@ async def stream_model_loop(
     orchestrator: ToolExecutionOrchestrator | None = None,
     provider: ModelProvider,
     tool_runner: RunTool | None = None,
+    input_channel: AgentInputChannel | None = None,
 ) -> AsyncIterator[AgentLoopEvent]:
     for step in range(1, max_steps + 1):
         async with observe_span(
@@ -236,6 +241,18 @@ async def stream_model_loop(
         ) as step_span:
             if cancellation is not None:
                 cancellation.raise_if_cancelled()
+            if input_channel is not None:
+                for input_item in await input_channel.take_steering():
+                    applied = await input_channel.apply_steering(input_item)
+                    messages.append({"role": "user", "content": applied.prompt})
+                    yield {
+                        "type": "input_applied",
+                        "input_id": applied.input_id,
+                        "message_id": applied.message_id,
+                        "delivery": applied.delivery,
+                        "prompt": applied.prompt,
+                        "step": step,
+                    }
             yield {
                 "type": "agent_step",
                 "step": step,
@@ -329,6 +346,28 @@ async def stream_model_loop(
                         session_id=session_id,
                         message={"role": "assistant", "content": content},
                     )
+                if input_channel is not None:
+                    steering = await input_channel.seal_and_take_steering()
+                    if steering:
+                        # The outer turn forwarder flushes the preceding
+                        # streamed assistant segment before the user input is
+                        # made visible, preserving conversation order.
+                        yield {"type": "agent_segment_boundary"}
+                        messages.append({"role": "assistant", "content": content})
+                        for input_item in steering:
+                            applied = await input_channel.apply_steering(input_item)
+                            messages.append(
+                                {"role": "user", "content": applied.prompt}
+                            )
+                            yield {
+                                "type": "input_applied",
+                                "input_id": applied.input_id,
+                                "message_id": applied.message_id,
+                                "delivery": applied.delivery,
+                                "prompt": applied.prompt,
+                                "step": step,
+                            }
+                        continue
                 yield {"type": "final", "content": content, "mode": mode}
                 return
 

@@ -13,7 +13,13 @@ from automata_api.core.runs.approval import ApprovalBroker, ApprovalResolutionEr
 from automata_api.core.runs.event_hub import RunEventHub
 from automata_api.core.runs.event_hub import run_event_hub as default_run_event_hub
 from automata_api.core.runs.events import DurableRunEventSink
-from automata_api.core.runs.model import CancellationToken, PublicRunError, RunOutcome
+from automata_api.core.runs.model import (
+    CancellationToken,
+    PromptSubmission,
+    PublicRunError,
+    RunInputGate,
+    RunOutcome,
+)
 from automata_api.core.runs.ports import RunProcesses, RunStore
 from automata_api.core.telemetry import observe_span
 from automata_api.core.tools.permissions import (
@@ -38,6 +44,8 @@ class RunHandle:
     cancellation: CancellationToken
     approval_broker: ApprovalBroker
     event_sink: DurableRunEventSink
+    input_gate: RunInputGate
+    prompt_executor: PromptRunExecutor | None = None
     created_at: str | None = None
     task: asyncio.Task[None] | None = None
     explicit_cancel: bool = False
@@ -67,6 +75,7 @@ class RunCoordinator:
         self._processes = process_supervisor
         self._process_sessions = process_sessions
         self._store = store
+        self._queue_lock = asyncio.Lock()
         retention = (
             run_event_retention_days
             if run_event_retention_days is not None
@@ -112,6 +121,7 @@ class RunCoordinator:
         prompt: str,
         mode: str,
         execute: PromptRunExecutor,
+        prompt_executor: PromptRunExecutor | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         resolved_mode = "plan" if mode == "plan" else "act"
         run, user_message = await asyncio.to_thread(
@@ -121,8 +131,137 @@ class RunCoordinator:
             mode=resolved_mode,
             owner_instance_id=self.instance_id,
         )
-        await self._start_handle(run, lambda handle: execute(handle, user_message))
+        await self._start_handle(
+            run,
+            lambda handle: execute(handle, user_message),
+            prompt_executor=prompt_executor,
+        )
         return run, user_message
+
+    async def steer_prompt(
+        self,
+        *,
+        session_id: str,
+        run_id: str,
+        prompt: str,
+        request_id: str,
+    ) -> PromptSubmission:
+        existing = await asyncio.to_thread(
+            self._store.get_input,
+            session_id=session_id,
+            request_id=request_id,
+        )
+        if existing is not None:
+            ensure_input_request(
+                existing,
+                delivery="steer",
+                prompt=prompt,
+                target_run_id=run_id,
+            )
+            return PromptSubmission(
+                delivery="steer",
+                input=existing,
+                run=await self._run_for_input(existing, run_id),
+                idempotent=True,
+            )
+
+        handle = await self.get_handle(run_id)
+        if handle is None or handle.session_id != session_id:
+            raise run_state.RunNotSteerableError("Run is not accepting steering input.")
+
+        async def enqueue() -> tuple[dict[str, Any], bool]:
+            return await asyncio.to_thread(
+                self._store.enqueue_steering_input,
+                session_id=session_id,
+                target_run_id=run_id,
+                prompt=prompt,
+                request_id=request_id,
+            )
+
+        result = await handle.input_gate.accept(enqueue)
+        if result is None:
+            existing = await asyncio.to_thread(
+                self._store.get_input,
+                session_id=session_id,
+                request_id=request_id,
+            )
+            if existing is not None:
+                ensure_input_request(
+                    existing,
+                    delivery="steer",
+                    prompt=prompt,
+                    target_run_id=run_id,
+                )
+                return PromptSubmission(
+                    delivery="steer",
+                    input=existing,
+                    run=await self._run_for_input(existing, run_id),
+                    idempotent=True,
+                )
+            raise run_state.RunNotSteerableError(
+                "Run is no longer accepting steering input."
+            )
+
+        input_row, idempotent = result
+        return PromptSubmission(
+            delivery="steer",
+            input=input_row,
+            run=await self._run_for_input(input_row, run_id),
+            idempotent=idempotent,
+        )
+
+    async def enqueue_prompt(
+        self,
+        *,
+        session_id: str,
+        prompt: str,
+        mode: str,
+        skills: Any,
+        request_id: str,
+        prompt_executor: PromptRunExecutor,
+    ) -> PromptSubmission:
+        resolved_mode = "plan" if mode == "plan" else "act"
+        async with self._queue_lock:
+            input_row, idempotent = await asyncio.to_thread(
+                self._store.enqueue_queued_input,
+                session_id=session_id,
+                prompt=prompt,
+                mode=resolved_mode,
+                skills=skills,
+                request_id=request_id,
+            )
+            run = await self._start_next_queued_locked(
+                session_id=session_id,
+                prompt_executor=prompt_executor,
+            )
+            if run is None and input_row.get("run_id"):
+                run = await asyncio.to_thread(
+                    self._store.get_run, str(input_row["run_id"])
+                )
+            return PromptSubmission(
+                delivery="queue",
+                input=input_row,
+                run=run,
+                idempotent=idempotent,
+            )
+
+    async def resume_queued_inputs(
+        self, prompt_executor: PromptRunExecutor
+    ) -> int:
+        started = 0
+        for session_id in await asyncio.to_thread(
+            self._store.pending_queue_session_ids
+        ):
+            while True:
+                async with self._queue_lock:
+                    run = await self._start_next_queued_locked(
+                        session_id=session_id,
+                        prompt_executor=prompt_executor,
+                    )
+                if run is None:
+                    break
+                started += 1
+        return started
 
     async def start_plan_execution(
         self,
@@ -132,6 +271,7 @@ class RunCoordinator:
         request_id: str,
         retry: bool,
         execute: PlanRunExecutor,
+        prompt_executor: PromptRunExecutor | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], bool]:
         run, plan, idempotent = await asyncio.to_thread(
             self._store.begin_plan_execution,
@@ -142,7 +282,11 @@ class RunCoordinator:
             retry=retry,
         )
         if not idempotent and run["status"] == "queued":
-            await self._start_handle(run, lambda handle: execute(handle, plan))
+            await self._start_handle(
+                run,
+                lambda handle: execute(handle, plan),
+                prompt_executor=prompt_executor,
+            )
         return run, plan, idempotent
 
     async def cancel(
@@ -201,7 +345,11 @@ class RunCoordinator:
             return self._by_run.get(run_id)
 
     async def _start_handle(
-        self, run: dict[str, Any], execute: RunExecutor
+        self,
+        run: dict[str, Any],
+        execute: RunExecutor,
+        *,
+        prompt_executor: PromptRunExecutor | None = None,
     ) -> RunHandle:
         cancellation = CancellationToken()
         event_sink = DurableRunEventSink(
@@ -225,6 +373,8 @@ class RunCoordinator:
             cancellation=cancellation,
             approval_broker=broker,
             event_sink=event_sink,
+            input_gate=RunInputGate(),
+            prompt_executor=prompt_executor,
             created_at=(str(run["created_at"]) if run.get("created_at") else None),
         )
         async with self._lock:
@@ -281,6 +431,10 @@ class RunCoordinator:
             for event in committed_events:
                 await handle.event_sink.broadcast_persisted(event)
             run_span.set_attributes(run_status="completed")
+            await self._start_next_queued(
+                session_id=handle.session_id,
+                prompt_executor=handle.prompt_executor,
+            )
         except asyncio.CancelledError:
             await self._process_sessions.terminate_run(handle.run_id)
             await self._processes.terminate_run(handle.run_id)
@@ -353,10 +507,65 @@ class RunCoordinator:
             run_span.set_status("error", error_type=error.__class__.__name__)
             run_span.set_attributes(run_status="failed")
         finally:
+            cancel_inputs = getattr(
+                self._store, "cancel_unapplied_inputs_for_run", None
+            )
+            if cancel_inputs is not None:
+                await asyncio.to_thread(
+                    cancel_inputs,
+                    handle.run_id,
+                    error_code="run_terminated",
+                )
             handle.approval_broker.cancel_all()
             await handle.event_sink.close()
             async with self._lock:
                 self._by_run.pop(handle.run_id, None)
+
+    async def _run_for_input(
+        self, input_row: dict[str, Any], fallback_run_id: str
+    ) -> dict[str, Any] | None:
+        run_id = input_row.get("run_id") or input_row.get("target_run_id")
+        if not run_id:
+            run_id = fallback_run_id
+        try:
+            return await asyncio.to_thread(self._store.get_run, str(run_id))
+        except run_state.RunNotFoundError:
+            return None
+
+    async def _start_next_queued(
+        self,
+        *,
+        session_id: str,
+        prompt_executor: PromptRunExecutor | None,
+    ) -> dict[str, Any] | None:
+        if prompt_executor is None or self._stopping:
+            return None
+        async with self._queue_lock:
+            return await self._start_next_queued_locked(
+                session_id=session_id,
+                prompt_executor=prompt_executor,
+            )
+
+    async def _start_next_queued_locked(
+        self,
+        *,
+        session_id: str,
+        prompt_executor: PromptRunExecutor,
+    ) -> dict[str, Any] | None:
+        claimed = await asyncio.to_thread(
+            self._store.claim_next_queued_input,
+            session_id=session_id,
+            owner_instance_id=self.instance_id,
+        )
+        if claimed is None:
+            return None
+        run, input_row, _message = claimed
+        await self._start_handle(
+            run,
+            lambda handle: prompt_executor(handle, input_row),
+            prompt_executor=prompt_executor,
+        )
+        return run
 
 
 def read_run_event_retention_days() -> int:
@@ -373,6 +582,19 @@ def read_run_event_retention_days() -> int:
         return max(0, min(int(raw), 3650))
     except ValueError:
         return 30
+
+
+def ensure_input_request(
+    input_row: dict[str, Any], *, delivery: str, prompt: str, target_run_id: str = ""
+) -> None:
+    if (
+        input_row.get("delivery") != delivery
+        or input_row.get("prompt") != prompt
+        or (target_run_id and input_row.get("target_run_id") != target_run_id)
+    ):
+        raise run_state.InputConflictError(
+            "request_id was already used for a different input."
+        )
 
 
 def queue_delay_ns(created_at: str | None) -> int | None:

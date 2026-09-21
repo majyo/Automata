@@ -4,6 +4,9 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from automata_api.infrastructure.persistence.db.migrations.agent_inputs import (
+    add_agent_inputs,
+)
 from automata_api.infrastructure.persistence.db.migrations.context_search import (
     add_agent_context_search,
 )
@@ -33,4 +36,5 @@ MIGRATIONS: tuple[Migration, ...] = (
             ),
         ),
     ),
+    Migration(2, "add_agent_inputs", add_agent_inputs),
 )

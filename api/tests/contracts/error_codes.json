@@ -41,6 +41,16 @@
       "emitted_by": "services/connection.py"
     },
     {
+      "code": "run_not_steerable",
+      "envelope": { "type": "run_error", "code": "run_not_steerable" },
+      "emitted_by": "services/connection.py"
+    },
+    {
+      "code": "input_request_conflict",
+      "envelope": { "type": "run_error", "code": "input_request_conflict" },
+      "emitted_by": "services/connection.py"
+    },
+    {
       "code": "event_cursor_invalid",
       "envelope": {
         "type": "run_error",

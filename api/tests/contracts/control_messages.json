@@ -50,6 +50,16 @@
       "request_id": "request-sample"
     },
     {
+      "type": "input_accepted",
+      "session_id": "session-sample",
+      "request_id": "input-request-sample",
+      "input_id": "input-sample",
+      "delivery": "queue",
+      "status": "pending",
+      "position": 13,
+      "idempotent": false
+    },
+    {
       "type": "mcp_server_status",
       "run_id": "run-sample",
       "status": "warning",
@@ -65,6 +75,8 @@
   ],
   "client_commands": [
     { "type": "prompt", "session_id": "session-sample", "prompt": "hi", "mode": "act" },
+    { "type": "prompt", "session_id": "session-sample", "prompt": "continue", "delivery": "queue", "request_id": "input-request-sample" },
+    { "type": "prompt", "session_id": "session-sample", "prompt": "focus on tests", "delivery": "steer", "run_id": "run-sample", "request_id": "input-request-sample-2" },
     { "type": "prompt", "session_id": "session-sample", "prompt": "plan it", "mode": "plan" },
     { "type": "approve_plan", "session_id": "session-sample", "plan_id": "plan-sample", "request_id": "request-sample" },
     { "type": "retry_plan", "session_id": "session-sample", "plan_id": "plan-sample", "request_id": "request-sample", "confirm_possible_duplicate_side_effects": true },

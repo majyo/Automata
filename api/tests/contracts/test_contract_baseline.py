@@ -68,6 +68,7 @@ def test_client_commands_only_use_published_fields():
         "plan_id",
         "prompt",
         "mode",
+        "delivery",
         "skills",
         "request_id",
         "approval_id",

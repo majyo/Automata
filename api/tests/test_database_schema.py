@@ -34,7 +34,10 @@ def test_package_move_preserves_existing_migration_history(
     init_db()
     database = tmp_path / "automata.db"
     with sqlite3.connect(database) as db:
-        db.execute("UPDATE schema_migrations SET checksum = ?", (checksum,))
+        db.execute(
+            "UPDATE schema_migrations SET checksum = ? WHERE version = 1",
+            (checksum,),
+        )
         db.execute(
             "INSERT INTO sessions (id, title, working_directory, created_at, updated_at) "
             "VALUES ('preserved', 'Existing session', ?, '2026-09-01', '2026-09-01')",
