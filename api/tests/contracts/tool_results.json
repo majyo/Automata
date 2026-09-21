@@ -1,9 +1,9 @@
 {
   "$comment": [
     "Canonical ToolResult contract (M0 contract baseline).",
-    "JSON mirrors automata_api.agent.tools._core.ToolResult; 'content' is",
-    "the JSON string the model sees. M2 moves ToolResult to tools/models.py",
-    "without changing these payloads, which is why the shape is frozen.",
+    "JSON mirrors automata_api.core.tools.models.ToolResult; 'content' is",
+    "the JSON string the model sees. Package moves do not change these",
+    "payloads, which is why the shape is frozen.",
     "",
     "Only the fields that are genuinely part of the contract are frozen:",
     "the dataclass fields, the 'ok'/'simulated' markers, and the error_code",

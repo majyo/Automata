@@ -1,5 +1,6 @@
-from automata_api.agent import prompts, status
+from automata_api.bootstrap import status
 from automata_api.config import AgentConfig, AgentConfigurationError
+from automata_api.core.agent import prompts
 
 
 def test_agent_workspace_prefers_environment(monkeypatch, tmp_path):
@@ -15,7 +16,9 @@ def test_agent_workspace_falls_back_to_configured_workspace(monkeypatch, tmp_pat
     assert prompts.agent_workspace() == str(tmp_path)
 
 
-def test_agent_system_prompt_includes_workspace_and_tool_guidance(monkeypatch, tmp_path):
+def test_agent_system_prompt_includes_workspace_and_tool_guidance(
+    monkeypatch, tmp_path
+):
     monkeypatch.setenv("AUTOMATA_WORKSPACE_DIR", str(tmp_path))
     monkeypatch.setattr(prompts, "get_system_prompt", lambda: "Base system prompt")
 

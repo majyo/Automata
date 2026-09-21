@@ -7,10 +7,17 @@ from pathlib import Path
 
 import pytest
 
-from automata_api.agent import tools
-from automata_api.agent.execution.process import process_execution_scope
-from automata_api.agent.execution.process_sessions import process_session_manager
-from automata_api.agent.tools.search import MAX_FILE_LIST_RESULT_CHARS
+from automata_api.bootstrap.tools import run_tool
+from automata_api.core.tools.process_scope import process_execution_scope
+from automata_api.core.tools.search import MAX_FILE_LIST_RESULT_CHARS
+from automata_api.infrastructure.processes.process_sessions import (
+    process_session_manager,
+)
+from automata_api.infrastructure.processes.processes import (
+    resolve_bash_executable,
+    resolve_powershell_executable,
+)
+from automata_api.infrastructure.workspace.paths import resolve_executable
 
 
 def patch_text(*lines):
@@ -22,11 +29,11 @@ def python_shell_command(script: str) -> str:
 
 
 def test_exec_command_executes_bash_command_in_workspace(tmp_path):
-    if tools.resolve_bash_executable() is None:
+    if resolve_bash_executable() is None:
         pytest.skip("bash is not available")
 
     result = asyncio.run(
-        tools.run_tool(
+        run_tool(
             "exec_command",
             {"cmd": "printf hello", "timeout_seconds": 5},
             str(tmp_path),
@@ -54,11 +61,11 @@ def test_exec_command_executes_bash_command_in_workspace(tmp_path):
 
 
 def test_exec_command_executes_powershell_when_available(tmp_path):
-    if tools.resolve_powershell_executable() is None:
+    if resolve_powershell_executable() is None:
         pytest.skip("PowerShell is not available")
 
     result = asyncio.run(
-        tools.run_tool(
+        run_tool(
             "exec_command",
             {
                 "cmd": "Write-Output hello",
@@ -83,7 +90,7 @@ def test_exec_command_rejects_workdir_outside_workspace(tmp_path):
     workspace.mkdir()
 
     result = asyncio.run(
-        tools.run_tool(
+        run_tool(
             "exec_command",
             {"cmd": "pwd", "workdir": ".."},
             str(workspace),
@@ -101,7 +108,7 @@ def test_exec_command_rejects_workdir_outside_workspace(tmp_path):
 
 def test_exec_command_rejects_unsupported_shell(tmp_path):
     result = asyncio.run(
-        tools.run_tool(
+        run_tool(
             "exec_command",
             {"cmd": "echo hello", "shell": "cmd"},
             str(tmp_path),
@@ -119,11 +126,11 @@ def test_exec_command_rejects_unsupported_shell(tmp_path):
 
 
 def test_exec_command_times_out(tmp_path):
-    if tools.resolve_bash_executable() is None:
+    if resolve_bash_executable() is None:
         pytest.skip("bash is not available")
 
     result = asyncio.run(
-        tools.run_tool(
+        run_tool(
             "exec_command",
             {"cmd": "sleep 2", "timeout_seconds": 0.1},
             str(tmp_path),
@@ -139,11 +146,11 @@ def test_exec_command_times_out(tmp_path):
 
 
 def test_exec_command_timeout_keeps_captured_prefix(tmp_path):
-    if tools.resolve_bash_executable() is None:
+    if resolve_bash_executable() is None:
         pytest.skip("bash is not available")
 
     result = asyncio.run(
-        tools.run_tool(
+        run_tool(
             "exec_command",
             {"cmd": "printf before; sleep 3", "timeout_seconds": 1.2},
             str(tmp_path),
@@ -158,11 +165,11 @@ def test_exec_command_timeout_keeps_captured_prefix(tmp_path):
 
 
 def test_exec_command_respects_max_output_chars(tmp_path):
-    if tools.resolve_bash_executable() is None:
+    if resolve_bash_executable() is None:
         pytest.skip("bash is not available")
 
     result = asyncio.run(
-        tools.run_tool(
+        run_tool(
             "exec_command",
             {"cmd": "printf 1234567890", "max_output_chars": 4},
             str(tmp_path),
@@ -179,11 +186,11 @@ def test_exec_command_respects_max_output_chars(tmp_path):
 
 
 def test_exec_command_streams_large_stdout_and_stderr_with_limit(tmp_path):
-    if tools.resolve_bash_executable() is None:
+    if resolve_bash_executable() is None:
         pytest.skip("bash is not available")
 
     result = asyncio.run(
-        tools.run_tool(
+        run_tool(
             "exec_command",
             {
                 "cmd": python_shell_command(
@@ -218,7 +225,7 @@ def test_exec_command_streams_large_stdout_and_stderr_with_limit(tmp_path):
 
 
 def test_exec_command_live_session_accepts_stdin_and_closes(tmp_path):
-    if tools.resolve_bash_executable() is None:
+    if resolve_bash_executable() is None:
         pytest.skip("bash is not available")
 
     async def exercise():
@@ -234,7 +241,7 @@ def test_exec_command_live_session_accepts_stdin_and_closes(tmp_path):
             session_id="conversation-live",
             workspace=str(tmp_path),
         ):
-            started = await tools.run_tool(
+            started = await run_tool(
                 "exec_command",
                 {
                     "cmd": command,
@@ -255,7 +262,7 @@ def test_exec_command_live_session_accepts_stdin_and_closes(tmp_path):
             session_id="conversation-live",
             workspace=str(tmp_path),
         ):
-            completed = await tools.run_tool(
+            completed = await run_tool(
                 "write_stdin",
                 {
                     "session_id": started_payload["session_id"],
@@ -266,10 +273,7 @@ def test_exec_command_live_session_accepts_stdin_and_closes(tmp_path):
             )
         completed_payload = json.loads(completed.content)
         assert completed.success is True
-        assert (
-            completed_payload["stdout"].replace("\r\n", "\n")
-            == "received:hello\n"
-        )
+        assert completed_payload["stdout"].replace("\r\n", "\n") == "received:hello\n"
         if completed_payload["running"]:
             with process_execution_scope(
                 "run-live",
@@ -277,7 +281,7 @@ def test_exec_command_live_session_accepts_stdin_and_closes(tmp_path):
                 session_id="conversation-live",
                 workspace=str(tmp_path),
             ):
-                completed = await tools.run_tool(
+                completed = await run_tool(
                     "write_stdin",
                     {
                         "session_id": started_payload["session_id"],
@@ -295,7 +299,7 @@ def test_exec_command_live_session_accepts_stdin_and_closes(tmp_path):
             session_id="conversation-live",
             workspace=str(tmp_path),
         ):
-            closed = await tools.run_tool(
+            closed = await run_tool(
                 "write_stdin",
                 {"session_id": started_payload["session_id"]},
                 str(tmp_path),
@@ -308,7 +312,7 @@ def test_exec_command_live_session_accepts_stdin_and_closes(tmp_path):
 
 
 def test_write_stdin_rejects_a_different_run_and_cleanup_terminates(tmp_path):
-    if tools.resolve_bash_executable() is None:
+    if resolve_bash_executable() is None:
         pytest.skip("bash is not available")
 
     async def exercise():
@@ -318,7 +322,7 @@ def test_write_stdin_rejects_a_different_run_and_cleanup_terminates(tmp_path):
             session_id="conversation-owner",
             workspace=str(tmp_path),
         ):
-            started = await tools.run_tool(
+            started = await run_tool(
                 "exec_command",
                 {
                     "cmd": python_shell_command(
@@ -337,7 +341,7 @@ def test_write_stdin_rejects_a_different_run_and_cleanup_terminates(tmp_path):
             session_id="conversation-owner",
             workspace=str(tmp_path),
         ):
-            rejected = await tools.run_tool(
+            rejected = await run_tool(
                 "write_stdin",
                 {"session_id": session_id},
                 str(tmp_path),
@@ -353,7 +357,7 @@ def test_write_stdin_rejects_a_different_run_and_cleanup_terminates(tmp_path):
             session_id="conversation-owner",
             workspace=str(tmp_path),
         ):
-            closed = await tools.run_tool(
+            closed = await run_tool(
                 "write_stdin",
                 {"session_id": session_id},
                 str(tmp_path),
@@ -364,7 +368,7 @@ def test_write_stdin_rejects_a_different_run_and_cleanup_terminates(tmp_path):
 
 
 def test_exec_command_live_session_timeout_returns_terminal_result(tmp_path):
-    if tools.resolve_bash_executable() is None:
+    if resolve_bash_executable() is None:
         pytest.skip("bash is not available")
 
     async def exercise():
@@ -374,7 +378,7 @@ def test_exec_command_live_session_timeout_returns_terminal_result(tmp_path):
             session_id="conversation-timeout",
             workspace=str(tmp_path),
         ):
-            return await tools.run_tool(
+            return await run_tool(
                 "exec_command",
                 {
                     "cmd": python_shell_command("import time; time.sleep(30)"),
@@ -394,11 +398,11 @@ def test_exec_command_live_session_timeout_returns_terminal_result(tmp_path):
 
 
 def test_run_bash_executes_command_in_workspace(tmp_path):
-    if tools.resolve_bash_executable() is None:
+    if resolve_bash_executable() is None:
         pytest.skip("bash is not available")
 
     result = asyncio.run(
-        tools.run_tool(
+        run_tool(
             "run_bash",
             {"command": "printf hello", "timeout_seconds": 5},
             str(tmp_path),
@@ -422,7 +426,7 @@ def test_run_bash_rejects_cwd_outside_workspace(tmp_path):
     workspace.mkdir()
 
     result = asyncio.run(
-        tools.run_tool(
+        run_tool(
             "run_bash",
             {"command": "pwd", "cwd": ".."},
             str(workspace),
@@ -437,11 +441,11 @@ def test_run_bash_rejects_cwd_outside_workspace(tmp_path):
 
 
 def test_run_bash_times_out(tmp_path):
-    if tools.resolve_bash_executable() is None:
+    if resolve_bash_executable() is None:
         pytest.skip("bash is not available")
 
     result = asyncio.run(
-        tools.run_tool(
+        run_tool(
             "run_bash",
             {"command": "sleep 2", "timeout_seconds": 0.1},
             str(tmp_path),
@@ -458,11 +462,12 @@ def test_run_bash_times_out(tmp_path):
 
 def test_run_bash_reports_missing_bash(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "automata_api.agent.backends.local.resolve_bash_executable", lambda: None
+        "automata_api.infrastructure.workspace.backends.local.resolve_bash_executable",
+        lambda: None,
     )
 
     result = asyncio.run(
-        tools.run_tool("run_bash", {"command": "printf hello"}, str(tmp_path))
+        run_tool("run_bash", {"command": "printf hello"}, str(tmp_path))
     )
     payload = json.loads(result.content)
 
@@ -477,7 +482,7 @@ def test_rg_search_finds_text(tmp_path):
     source.write_text("alpha\nneedle-value\n", encoding="utf-8")
 
     result = asyncio.run(
-        tools.run_tool(
+        run_tool(
             "rg",
             {"pattern": "needle-value", "path": "sample.txt"},
             str(tmp_path),
@@ -502,7 +507,7 @@ def test_rg_files_mode_lists_compact_bounded_paths(tmp_path):
     (nested / "child.txt").write_text("", encoding="utf-8")
 
     result = asyncio.run(
-        tools.run_tool(
+        run_tool(
             "rg",
             {
                 "mode": "files",
@@ -537,7 +542,7 @@ def test_rg_files_mode_filters_hidden_excluded_and_depth(tmp_path):
     (nested / "skip.py").write_text("", encoding="utf-8")
 
     default_result = asyncio.run(
-        tools.run_tool(
+        run_tool(
             "rg",
             {
                 "mode": "files",
@@ -551,7 +556,7 @@ def test_rg_files_mode_filters_hidden_excluded_and_depth(tmp_path):
     assert default_payload["files"] == ["root.py"]
 
     hidden_result = asyncio.run(
-        tools.run_tool(
+        run_tool(
             "rg",
             {
                 "mode": "files",
@@ -575,7 +580,7 @@ def test_rg_files_mode_reports_limit_truncation(tmp_path):
         (tmp_path / f"{index}.txt").write_text("", encoding="utf-8")
 
     result = asyncio.run(
-        tools.run_tool(
+        run_tool(
             "rg",
             {"mode": "files", "limit": 2},
             str(tmp_path),
@@ -597,7 +602,7 @@ def test_rg_files_mode_reports_character_truncation(tmp_path):
         (tmp_path / name).write_text("", encoding="utf-8")
 
     result = asyncio.run(
-        tools.run_tool(
+        run_tool(
             "rg",
             {"mode": "files", "limit": 500},
             str(tmp_path),
@@ -627,7 +632,7 @@ def test_rg_files_mode_reports_character_truncation(tmp_path):
     ],
 )
 def test_rg_files_mode_rejects_invalid_arguments(tmp_path, arguments, error):
-    result = asyncio.run(tools.run_tool("rg", arguments, str(tmp_path)))
+    result = asyncio.run(run_tool("rg", arguments, str(tmp_path)))
     payload = json.loads(result.content)
 
     assert result.success is False
@@ -642,7 +647,7 @@ def test_rg_files_mode_rejects_path_escape_and_file_root(tmp_path):
     (workspace / "sample.txt").write_text("", encoding="utf-8")
 
     escape_result = asyncio.run(
-        tools.run_tool(
+        run_tool(
             "rg",
             {"mode": "files", "path": ".."},
             str(workspace),
@@ -653,7 +658,7 @@ def test_rg_files_mode_rejects_path_escape_and_file_root(tmp_path):
     assert escape_payload["error"] == "path_outside_workspace"
 
     file_result = asyncio.run(
-        tools.run_tool(
+        run_tool(
             "rg",
             {"mode": "files", "path": "sample.txt"},
             str(workspace),
@@ -665,7 +670,7 @@ def test_rg_files_mode_rejects_path_escape_and_file_root(tmp_path):
 
 
 def test_rg_files_mode_falls_back_to_git(tmp_path, monkeypatch):
-    git = tools.resolve_executable("git")
+    git = resolve_executable("git")
     if git is None:
         pytest.skip("git is not available")
 
@@ -678,15 +683,13 @@ def test_rg_files_mode_falls_back_to_git(tmp_path, monkeypatch):
     (tmp_path / ".gitignore").write_text("ignored.txt\n", encoding="utf-8")
     (tmp_path / "visible.txt").write_text("", encoding="utf-8")
     (tmp_path / "ignored.txt").write_text("", encoding="utf-8")
-    original_resolve = tools.resolve_executable
+    original_resolve = resolve_executable
     monkeypatch.setattr(
-        "automata_api.workspace.paths.resolve_executable",
+        "automata_api.infrastructure.workspace.paths.resolve_executable",
         lambda name: None if name == "rg" else original_resolve(name),
     )
 
-    result = asyncio.run(
-        tools.run_tool("rg", {"mode": "files"}, str(tmp_path))
-    )
+    result = asyncio.run(run_tool("rg", {"mode": "files"}, str(tmp_path)))
     payload = json.loads(result.content)
 
     assert result.success is True
@@ -699,13 +702,11 @@ def test_rg_files_mode_falls_back_to_git(tmp_path, monkeypatch):
 def test_rg_files_mode_falls_back_to_filesystem(tmp_path, monkeypatch):
     (tmp_path / "visible.txt").write_text("", encoding="utf-8")
     monkeypatch.setattr(
-        "automata_api.workspace.paths.resolve_executable",
+        "automata_api.infrastructure.workspace.paths.resolve_executable",
         lambda _name: None,
     )
 
-    result = asyncio.run(
-        tools.run_tool("rg", {"mode": "files"}, str(tmp_path))
-    )
+    result = asyncio.run(run_tool("rg", {"mode": "files"}, str(tmp_path)))
     payload = json.loads(result.content)
 
     assert result.success is True
@@ -715,9 +716,7 @@ def test_rg_files_mode_falls_back_to_filesystem(tmp_path, monkeypatch):
     assert payload["files"] == ["visible.txt"]
 
 
-def test_rg_files_mode_filesystem_fallback_skips_symlinks(
-    tmp_path, monkeypatch
-):
+def test_rg_files_mode_filesystem_fallback_skips_symlinks(tmp_path, monkeypatch):
     outside = tmp_path.parent / f"{tmp_path.name}-outside.txt"
     outside.write_text("", encoding="utf-8")
     link = tmp_path / "outside-link.txt"
@@ -726,13 +725,11 @@ def test_rg_files_mode_filesystem_fallback_skips_symlinks(
     except OSError:
         pytest.skip("symbolic links are unavailable")
     monkeypatch.setattr(
-        "automata_api.workspace.paths.resolve_executable",
+        "automata_api.infrastructure.workspace.paths.resolve_executable",
         lambda _name: None,
     )
 
-    result = asyncio.run(
-        tools.run_tool("rg", {"mode": "files"}, str(tmp_path))
-    )
+    result = asyncio.run(run_tool("rg", {"mode": "files"}, str(tmp_path)))
     payload = json.loads(result.content)
 
     assert result.success is True
@@ -744,7 +741,7 @@ def test_grep_search_finds_text(tmp_path):
     source.write_text("alpha\ngrep-value\n", encoding="utf-8")
 
     result = asyncio.run(
-        tools.run_tool(
+        run_tool(
             "grep",
             {"pattern": "grep-value", "path": "sample.txt"},
             str(tmp_path),
@@ -766,7 +763,7 @@ def test_rg_search_no_matches_is_successful(tmp_path):
     source.write_text("alpha\n", encoding="utf-8")
 
     result = asyncio.run(
-        tools.run_tool(
+        run_tool(
             "rg",
             {"pattern": "missing-value", "path": "sample.txt"},
             str(tmp_path),
@@ -786,7 +783,7 @@ def test_rg_search_rejects_path_outside_workspace(tmp_path):
     workspace.mkdir()
 
     result = asyncio.run(
-        tools.run_tool(
+        run_tool(
             "rg",
             {"pattern": "anything", "path": ".."},
             str(workspace),
@@ -801,15 +798,17 @@ def test_rg_search_rejects_path_outside_workspace(tmp_path):
 
 
 def test_rg_search_falls_back_to_bash_when_native_tools_missing(tmp_path, monkeypatch):
-    if tools.resolve_bash_executable() is None:
+    if resolve_bash_executable() is None:
         pytest.skip("bash is not available")
 
     source = tmp_path / "sample.txt"
     source.write_text("fallback-value\n", encoding="utf-8")
-    monkeypatch.setattr("automata_api.workspace.paths.resolve_executable", lambda _: None)
+    monkeypatch.setattr(
+        "automata_api.infrastructure.workspace.paths.resolve_executable", lambda _: None
+    )
 
     result = asyncio.run(
-        tools.run_tool(
+        run_tool(
             "rg",
             {"pattern": "fallback-value", "path": "sample.txt"},
             str(tmp_path),
@@ -830,9 +829,7 @@ def test_read_file_reads_real_workspace_file(tmp_path):
     source = tmp_path / "sample.txt"
     source.write_text("one\ntwo\nthree\n", encoding="utf-8")
 
-    result = asyncio.run(
-        tools.run_tool("read_file", {"path": "sample.txt"}, str(tmp_path))
-    )
+    result = asyncio.run(run_tool("read_file", {"path": "sample.txt"}, str(tmp_path)))
     payload = json.loads(result.content)
 
     assert result.success is True
@@ -848,7 +845,7 @@ def test_read_file_supports_line_range(tmp_path):
     source.write_text("one\ntwo\nthree\n", encoding="utf-8")
 
     result = asyncio.run(
-        tools.run_tool(
+        run_tool(
             "read_file",
             {"path": "sample.txt", "start_line": 2, "end_line": 3},
             str(tmp_path),
@@ -867,9 +864,7 @@ def test_read_file_rejects_path_outside_workspace(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
 
-    result = asyncio.run(
-        tools.run_tool("read_file", {"path": ".."}, str(workspace))
-    )
+    result = asyncio.run(run_tool("read_file", {"path": ".."}, str(workspace)))
     payload = json.loads(result.content)
 
     assert result.success is False
@@ -880,7 +875,7 @@ def test_read_file_rejects_path_outside_workspace(tmp_path):
 
 def test_write_file_creates_appends_and_overwrites(tmp_path):
     result = asyncio.run(
-        tools.run_tool(
+        run_tool(
             "write_file",
             {"path": "nested/sample.txt", "content": "one\n", "mode": "create"},
             str(tmp_path),
@@ -893,17 +888,19 @@ def test_write_file_creates_appends_and_overwrites(tmp_path):
     assert payload["mode"] == "create"
 
     append_result = asyncio.run(
-        tools.run_tool(
+        run_tool(
             "write_file",
             {"path": "nested/sample.txt", "content": "two\n", "mode": "append"},
             str(tmp_path),
         )
     )
     assert append_result.success is True
-    assert (tmp_path / "nested" / "sample.txt").read_text(encoding="utf-8") == "one\ntwo\n"
+    assert (tmp_path / "nested" / "sample.txt").read_text(
+        encoding="utf-8"
+    ) == "one\ntwo\n"
 
     overwrite_result = asyncio.run(
-        tools.run_tool(
+        run_tool(
             "write_file",
             {"path": "nested/sample.txt", "content": "final\n"},
             str(tmp_path),
@@ -920,7 +917,7 @@ def test_write_file_create_mode_rejects_existing_file(tmp_path):
     source.write_text("existing", encoding="utf-8")
 
     result = asyncio.run(
-        tools.run_tool(
+        run_tool(
             "write_file",
             {"path": "sample.txt", "content": "new", "mode": "create"},
             str(tmp_path),
@@ -940,7 +937,7 @@ def test_write_file_rejects_path_outside_workspace(tmp_path):
     workspace.mkdir()
 
     result = asyncio.run(
-        tools.run_tool(
+        run_tool(
             "write_file",
             {"path": "../outside.txt", "content": "nope"},
             str(workspace),
@@ -969,7 +966,7 @@ def test_apply_patch_dry_run_modify_leaves_file_unchanged(tmp_path):
     )
 
     result = asyncio.run(
-        tools.run_tool("apply_patch", {"patch": patch, "dry_run": True}, str(tmp_path))
+        run_tool("apply_patch", {"patch": patch, "dry_run": True}, str(tmp_path))
     )
     payload = json.loads(result.content)
 
@@ -1004,7 +1001,7 @@ def test_apply_patch_apply_modify_changes_expected_content(tmp_path):
     )
 
     result = asyncio.run(
-        tools.run_tool("apply_patch", {"patch": patch, "dry_run": False}, str(tmp_path))
+        run_tool("apply_patch", {"patch": patch, "dry_run": False}, str(tmp_path))
     )
     payload = json.loads(result.content)
 
@@ -1024,13 +1021,15 @@ def test_apply_patch_add_file_creates_text_file(tmp_path):
     )
 
     result = asyncio.run(
-        tools.run_tool("apply_patch", {"patch": patch, "dry_run": False}, str(tmp_path))
+        run_tool("apply_patch", {"patch": patch, "dry_run": False}, str(tmp_path))
     )
     payload = json.loads(result.content)
 
     assert result.success is True
     assert payload["files"][0]["status"] == "added"
-    assert (tmp_path / "nested" / "new.txt").read_text(encoding="utf-8") == "hello\nworld\n"
+    assert (tmp_path / "nested" / "new.txt").read_text(
+        encoding="utf-8"
+    ) == "hello\nworld\n"
 
 
 def test_apply_patch_delete_file_removes_target(tmp_path):
@@ -1043,7 +1042,7 @@ def test_apply_patch_delete_file_removes_target(tmp_path):
     )
 
     result = asyncio.run(
-        tools.run_tool("apply_patch", {"patch": patch, "dry_run": False}, str(tmp_path))
+        run_tool("apply_patch", {"patch": patch, "dry_run": False}, str(tmp_path))
     )
     payload = json.loads(result.content)
 
@@ -1067,7 +1066,7 @@ def test_apply_patch_multiple_files_apply_atomically(tmp_path):
     )
 
     result = asyncio.run(
-        tools.run_tool("apply_patch", {"patch": patch, "dry_run": False}, str(tmp_path))
+        run_tool("apply_patch", {"patch": patch, "dry_run": False}, str(tmp_path))
     )
     payload = json.loads(result.content)
 
@@ -1102,7 +1101,7 @@ def test_apply_patch_context_mismatch_fails_without_writing(tmp_path):
     )
 
     result = asyncio.run(
-        tools.run_tool("apply_patch", {"patch": patch, "dry_run": False}, str(tmp_path))
+        run_tool("apply_patch", {"patch": patch, "dry_run": False}, str(tmp_path))
     )
     payload = json.loads(result.content)
 
@@ -1122,7 +1121,7 @@ def test_apply_patch_rejects_path_escape(tmp_path):
     )
 
     result = asyncio.run(
-        tools.run_tool("apply_patch", {"patch": patch, "dry_run": False}, str(tmp_path))
+        run_tool("apply_patch", {"patch": patch, "dry_run": False}, str(tmp_path))
     )
     payload = json.loads(result.content)
 
@@ -1134,7 +1133,7 @@ def test_apply_patch_rejects_path_escape(tmp_path):
 
 def test_apply_patch_rejects_malformed_patch(tmp_path):
     result = asyncio.run(
-        tools.run_tool(
+        run_tool(
             "apply_patch",
             {
                 "patch": patch_text(
@@ -1168,7 +1167,9 @@ def test_apply_patch_preview_is_real_dry_run_alias(tmp_path):
     )
 
     result = asyncio.run(
-        tools.run_tool("apply_patch_preview", {"patch": patch, "dry_run": False}, str(tmp_path))
+        run_tool(
+            "apply_patch_preview", {"patch": patch, "dry_run": False}, str(tmp_path)
+        )
     )
     payload = json.loads(result.content)
 
@@ -1193,7 +1194,7 @@ def test_apply_patch_rejects_ambiguous_hunk_context(tmp_path):
     )
 
     result = asyncio.run(
-        tools.run_tool("apply_patch", {"patch": patch, "dry_run": False}, str(tmp_path))
+        run_tool("apply_patch", {"patch": patch, "dry_run": False}, str(tmp_path))
     )
     payload = json.loads(result.content)
 
@@ -1214,7 +1215,7 @@ def test_apply_patch_rejects_insert_only_hunk_without_context(tmp_path):
     )
 
     result = asyncio.run(
-        tools.run_tool("apply_patch", {"patch": patch, "dry_run": False}, str(tmp_path))
+        run_tool("apply_patch", {"patch": patch, "dry_run": False}, str(tmp_path))
     )
     payload = json.loads(result.content)
 
@@ -1239,7 +1240,7 @@ def test_apply_patch_accepts_multiple_update_hunks(tmp_path):
     )
 
     result = asyncio.run(
-        tools.run_tool("apply_patch", {"patch": patch, "dry_run": False}, str(tmp_path))
+        run_tool("apply_patch", {"patch": patch, "dry_run": False}, str(tmp_path))
     )
 
     assert result.success is True
@@ -1260,7 +1261,7 @@ def test_apply_patch_moves_file_to_new_path(tmp_path):
     )
 
     result = asyncio.run(
-        tools.run_tool("apply_patch", {"patch": patch, "dry_run": False}, str(tmp_path))
+        run_tool("apply_patch", {"patch": patch, "dry_run": False}, str(tmp_path))
     )
     payload = json.loads(result.content)
 
@@ -1283,7 +1284,7 @@ def test_apply_patch_still_accepts_unified_diff_compatibility(tmp_path):
     )
 
     result = asyncio.run(
-        tools.run_tool("apply_patch", {"patch": patch, "dry_run": False}, str(tmp_path))
+        run_tool("apply_patch", {"patch": patch, "dry_run": False}, str(tmp_path))
     )
     payload = json.loads(result.content)
 
@@ -1293,7 +1294,7 @@ def test_apply_patch_still_accepts_unified_diff_compatibility(tmp_path):
 
 
 def test_run_tool_reports_unknown_tool(tmp_path):
-    result = asyncio.run(tools.run_tool("missing_tool", {}, str(tmp_path)))
+    result = asyncio.run(run_tool("missing_tool", {}, str(tmp_path)))
     payload = json.loads(result.content)
 
     assert result.success is False

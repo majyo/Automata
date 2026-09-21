@@ -10,8 +10,8 @@ from __future__ import annotations
 from fastapi import Request, WebSocket
 
 from automata_api.bootstrap.container import AppContainer
-from automata_api.repositories.runs import RunStore
-from automata_api.sessions.ports import ConversationStore, SessionStore
+from automata_api.core.runs.ports import RunStore
+from automata_api.core.sessions.ports import ConversationStore, SessionStore
 
 
 def container_from_request(request: Request) -> AppContainer:
@@ -48,3 +48,15 @@ def _container(state: object) -> AppContainer:
     if not isinstance(container, AppContainer):  # pragma: no cover - wiring guard
         raise RuntimeError("Application container is not configured.")
     return container
+
+
+def mcp_catalog(request: Request):
+    return container_from_request(request).mcp
+
+
+def skill_catalog(request: Request):
+    return container_from_request(request).skills
+
+
+def sandbox_administration(request: Request):
+    return container_from_request(request).sandbox

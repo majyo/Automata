@@ -7,7 +7,9 @@ from automata_api.main import create_app
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTOMATA_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("AUTOMATA_API_TOKEN", "test-api-token-that-is-at-least-32-characters")
+    monkeypatch.setenv(
+        "AUTOMATA_API_TOKEN", "test-api-token-that-is-at-least-32-characters"
+    )
     monkeypatch.delenv("AUTOMATA_LLM_API_KEY", raising=False)
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("AUTOMATA_CONTEXT_COMPRESSION_ENABLED", raising=False)

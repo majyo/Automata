@@ -4,9 +4,12 @@ from dataclasses import dataclass
 
 import pytest
 
-from automata_api.agent import llm, prompts, runtime
-from automata_api.agent.tools import ToolResult
-from automata_api.config import AgentConfig, ContextCompressionConfig
+from automata_api.bootstrap import tools as builtin_tools
+from automata_api.core.agent import prompts, runtime
+from automata_api.core.agent.settings import TurnSettings
+from automata_api.core.tools.models import ToolResult
+from automata_api.infrastructure.llm import client as llm
+from automata_api.infrastructure.llm.chat_completions import ChatCompletionsProvider
 
 
 @dataclass
@@ -52,29 +55,6 @@ class MemoryStore:
         }
 
 
-def configure_runtime(monkeypatch) -> None:
-    monkeypatch.setattr(
-        runtime,
-        "get_agent_config",
-        lambda: AgentConfig(
-            api_key="test-key",
-            base_url="https://provider.test",
-            model="plan-unit-model",
-            timeout_seconds=30.0,
-            temperature=0.2,
-        ),
-    )
-    monkeypatch.setattr(
-        runtime,
-        "get_context_compression_config",
-        lambda: ContextCompressionConfig(
-            enabled=False,
-            threshold_chars=10_000,
-            target_chars=1_000,
-        ),
-    )
-
-
 async def collect_events(events):
     return [event async for event in events]
 
@@ -114,7 +94,6 @@ def test_plan_tool_allowlist_matches_registered_tools_and_prompt():
 
 
 def test_plan_loop_exposes_only_plan_tools(monkeypatch):
-    configure_runtime(monkeypatch)
     calls = []
 
     async def fake_stream_chat_completion(messages, tools=None):
@@ -126,6 +105,9 @@ def test_plan_loop_exposes_only_plan_tools(monkeypatch):
     events = asyncio.run(
         collect_events(
             runtime.stream_plan_loop(
+                settings=TurnSettings(),
+                provider=ChatCompletionsProvider(),
+                tool_runner=builtin_tools.run_tool,
                 session_id="session-1",
                 store=MemoryStore(
                     recent_messages=[{"role": "user", "content": "plan it"}]
@@ -150,7 +132,6 @@ def test_plan_loop_exposes_only_plan_tools(monkeypatch):
 
 
 def test_plan_loop_final_response_saves_assistant_context(monkeypatch):
-    configure_runtime(monkeypatch)
     store = MemoryStore(recent_messages=[{"role": "user", "content": "plan it"}])
 
     async def fake_stream_chat_completion(messages, tools=None):
@@ -161,6 +142,9 @@ def test_plan_loop_final_response_saves_assistant_context(monkeypatch):
     events = asyncio.run(
         collect_events(
             runtime.stream_plan_loop(
+                settings=TurnSettings(),
+                provider=ChatCompletionsProvider(),
+                tool_runner=builtin_tools.run_tool,
                 session_id="session-1",
                 store=store,
                 workspace="workspace",
@@ -182,7 +166,6 @@ def test_plan_loop_final_response_saves_assistant_context(monkeypatch):
 
 @pytest.mark.parametrize("tool_name", sorted(runtime.PLAN_TOOL_NAMES))
 def test_plan_loop_executes_every_allowed_plan_tool(monkeypatch, tool_name):
-    configure_runtime(monkeypatch)
     tool_runs = []
 
     async def fake_stream_chat_completion(messages, tools=None):
@@ -216,11 +199,14 @@ def test_plan_loop_executes_every_allowed_plan_tool(monkeypatch, tool_name):
         )
 
     monkeypatch.setattr(llm, "stream_chat_completion", fake_stream_chat_completion)
-    monkeypatch.setattr(runtime, "run_tool", fake_run_tool)
+    monkeypatch.setattr(builtin_tools, "run_tool", fake_run_tool)
 
     events = asyncio.run(
         collect_events(
             runtime.stream_plan_loop(
+                settings=TurnSettings(),
+                provider=ChatCompletionsProvider(),
+                tool_runner=builtin_tools.run_tool,
                 session_id="session-1",
                 store=MemoryStore(recent_messages=[]),
                 workspace="workspace",
@@ -248,7 +234,6 @@ def test_plan_loop_executes_every_allowed_plan_tool(monkeypatch, tool_name):
 
 
 def test_plan_loop_runs_allowed_preview_tool_and_keeps_plan_mode(monkeypatch):
-    configure_runtime(monkeypatch)
     calls = []
     tool_runs = []
     store = MemoryStore(recent_messages=[{"role": "user", "content": "plan patch"}])
@@ -289,11 +274,14 @@ def test_plan_loop_runs_allowed_preview_tool_and_keeps_plan_mode(monkeypatch):
         )
 
     monkeypatch.setattr(llm, "stream_chat_completion", fake_stream_chat_completion)
-    monkeypatch.setattr(runtime, "run_tool", fake_run_tool)
+    monkeypatch.setattr(builtin_tools, "run_tool", fake_run_tool)
 
     events = asyncio.run(
         collect_events(
             runtime.stream_plan_loop(
+                settings=TurnSettings(),
+                provider=ChatCompletionsProvider(),
+                tool_runner=builtin_tools.run_tool,
                 session_id="session-1",
                 store=store,
                 workspace="workspace",
@@ -332,7 +320,6 @@ def test_plan_loop_runs_allowed_preview_tool_and_keeps_plan_mode(monkeypatch):
 
 
 def test_plan_loop_executes_multiple_allowed_tool_calls_in_one_turn(monkeypatch):
-    configure_runtime(monkeypatch)
     calls = []
     tool_runs = []
 
@@ -382,11 +369,14 @@ def test_plan_loop_executes_multiple_allowed_tool_calls_in_one_turn(monkeypatch)
         )
 
     monkeypatch.setattr(llm, "stream_chat_completion", fake_stream_chat_completion)
-    monkeypatch.setattr(runtime, "run_tool", fake_run_tool)
+    monkeypatch.setattr(builtin_tools, "run_tool", fake_run_tool)
 
     events = asyncio.run(
         collect_events(
             runtime.stream_plan_loop(
+                settings=TurnSettings(),
+                provider=ChatCompletionsProvider(),
+                tool_runner=builtin_tools.run_tool,
                 session_id="session-1",
                 store=MemoryStore(recent_messages=[]),
                 workspace="workspace",
@@ -419,7 +409,6 @@ def test_plan_loop_executes_multiple_allowed_tool_calls_in_one_turn(monkeypatch)
     "tool_name", ["exec_command", "run_bash", "write_file", "apply_patch"]
 )
 def test_plan_loop_blocks_every_mutating_tool(monkeypatch, tool_name):
-    configure_runtime(monkeypatch)
 
     async def fake_stream_chat_completion(messages, tools=None):
         if not any(message.get("role") == "tool" for message in messages):
@@ -447,11 +436,14 @@ def test_plan_loop_blocks_every_mutating_tool(monkeypatch, tool_name):
         raise AssertionError(f"{name} must be blocked in plan mode")
 
     monkeypatch.setattr(llm, "stream_chat_completion", fake_stream_chat_completion)
-    monkeypatch.setattr(runtime, "run_tool", fail_run_tool)
+    monkeypatch.setattr(builtin_tools, "run_tool", fail_run_tool)
 
     events = asyncio.run(
         collect_events(
             runtime.stream_plan_loop(
+                settings=TurnSettings(),
+                provider=ChatCompletionsProvider(),
+                tool_runner=builtin_tools.run_tool,
                 session_id="session-1",
                 store=MemoryStore(recent_messages=[]),
                 workspace="workspace",
@@ -472,7 +464,6 @@ def test_plan_loop_blocks_every_mutating_tool(monkeypatch, tool_name):
 
 
 def test_plan_loop_blocks_unlisted_tool_even_if_model_requests_it(monkeypatch):
-    configure_runtime(monkeypatch)
     store = MemoryStore(recent_messages=[{"role": "user", "content": "plan write"}])
 
     async def fake_stream_chat_completion(messages, tools=None):
@@ -502,11 +493,14 @@ def test_plan_loop_blocks_unlisted_tool_even_if_model_requests_it(monkeypatch):
         raise AssertionError("blocked plan-mode tools must not execute")
 
     monkeypatch.setattr(llm, "stream_chat_completion", fake_stream_chat_completion)
-    monkeypatch.setattr(runtime, "run_tool", fail_run_tool)
+    monkeypatch.setattr(builtin_tools, "run_tool", fail_run_tool)
 
     events = asyncio.run(
         collect_events(
             runtime.stream_plan_loop(
+                settings=TurnSettings(),
+                provider=ChatCompletionsProvider(),
+                tool_runner=builtin_tools.run_tool,
                 session_id="session-1",
                 store=store,
                 workspace="workspace",
@@ -527,13 +521,13 @@ def test_plan_loop_blocks_unlisted_tool_even_if_model_requests_it(monkeypatch):
     assert events[2]["success"] is False
     assert blocked_result["error"] == "blocked_by_plan_mode"
     assert events[-1]["mode"] == "plan"
-    assert json.loads((store.context_messages or [])[1]["message"]["content"])[
-        "error"
-    ] == "blocked_by_plan_mode"
+    assert (
+        json.loads((store.context_messages or [])[1]["message"]["content"])["error"]
+        == "blocked_by_plan_mode"
+    )
 
 
 def test_plan_loop_blocks_unknown_tool_before_registry_lookup(monkeypatch):
-    configure_runtime(monkeypatch)
 
     async def fake_stream_chat_completion(messages, tools=None):
         if not any(message.get("role") == "tool" for message in messages):
@@ -558,11 +552,14 @@ def test_plan_loop_blocks_unknown_tool_before_registry_lookup(monkeypatch):
         raise AssertionError("unknown tools must be blocked before registry lookup")
 
     monkeypatch.setattr(llm, "stream_chat_completion", fake_stream_chat_completion)
-    monkeypatch.setattr(runtime, "run_tool", fail_run_tool)
+    monkeypatch.setattr(builtin_tools, "run_tool", fail_run_tool)
 
     events = asyncio.run(
         collect_events(
             runtime.stream_plan_loop(
+                settings=TurnSettings(),
+                provider=ChatCompletionsProvider(),
+                tool_runner=builtin_tools.run_tool,
                 session_id="session-1",
                 store=MemoryStore(recent_messages=[]),
                 workspace="workspace",
@@ -579,7 +576,6 @@ def test_plan_loop_blocks_unknown_tool_before_registry_lookup(monkeypatch):
 
 
 def test_plan_loop_persists_blocked_tool_protocol_context(monkeypatch):
-    configure_runtime(monkeypatch)
     store = MemoryStore(recent_messages=[{"role": "user", "content": "plan write"}])
 
     async def fake_stream_chat_completion(messages, tools=None):
@@ -605,11 +601,14 @@ def test_plan_loop_persists_blocked_tool_protocol_context(monkeypatch):
         raise AssertionError("blocked tool should not run")
 
     monkeypatch.setattr(llm, "stream_chat_completion", fake_stream_chat_completion)
-    monkeypatch.setattr(runtime, "run_tool", fail_run_tool)
+    monkeypatch.setattr(builtin_tools, "run_tool", fail_run_tool)
 
     asyncio.run(
         collect_events(
             runtime.stream_plan_loop(
+                settings=TurnSettings(),
+                provider=ChatCompletionsProvider(),
+                tool_runner=builtin_tools.run_tool,
                 session_id="session-1",
                 store=store,
                 workspace="workspace",
@@ -656,7 +655,6 @@ def test_blocked_plan_tool_result_payload_is_stable():
 
 
 def test_approved_plan_message_is_inserted_before_recent_history(monkeypatch):
-    configure_runtime(monkeypatch)
     calls = []
 
     async def fake_stream_chat_completion(messages, tools=None):
@@ -668,6 +666,9 @@ def test_approved_plan_message_is_inserted_before_recent_history(monkeypatch):
     events = asyncio.run(
         collect_events(
             runtime.stream_agent_loop(
+                settings=TurnSettings(),
+                provider=ChatCompletionsProvider(),
+                tool_runner=builtin_tools.run_tool,
                 session_id="session-1",
                 store=MemoryStore(
                     recent_messages=[{"role": "user", "content": "execute"}]
@@ -691,7 +692,6 @@ def test_approved_plan_message_is_inserted_before_recent_history(monkeypatch):
 
 
 def test_approved_plan_execution_uses_act_mode_and_allows_mutating_tools(monkeypatch):
-    configure_runtime(monkeypatch)
     calls = []
     tool_runs = []
 
@@ -725,11 +725,14 @@ def test_approved_plan_execution_uses_act_mode_and_allows_mutating_tools(monkeyp
         )
 
     monkeypatch.setattr(llm, "stream_chat_completion", fake_stream_chat_completion)
-    monkeypatch.setattr(runtime, "run_tool", fake_run_tool)
+    monkeypatch.setattr(builtin_tools, "run_tool", fake_run_tool)
 
     events = asyncio.run(
         collect_events(
             runtime.stream_agent_loop(
+                settings=TurnSettings(),
+                provider=ChatCompletionsProvider(),
+                tool_runner=builtin_tools.run_tool,
                 session_id="session-1",
                 store=MemoryStore(
                     recent_messages=[{"role": "user", "content": "execute it"}]

@@ -154,8 +154,8 @@ function Build-ApiSidecar {
   # relative source against the spec directory, which is $SpecDir here and
   # not the api project, so the file would not be found.
   $MigrationSourceData = (
-    (Join-Path $ApiDir "automata_api\db\migrations\*.py") +
-    ";automata_api\db\migrations"
+    (Join-Path $ApiDir "automata_api\infrastructure\persistence\db\migrations\*.py") +
+    ";automata_api\infrastructure\persistence\db\migrations"
   )
 
   $Arguments = @(

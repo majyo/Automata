@@ -46,8 +46,7 @@ def test_two_apps_expose_distinct_containers(settings):
 
     assert first_app.state.container is not second_app.state.container
     assert (
-        first_app.state.container.event_hub
-        is not second_app.state.container.event_hub
+        first_app.state.container.event_hub is not second_app.state.container.event_hub
     )
 
 
@@ -64,9 +63,7 @@ def test_container_receives_the_settings_snapshot(settings):
     container = create_container(settings)
 
     assert container.settings is settings
-    assert (
-        container.coordinator._retention_days == settings.run_events.retention_days
-    )
+    assert container.coordinator._retention_days == settings.run_events.retention_days
 
 
 def test_container_shares_one_run_store_across_collaborators(settings):
@@ -85,14 +82,14 @@ def test_container_shares_one_run_store_across_collaborators(settings):
 def test_container_exposes_a_session_store_by_default(settings):
     container = create_container(settings)
 
-    from automata_api.storage.sqlite.stores import SqliteSessionStore
+    from automata_api.infrastructure.persistence.stores import SqliteSessionStore
 
     assert isinstance(container.session_store, SqliteSessionStore)
 
 
 def test_connection_uses_the_injected_session_store(settings, monkeypatch):
     """Session validation must go through the injected store, not a global."""
-    from automata_api.services.connection import AgentConnection
+    from automata_api.transport.websocket.connection import AgentConnection
 
     container = create_container(settings)
     calls: list[str] = []
@@ -108,6 +105,7 @@ def test_connection_uses_the_injected_session_store(settings, monkeypatch):
         event_hub=container.event_hub,
         session_store=FakeSessionStore(),
         replay=container.replay,
+        runs=container.runs,
     )
 
     sent: list[dict[str, object]] = []
@@ -129,9 +127,7 @@ def test_connection_uses_the_injected_session_store(settings, monkeypatch):
     assert sent == [{"type": "error", "message": "Session not found"}]
 
 
-def test_partial_startup_failure_still_releases_observability(
-    settings, monkeypatch
-):
+def test_partial_startup_failure_still_releases_observability(settings, monkeypatch):
     """A failure after observability starts must still stop it.
 
     Observability is started for real and the failure is injected at the
@@ -148,7 +144,7 @@ def test_partial_startup_failure_still_releases_observability(
         failing_init_db,
     )
 
-    from automata_api.observability import get_observability_manager
+    from automata_api.infrastructure.observability import get_observability_manager
 
     with pytest.raises(RuntimeError, match="schema unavailable"):
         with TestClient(create_app(container=container)):
@@ -184,9 +180,7 @@ def test_shutdown_order_is_stable(settings, monkeypatch):
         "terminate_all",
         recorder("process_supervisor.terminate_all"),
     )
-    monkeypatch.setattr(
-        container.event_hub, "clear", recorder("event_hub.clear")
-    )
+    monkeypatch.setattr(container.event_hub, "clear", recorder("event_hub.clear"))
 
     import asyncio
 

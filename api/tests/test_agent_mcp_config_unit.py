@@ -1,12 +1,12 @@
 import json
 
-from automata_api.agent.tools.model import ToolExposure
-from automata_api.extensions.mcp.config import (
+from automata_api.core.tools.model import ToolExposure
+from automata_api.infrastructure.extensions.mcp.config import (
     McpStreamableHttpTransportDefinition,
     load_mcp_config,
     resolve_streamable_http_transport,
 )
-from automata_api.extensions.mcp.trust import (
+from automata_api.infrastructure.extensions.mcp.trust import (
     McpTrustStore,
     create_grant,
     server_fingerprint,
@@ -66,10 +66,15 @@ def test_workspace_config_cannot_grant_or_directly_expose_server(tmp_path):
     definition = result.definitions[0]
     assert definition.provenance == "workspace"
     assert definition.default_exposure == ToolExposure.DEFERRED
-    assert any("Ignored workspace authorization fields" in item for item in result.warnings)
-    assert McpTrustStore(data_dir / "mcp-grants.json").grant_for(
-        definition, str(workspace)
-    ) is None
+    assert any(
+        "Ignored workspace authorization fields" in item for item in result.warnings
+    )
+    assert (
+        McpTrustStore(data_dir / "mcp-grants.json").grant_for(
+            definition, str(workspace)
+        )
+        is None
+    )
 
 
 def test_user_definition_overrides_workspace_definition(tmp_path):
@@ -78,11 +83,11 @@ def test_user_definition_overrides_workspace_definition(tmp_path):
     workspace.mkdir()
     write_config(
         workspace / ".automata" / "mcp.json",
-        {"servers": {"shared": server_payload(args=["workspace.py"]) }},
+        {"servers": {"shared": server_payload(args=["workspace.py"])}},
     )
     write_config(
         data_dir / "mcp.json",
-        {"servers": {"shared": server_payload(args=["user.py"]) }},
+        {"servers": {"shared": server_payload(args=["user.py"])}},
     )
 
     result = load_mcp_config(str(workspace), data_dir=data_dir, environ={})
@@ -99,9 +104,11 @@ def test_config_change_invalidates_grant_fingerprint(tmp_path):
     config_path = data_dir / "mcp.json"
     write_config(
         config_path,
-        {"servers": {"server": server_payload(args=["one.py"]) }},
+        {"servers": {"server": server_payload(args=["one.py"])}},
     )
-    first = load_mcp_config(str(workspace), data_dir=data_dir, environ={}).definitions[0]
+    first = load_mcp_config(str(workspace), data_dir=data_dir, environ={}).definitions[
+        0
+    ]
     store = McpTrustStore(data_dir / "mcp-grants.json")
     store.save(
         create_grant(
@@ -115,9 +122,11 @@ def test_config_change_invalidates_grant_fingerprint(tmp_path):
 
     write_config(
         config_path,
-        {"servers": {"server": server_payload(args=["two.py"]) }},
+        {"servers": {"server": server_payload(args=["two.py"])}},
     )
-    second = load_mcp_config(str(workspace), data_dir=data_dir, environ={}).definitions[0]
+    second = load_mcp_config(str(workspace), data_dir=data_dir, environ={}).definitions[
+        0
+    ]
 
     assert server_fingerprint(first, str(workspace)) != server_fingerprint(
         second, str(workspace)
@@ -191,7 +200,10 @@ def test_streamable_http_rejects_remote_plaintext_and_managed_headers(tmp_path):
     assert [definition.name for definition in result.definitions] == ["loopback"]
     assert any("must use HTTPS" in warning for warning in result.warnings)
     assert any("managed by Automata" in warning for warning in result.warnings)
-    assert any("must use an environment variable reference" in warning for warning in result.warnings)
+    assert any(
+        "must use an environment variable reference" in warning
+        for warning in result.warnings
+    )
 
 
 def test_streamable_http_rejects_newlines_from_resolved_header_secret(tmp_path):

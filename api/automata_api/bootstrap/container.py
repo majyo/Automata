@@ -15,17 +15,43 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from automata_api.agent.execution.coordinator import RunCoordinator
-from automata_api.agent.execution.event_hub import RunEventHub
-from automata_api.agent.execution.process import ProcessSupervisor
-from automata_api.agent.execution.process_sessions import ProcessSessionManager
 from automata_api.bootstrap.settings import AppSettings, load_settings
-from automata_api.repositories.runs import RunStore, get_default_run_store
-from automata_api.runs.replay import ReplayService
-from automata_api.sessions.ports import ConversationStore, SessionStore
-from automata_api.storage.sqlite.stores import (
+from automata_api.bootstrap.turn_resources import DefaultTurnResourcesFactory
+from automata_api.core.agent.ports import ModelProvider
+from automata_api.core.agent.resources import TurnResourcesFactory
+from automata_api.core.runs.coordinator import RunCoordinator
+from automata_api.core.runs.event_hub import RunEventHub
+from automata_api.core.runs.ports import RunStore
+from automata_api.core.runs.replay import ReplayService
+from automata_api.core.runs.service import RunService
+from automata_api.core.runs.turns import TurnService
+from automata_api.core.sessions.ports import (
+    ContextStore,
+    ConversationStore,
+    SessionStore,
+)
+from automata_api.core.telemetry import configure_observer
+from automata_api.core.tools.management import (
+    McpCatalog,
+    SandboxAdministration,
+    SkillCatalog,
+)
+from automata_api.infrastructure.extensions.catalog import (
+    LocalMcpCatalog,
+    LocalSkillCatalog,
+)
+from automata_api.infrastructure.llm.chat_completions import ChatCompletionsProvider
+from automata_api.infrastructure.observability.adapter import StructuredObserver
+from automata_api.infrastructure.persistence.runs import SqliteRunStore
+from automata_api.infrastructure.persistence.stores import (
+    SqliteContextStore,
     SqliteConversationStore,
     SqliteSessionStore,
+)
+from automata_api.infrastructure.processes.process import ProcessSupervisor
+from automata_api.infrastructure.processes.process_sessions import ProcessSessionManager
+from automata_api.infrastructure.sandbox.administration import (
+    LocalSandboxAdministration,
 )
 
 
@@ -40,18 +66,45 @@ class AppContainer:
     """
 
     settings: AppSettings
+    mcp: McpCatalog = field(default_factory=LocalMcpCatalog)
+    skills: SkillCatalog = field(default_factory=LocalSkillCatalog)
+    sandbox: SandboxAdministration = field(default_factory=LocalSandboxAdministration)
     event_hub: RunEventHub = field(default_factory=RunEventHub)
     process_supervisor: ProcessSupervisor = field(default_factory=ProcessSupervisor)
     process_sessions: ProcessSessionManager = field(
         default_factory=ProcessSessionManager
     )
-    run_store: RunStore = field(default_factory=get_default_run_store)
+    run_store: RunStore = field(default_factory=SqliteRunStore)
     session_store: SessionStore = field(default_factory=SqliteSessionStore)
     conversation_store: ConversationStore = field(
         default_factory=SqliteConversationStore
     )
+    context_store: ContextStore = field(default_factory=SqliteContextStore)
+    model_provider: ModelProvider = field(default_factory=ChatCompletionsProvider)
+    turn_resources: TurnResourcesFactory | None = None
+    _runs: RunService | None = field(default=None, repr=False)
     _coordinator: RunCoordinator | None = field(default=None, repr=False)
     _replay: ReplayService | None = field(default=None, repr=False)
+
+    @property
+    def runs(self) -> RunService:
+        if self._runs is None:
+            resources = self.turn_resources or DefaultTurnResourcesFactory(
+                context=self.context_store, provider=self.model_provider
+            )
+            turns = TurnService(
+                resources=resources,
+                sessions=self.session_store,
+                conversation=self.conversation_store,
+                context=self.context_store,
+            )
+            self._runs = RunService(
+                coordinator=self.coordinator,
+                turns=turns,
+                conversation=self.conversation_store,
+                store=self.run_store,
+            )
+        return self._runs
 
     @property
     def replay(self) -> ReplayService:
@@ -81,4 +134,5 @@ class AppContainer:
 
 def create_container(settings: AppSettings | None = None) -> AppContainer:
     """Build a container for one application instance."""
+    configure_observer(StructuredObserver())
     return AppContainer(settings=settings or load_settings())

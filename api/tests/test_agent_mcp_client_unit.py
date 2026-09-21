@@ -2,12 +2,12 @@ import asyncio
 
 import pytest
 
-from automata_api.extensions.mcp.config import (
+from automata_api.infrastructure.extensions.mcp.config import (
     McpServerDefinition,
     McpStdioTransportDefinition,
 )
-from automata_api.extensions.mcp.manager import McpConnectionManager
-from automata_api.extensions.mcp.schema import (
+from automata_api.infrastructure.extensions.mcp.manager import McpConnectionManager
+from automata_api.infrastructure.extensions.mcp.schema import (
     McpCallResult,
     McpDiscoveryLimits,
     McpError,
@@ -106,9 +106,7 @@ def test_manager_rejects_pagination_cycle(tmp_path):
 
 
 def test_manager_enforces_tool_limit(tmp_path):
-    fake = FakeClient(
-        {None: McpListToolsPage((tool("one"), tool("two")), None)}
-    )
+    fake = FakeClient({None: McpListToolsPage((tool("one"), tool("two")), None)})
 
     async def run():
         async with McpConnectionManager(

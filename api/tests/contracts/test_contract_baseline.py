@@ -81,9 +81,7 @@ def test_client_commands_only_use_published_fields():
 
 
 def test_sandbox_error_codes_match_the_runtime_vocabulary():
-    from automata_api.agent.execution.sandbox.protocol import (
-        _explicit_failure,
-    )
+    from automata_api.infrastructure.sandbox.protocol import _explicit_failure
 
     for code in ERRORS["sandbox_error_codes"]:
         failure = _explicit_failure(
@@ -94,7 +92,7 @@ def test_sandbox_error_codes_match_the_runtime_vocabulary():
 
 
 def test_unknown_sandbox_codes_collapse_to_protocol_error():
-    from automata_api.agent.execution.sandbox.protocol import _explicit_failure
+    from automata_api.infrastructure.sandbox.protocol import _explicit_failure
 
     failure = _explicit_failure(
         "AUTOMATA_SANDBOX_ERROR:" + json.dumps({"code": "not_a_real_code"})
@@ -105,7 +103,7 @@ def test_unknown_sandbox_codes_collapse_to_protocol_error():
 
 
 def test_public_run_error_codes_are_reachable_from_the_error_wrapper():
-    from automata_api.agent.execution.model import PublicRunError
+    from automata_api.core.runs.model import PublicRunError
 
     for code in ERRORS["public_run_errors"]:
         error = PublicRunError(code, "message")
@@ -114,7 +112,7 @@ def test_public_run_error_codes_are_reachable_from_the_error_wrapper():
 
 
 def test_tool_result_contract_matches_the_dataclass():
-    from automata_api.agent.tools.models import ToolResult
+    from automata_api.core.tools.models import ToolResult
 
     fields = [field.name for field in dataclasses.fields(ToolResult)]
     assert fields == TOOL_RESULTS["result_fields"]
@@ -138,7 +136,9 @@ def test_tool_result_contract_matches_the_dataclass():
 
 
 def test_process_session_error_codes_are_stable():
-    from automata_api.agent.execution.process_sessions import ProcessSessionError
+    from automata_api.infrastructure.processes.process_sessions import (
+        ProcessSessionError,
+    )
 
     for code in ERRORS["process_session_error_codes"]:
         assert ProcessSessionError(code, "message").code == code
@@ -174,12 +174,8 @@ def test_replay_live_events_are_deduplicated_against_the_watermark():
     for scenario in REPLAY["scenarios"]:
         watermark = max(scenario["persisted_sequences"])
         for live in scenario["live_during_replay"]:
-            already_replayed = live["seq"] in scenario["expect"][
-                "replayed_sequences"
-            ]
-            delivered = live["seq"] in scenario["expect"][
-                "delivered_after_watermark"
-            ]
+            already_replayed = live["seq"] in scenario["expect"]["replayed_sequences"]
+            delivered = live["seq"] in scenario["expect"]["delivered_after_watermark"]
             if live["seq"] <= watermark:
                 assert not delivered, (
                     f"{scenario['id']}: seq {live['seq']} is at or below the "

@@ -5,11 +5,11 @@ import json
 import sys
 from pathlib import Path
 
-from automata_api.extensions.mcp.config import (
+from automata_api.infrastructure.extensions.mcp.config import (
     McpServerDefinition,
     McpStdioTransportDefinition,
 )
-from automata_api.extensions.mcp.manager import McpConnectionManager
+from automata_api.infrastructure.extensions.mcp.manager import McpConnectionManager
 
 FIXTURE = Path(__file__).parent / "fixtures" / "fake_mcp_server.py"
 

@@ -15,8 +15,9 @@ from fastapi import FastAPI
 from automata_api.bootstrap.container import AppContainer, create_container
 from automata_api.bootstrap.lifecycle import app_lifespan
 from automata_api.bootstrap.settings import AppSettings
-from automata_api.routers import chat, health, mcp, runs, sandbox, sessions, skills
+from automata_api.transport.http import health, mcp, runs, sandbox, sessions, skills
 from automata_api.transport.http.middleware import install_http_middleware
+from automata_api.transport.websocket import route as chat
 
 
 def create_app(

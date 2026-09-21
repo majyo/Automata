@@ -1,22 +1,29 @@
 import asyncio
 import json
 
-from automata_api.agent.backends.local import LocalBackend
-from automata_api.agent.execution.model import CancellationToken
-from automata_api.agent.runtime import stream_model_loop
-from automata_api.agent.tools.model import ToolDiscoveryContext
-from automata_api.agent.tools.providers import ContextToolProvider
-from automata_api.agent.tools.router import ToolRouter
-from automata_api.agent.tools.thread_context import (
+from automata_api.bootstrap import tools as builtin_tools
+from automata_api.config import ContextCompressionConfig
+from automata_api.core.agent.runtime import stream_model_loop
+from automata_api.core.agent.types import AgentLoopEvent
+from automata_api.core.runs.model import CancellationToken
+from automata_api.core.tools.model import ToolDiscoveryContext
+from automata_api.core.tools.providers import ContextToolProvider
+from automata_api.core.tools.router import ToolRouter
+from automata_api.core.tools.thread_context import (
     SEARCH_THREAD_CONTEXT_NAME,
     SearchThreadContextTool,
 )
-from automata_api.agent.types import AgentLoopEvent
-from automata_api.config import ContextCompressionConfig
-from automata_api.db.connection import connect_db, db_lock
-from automata_api.db.context_search import CONTEXT_SOURCE_SEARCH
-from automata_api.repositories.agent_store import SessionAgentContextStore
-from automata_api.repositories.sessions import save_context_message, search_context
+from automata_api.infrastructure.llm.chat_completions import ChatCompletionsProvider
+from automata_api.infrastructure.persistence.db.connection import connect_db, db_lock
+from automata_api.infrastructure.persistence.db.context_search import (
+    CONTEXT_SOURCE_SEARCH,
+)
+from automata_api.infrastructure.persistence.sessions import (
+    save_context_message,
+    search_context,
+)
+from automata_api.infrastructure.persistence.stores import SqliteContextStore
+from automata_api.infrastructure.workspace.backends.local import LocalBackend
 
 
 def test_context_search_returns_old_messages_and_isolates_sessions(client):
@@ -76,12 +83,16 @@ def test_session_delete_removes_context_search_documents(client):
     assert client.delete(f"/sessions/{session['id']}").status_code == 204
 
     with db_lock, connect_db() as db:
-        assert db.execute(
-            "SELECT COUNT(*) FROM agent_context_search_documents"
-        ).fetchone()[0] == 0
-        assert db.execute(
-            "SELECT COUNT(*) FROM agent_context_search_fts"
-        ).fetchone()[0] == 0
+        assert (
+            db.execute(
+                "SELECT COUNT(*) FROM agent_context_search_documents"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            db.execute("SELECT COUNT(*) FROM agent_context_search_fts").fetchone()[0]
+            == 0
+        )
 
 
 def test_context_search_handles_chinese_and_result_bounds(client):
@@ -106,7 +117,7 @@ def test_search_thread_context_tool_is_bound_to_session_and_read_only(client):
         session["id"],
         {"role": "user", "content": "bound-tool-needle"},
     )
-    store = SessionAgentContextStore()
+    store = SqliteContextStore()
     tool = SearchThreadContextTool(session_id=session["id"], store=store)
 
     result = asyncio.run(tool.run({"query": "bound-tool-needle"}))
@@ -124,7 +135,7 @@ def test_search_thread_context_tool_is_bound_to_session_and_read_only(client):
 
 def test_context_tool_provider_exposes_search_in_act_and_plan_modes(client, tmp_path):
     session = client.post("/sessions", json={"title": "Provider"}).json()
-    provider = ContextToolProvider(SessionAgentContextStore())
+    provider = ContextToolProvider(SqliteContextStore())
     context = ToolDiscoveryContext(
         session_id=session["id"],
         workspace=str(tmp_path),
@@ -144,7 +155,7 @@ def test_model_loop_can_call_thread_context_and_continue(monkeypatch, client):
         session["id"],
         {"role": "user", "content": "loop-history-needle"},
     )
-    store = SessionAgentContextStore()
+    store = SqliteContextStore()
     router = ToolRouter(
         ContextToolProvider(store).discover(
             ToolDiscoveryContext(
@@ -168,9 +179,7 @@ def test_model_loop_can_call_thread_context_and_continue(monkeypatch, client):
                         "type": "function",
                         "function": {
                             "name": SEARCH_THREAD_CONTEXT_NAME,
-                            "arguments": json.dumps(
-                                {"query": "loop-history-needle"}
-                            ),
+                            "arguments": json.dumps({"query": "loop-history-needle"}),
                         },
                     }
                 ]
@@ -178,7 +187,7 @@ def test_model_loop_can_call_thread_context_and_continue(monkeypatch, client):
             return
         yield {"content": "I found the historical context."}
 
-    from automata_api.agent import llm
+    from automata_api.infrastructure.llm import client as llm
 
     monkeypatch.setattr(llm, "stream_chat_completion", fake_stream)
 
@@ -186,6 +195,8 @@ def test_model_loop_can_call_thread_context_and_continue(monkeypatch, client):
         return [
             event
             async for event in stream_model_loop(
+                provider=ChatCompletionsProvider(),
+                tool_runner=builtin_tools.run_tool,
                 messages=[{"role": "system", "content": "test"}],
                 compression_config=ContextCompressionConfig(False, 100_000, 20_000),
                 model="test-model",

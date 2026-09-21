@@ -5,9 +5,48 @@ from pathlib import Path
 
 import pytest
 
-from automata_api.agent import tools
-from automata_api.agent.tools import registry
-from automata_api.agent.tools.base import AgentTool
+from automata_api.core.tools import registry
+from automata_api.core.tools.args import (
+    DEFAULT_BASH_TIMEOUT_SECONDS,
+    MAX_BASH_TIMEOUT_SECONDS,
+    bool_argument,
+    parse_tool_arguments,
+    positive_int_argument,
+    string_argument,
+    timeout_argument,
+)
+from automata_api.core.tools.base import AgentTool
+from automata_api.core.tools.constants import OUTPUT_LIMIT
+from automata_api.core.tools.models import ToolResult
+from automata_api.core.tools.patches import (
+    apply_hunks_to_content,
+    diff_header_path,
+    parse_unified_patch,
+    patch_file_status,
+    patch_summary,
+)
+from automata_api.core.tools.registry import tool_specs
+from automata_api.core.tools.results import (
+    decode_output,
+    patch_error_result,
+    search_result_was_no_match,
+    truncate_output,
+)
+from automata_api.core.tools.text import select_line_range, truncate_content
+from automata_api.infrastructure.processes.output import (
+    capture_process_output,
+    read_limited_stream,
+)
+from automata_api.infrastructure.processes.processes import (
+    bash_search_command,
+    display_command,
+    search_exit_code_is_ok,
+)
+from automata_api.infrastructure.workspace.paths import (
+    path_argument_for_cwd,
+    resolve_file_path,
+    resolve_search_path,
+)
 
 
 def patch_text(*lines):
@@ -15,16 +54,16 @@ def patch_text(*lines):
 
 
 def test_tool_specs_include_expected_tool_names():
-    specs = tools.tool_specs()
+    specs = tool_specs()
     registered_tools = registry.registered_tools()
     names = {spec["function"]["name"] for spec in specs}
 
     assert names == {
         "rg",
         "grep",
-            "exec_command",
-            "write_stdin",
-            "run_bash",
+        "exec_command",
+        "write_stdin",
+        "run_bash",
         "read_file",
         "write_file",
         "apply_patch",
@@ -44,9 +83,7 @@ def test_tool_specs_include_expected_tool_names():
         "powershell",
     ]
 
-    rg_spec = next(
-        spec for spec in specs if spec["function"]["name"] == "rg"
-    )
+    rg_spec = next(spec for spec in specs if spec["function"]["name"] == "rg")
     rg_parameters = rg_spec["function"]["parameters"]
     assert rg_parameters["properties"]["mode"]["enum"] == [
         "search",
@@ -54,9 +91,7 @@ def test_tool_specs_include_expected_tool_names():
     ]
     assert "required" not in rg_parameters
 
-    grep_spec = next(
-        spec for spec in specs if spec["function"]["name"] == "grep"
-    )
+    grep_spec = next(spec for spec in specs if spec["function"]["name"] == "grep")
     grep_parameters = grep_spec["function"]["parameters"]
     assert "mode" not in grep_parameters["properties"]
     assert grep_parameters["required"] == ["pattern"]
@@ -98,18 +133,18 @@ def test_registry_rejects_duplicate_tool_names():
 
 
 def test_parse_tool_arguments_accepts_empty_dict_and_json_object():
-    assert tools.parse_tool_arguments(None) == ({}, None)
-    assert tools.parse_tool_arguments("") == ({}, None)
-    assert tools.parse_tool_arguments({"path": "x"}) == ({"path": "x"}, None)
-    assert tools.parse_tool_arguments('{"path": "x"}') == ({"path": "x"}, None)
+    assert parse_tool_arguments(None) == ({}, None)
+    assert parse_tool_arguments("") == ({}, None)
+    assert parse_tool_arguments({"path": "x"}) == ({"path": "x"}, None)
+    assert parse_tool_arguments('{"path": "x"}') == ({"path": "x"}, None)
 
 
 def test_parse_tool_arguments_rejects_invalid_json_and_non_object():
-    parsed, error = tools.parse_tool_arguments("{bad")
+    parsed, error = parse_tool_arguments("{bad")
     assert parsed == {}
     assert "Invalid JSON arguments" in error
 
-    parsed, error = tools.parse_tool_arguments('["not", "object"]')
+    parsed, error = parse_tool_arguments('["not", "object"]')
     assert parsed == {}
     assert error == "Tool arguments must be a JSON object."
 
@@ -118,9 +153,9 @@ def test_resolve_file_path_accepts_relative_and_rejects_escape(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
 
-    resolved = tools.resolve_file_path(workspace.resolve(), "nested/file.txt")
-    missing = tools.resolve_file_path(workspace.resolve(), "")
-    escaped = tools.resolve_file_path(workspace.resolve(), "../outside.txt")
+    resolved = resolve_file_path(workspace.resolve(), "nested/file.txt")
+    missing = resolve_file_path(workspace.resolve(), "")
+    escaped = resolve_file_path(workspace.resolve(), "../outside.txt")
 
     assert resolved == (workspace / "nested/file.txt").resolve()
     assert missing == "Missing required path."
@@ -133,17 +168,17 @@ def test_resolve_search_path_requires_existing_path_inside_workspace(tmp_path):
     source = workspace / "source.txt"
     source.write_text("hello", encoding="utf-8")
 
-    resolved = tools.resolve_search_path(
+    resolved = resolve_search_path(
         workspace_path=workspace.resolve(),
         cwd_path=workspace.resolve(),
         raw_path="source.txt",
     )
-    missing = tools.resolve_search_path(
+    missing = resolve_search_path(
         workspace_path=workspace.resolve(),
         cwd_path=workspace.resolve(),
         raw_path="missing.txt",
     )
-    escaped = tools.resolve_search_path(
+    escaped = resolve_search_path(
         workspace_path=workspace.resolve(),
         cwd_path=workspace.resolve(),
         raw_path="../outside.txt",
@@ -155,20 +190,20 @@ def test_resolve_search_path_requires_existing_path_inside_workspace(tmp_path):
 
 
 def test_line_bool_positive_and_truncation_helpers():
-    selected, start, end, total = tools.select_line_range("a\nb\nc\n", "2", 3)
+    selected, start, end, total = select_line_range("a\nb\nc\n", "2", 3)
 
     assert selected == "b\nc\n"
     assert start == 2
     assert end == 3
     assert total == 3
-    assert tools.select_line_range("a\nb\n", 3, 2) == ("", 3, 2, 2)
-    assert tools.positive_int_argument(True) is None
-    assert tools.positive_int_argument("4") == 4
-    assert tools.positive_int_argument("bad") is None
-    assert tools.bool_argument({"flag": True}, "flag", False) is True
-    assert tools.bool_argument({"flag": "true"}, "flag", False) is False
-    assert tools.truncate_content("abcdef", 3) == ("abc", True)
-    assert tools.truncate_content("abc", 3) == ("abc", False)
+    assert select_line_range("a\nb\n", 3, 2) == ("", 3, 2, 2)
+    assert positive_int_argument(True) is None
+    assert positive_int_argument("4") == 4
+    assert positive_int_argument("bad") is None
+    assert bool_argument({"flag": True}, "flag", False) is True
+    assert bool_argument({"flag": "true"}, "flag", False) is False
+    assert truncate_content("abcdef", 3) == ("abc", True)
+    assert truncate_content("abc", 3) == ("abc", False)
 
 
 def test_read_limited_stream_handles_split_utf8_sequence():
@@ -178,7 +213,7 @@ def test_read_limited_stream_handles_split_utf8_sequence():
         reader.feed_data(encoded[:1])
         reader.feed_data(encoded[1:])
         reader.feed_eof()
-        return await tools.read_limited_stream(reader, 2, chunk_size=1)
+        return await read_limited_stream(reader, 2, chunk_size=1)
 
     result = asyncio.run(run())
 
@@ -200,7 +235,7 @@ def test_capture_process_output_limits_stdout_and_stderr():
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        return await tools.capture_process_output(
+        return await capture_process_output(
             process,
             timeout_seconds=5,
             stdout_limit=17,
@@ -220,7 +255,7 @@ def test_capture_process_output_limits_stdout_and_stderr():
 
 
 def test_unified_patch_parser_parses_add_modify_delete_and_rejects_binary():
-    parsed, error = tools.parse_unified_patch(
+    parsed, error = parse_unified_patch(
         patch_text(
             "diff --git a/a.txt b/a.txt",
             "--- a/a.txt",
@@ -238,12 +273,12 @@ def test_unified_patch_parser_parses_add_modify_delete_and_rejects_binary():
             "-gone",
         )
     )
-    binary, binary_error = tools.parse_unified_patch("GIT binary patch\n")
+    binary, binary_error = parse_unified_patch("GIT binary patch\n")
 
     assert error is None
     assert [file.old_path for file in parsed] == ["a.txt", None, "delete.txt"]
     assert [file.new_path for file in parsed] == ["a.txt", "new.txt", None]
-    assert [tools.patch_file_status(file) for file in parsed] == [
+    assert [patch_file_status(file) for file in parsed] == [
         "modified",
         "added",
         "deleted",
@@ -253,11 +288,11 @@ def test_unified_patch_parser_parses_add_modify_delete_and_rejects_binary():
 
 
 def test_diff_header_path_validates_relative_workspace_paths():
-    assert tools.diff_header_path("--- a/src/app.py", "--- ") == ("src/app.py", None)
-    assert tools.diff_header_path("+++ /dev/null", "+++ ") == (None, None)
+    assert diff_header_path("--- a/src/app.py", "--- ") == ("src/app.py", None)
+    assert diff_header_path("+++ /dev/null", "+++ ") == (None, None)
 
-    absolute_path, absolute_error = tools.diff_header_path("+++ C:/tmp/file.py", "+++ ")
-    escaped_path, escaped_error = tools.diff_header_path("+++ b/../file.py", "+++ ")
+    absolute_path, absolute_error = diff_header_path("+++ C:/tmp/file.py", "+++ ")
+    escaped_path, escaped_error = diff_header_path("+++ b/../file.py", "+++ ")
 
     assert absolute_path is None
     assert "must be relative" in absolute_error
@@ -266,7 +301,7 @@ def test_diff_header_path_validates_relative_workspace_paths():
 
 
 def test_apply_hunks_to_content_success_and_context_mismatch():
-    parsed, error = tools.parse_unified_patch(
+    parsed, error = parse_unified_patch(
         patch_text(
             "--- a/sample.txt",
             "+++ b/sample.txt",
@@ -279,12 +314,12 @@ def test_apply_hunks_to_content_success_and_context_mismatch():
     )
     assert error is None
 
-    new_content, apply_error = tools.apply_hunks_to_content(
+    new_content, apply_error = apply_hunks_to_content(
         "one\ntwo\nthree\n",
         parsed[0].hunks,
         "sample.txt",
     )
-    mismatch_content, mismatch_error = tools.apply_hunks_to_content(
+    mismatch_content, mismatch_error = apply_hunks_to_content(
         "one\nwrong\nthree\n",
         parsed[0].hunks,
         "sample.txt",
@@ -297,7 +332,7 @@ def test_apply_hunks_to_content_success_and_context_mismatch():
 
 
 def test_patch_summary_and_error_result():
-    summary = tools.patch_summary(
+    summary = patch_summary(
         [
             {"status": "added", "hunks": 1},
             {"status": "modified", "hunks": 2},
@@ -305,7 +340,7 @@ def test_patch_summary_and_error_result():
             {"status": "moved", "hunks": 1},
         ]
     )
-    error = tools.patch_error_result(
+    error = patch_error_result(
         tool_name="apply_patch",
         arguments={"patch": ""},
         dry_run=True,
@@ -321,31 +356,33 @@ def test_patch_summary_and_error_result():
 
 
 def test_search_and_command_helpers():
-    no_match = tools.ToolResult(
+    no_match = ToolResult(
         name="rg",
         arguments={},
         content=json.dumps({"ok": True, "matched": False}),
         success=True,
     )
-    invalid_content = tools.ToolResult("rg", {}, "not json", False)
+    invalid_content = ToolResult("rg", {}, "not json", False)
 
-    assert tools.path_argument_for_cwd(Path("a/b").resolve(), Path("a").resolve()).endswith("b")
-    assert "rg --line-number" in tools.bash_search_command("rg", "needle", ".")
-    assert "grep -R -n" in tools.bash_search_command("grep", "needle", ".")
-    assert tools.display_command(["rg", "two words"]) == "rg 'two words'"
-    assert tools.search_exit_code_is_ok(0) is True
-    assert tools.search_exit_code_is_ok(1) is True
-    assert tools.search_exit_code_is_ok(2) is False
-    assert tools.search_result_was_no_match(no_match) is True
-    assert tools.search_result_was_no_match(invalid_content) is False
+    assert path_argument_for_cwd(Path("a/b").resolve(), Path("a").resolve()).endswith(
+        "b"
+    )
+    assert "rg --line-number" in bash_search_command("rg", "needle", ".")
+    assert "grep -R -n" in bash_search_command("grep", "needle", ".")
+    assert display_command(["rg", "two words"]) == "rg 'two words'"
+    assert search_exit_code_is_ok(0) is True
+    assert search_exit_code_is_ok(1) is True
+    assert search_exit_code_is_ok(2) is False
+    assert search_result_was_no_match(no_match) is True
+    assert search_result_was_no_match(invalid_content) is False
 
 
 def test_timeout_and_output_helpers():
-    assert tools.timeout_argument({}) == tools.DEFAULT_BASH_TIMEOUT_SECONDS
-    assert tools.timeout_argument({"timeout_seconds": "5"}) == 5.0
-    assert tools.timeout_argument({"timeout_seconds": -1}) == tools.DEFAULT_BASH_TIMEOUT_SECONDS
-    assert tools.timeout_argument({"timeout_seconds": 999}) == tools.MAX_BASH_TIMEOUT_SECONDS
-    assert tools.decode_output(b"hello") == "hello"
-    assert tools.truncate_output("x" * (tools.OUTPUT_LIMIT + 1))[1] is True
-    assert tools.string_argument({"name": " value "}, "name", "default") == " value "
-    assert tools.string_argument({"name": ""}, "name", "default") == "default"
+    assert timeout_argument({}) == DEFAULT_BASH_TIMEOUT_SECONDS
+    assert timeout_argument({"timeout_seconds": "5"}) == 5.0
+    assert timeout_argument({"timeout_seconds": -1}) == DEFAULT_BASH_TIMEOUT_SECONDS
+    assert timeout_argument({"timeout_seconds": 999}) == MAX_BASH_TIMEOUT_SECONDS
+    assert decode_output(b"hello") == "hello"
+    assert truncate_output("x" * (OUTPUT_LIMIT + 1))[1] is True
+    assert string_argument({"name": " value "}, "name", "default") == " value "
+    assert string_argument({"name": ""}, "name", "default") == "default"

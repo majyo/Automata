@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from automata_api.bootstrap.settings import ApiConfig
-from automata_api.security import bearer_token, token_is_valid
+from automata_api.transport.security import bearer_token, token_is_valid
 
 # Paths that never require the bearer token. ``/health`` is used by the
 # desktop shell to decide whether the sidecar is up, before it has a token

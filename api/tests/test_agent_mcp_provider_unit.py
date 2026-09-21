@@ -2,22 +2,22 @@ import asyncio
 import json
 import re
 
-from automata_api.agent.tools.model import ToolDiscoveryContext, ToolExposure
-from automata_api.agent.tools.router import ToolRouter
-from automata_api.agent.tools.tool_search import TOOL_SEARCH_NAME
-from automata_api.extensions.mcp.config import (
+from automata_api.core.tools.model import ToolDiscoveryContext, ToolExposure
+from automata_api.core.tools.router import ToolRouter
+from automata_api.core.tools.tool_search import TOOL_SEARCH_NAME
+from automata_api.infrastructure.extensions.mcp.config import (
     McpServerDefinition,
     McpStdioTransportDefinition,
     McpStreamableHttpTransportDefinition,
 )
-from automata_api.extensions.mcp.provider import McpToolProvider
-from automata_api.extensions.mcp.schema import (
+from automata_api.infrastructure.extensions.mcp.provider import McpToolProvider
+from automata_api.infrastructure.extensions.mcp.schema import (
     McpCallResult,
     McpDiscoveryLimits,
     McpToolInfo,
 )
-from automata_api.extensions.mcp.tool import mcp_tool_alias
-from automata_api.extensions.mcp.trust import create_grant
+from automata_api.infrastructure.extensions.mcp.tool import mcp_tool_alias
+from automata_api.infrastructure.extensions.mcp.trust import create_grant
 
 
 class FakeManager:
@@ -102,16 +102,12 @@ def test_provider_builds_deferred_alias_and_dispatches_original_tool(tmp_path):
     assert re.fullmatch(r"[a-zA-Z0-9_-]+", descriptor.name)
     router = ToolRouter(descriptors)
 
-    search = asyncio.run(
-        router.dispatch(TOOL_SEARCH_NAME, {"query": "remote records"})
-    )
+    search = asyncio.run(router.dispatch(TOOL_SEARCH_NAME, {"query": "remote records"}))
     assert json.loads(search.content)["activated_tools"] == [descriptor.name]
     result = asyncio.run(router.dispatch(descriptor.name, {"query": "demo"}))
 
     assert result.success is True
-    assert manager.calls == [
-        (server.name, tool().name, {"query": "demo"})
-    ]
+    assert manager.calls == [(server.name, tool().name, {"query": "demo"})]
     assert json.loads(result.content)["text"] == "record"
 
 
@@ -134,8 +130,7 @@ def test_untrusted_annotation_does_not_enable_plan_mode(tmp_path):
     assert descriptor.read_only is False
     router = ToolRouter((descriptor,))
     assert TOOL_SEARCH_NAME not in {
-        item["function"]["name"]
-        for item in router.model_visible_specs(mode="plan")
+        item["function"]["name"] for item in router.model_visible_specs(mode="plan")
     }
 
 

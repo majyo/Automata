@@ -16,7 +16,11 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 PROMPT_TYPES = frozenset({"prompt", "approve_plan", "retry_plan"})
-ALL_COMMAND_TYPES = PROMPT_TYPES | {"tool_approval_response", "cancel_run", "resume_run"}
+ALL_COMMAND_TYPES = PROMPT_TYPES | {
+    "tool_approval_response",
+    "cancel_run",
+    "resume_run",
+}
 
 AgentMode = Literal["act", "plan"]
 

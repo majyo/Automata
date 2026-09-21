@@ -9,26 +9,21 @@ from typing import Any
 
 import pytest
 
-from automata_api.agent.execution.approval import (
-    ApprovalBroker,
-    canonical_arguments_hash,
-)
-from automata_api.agent.execution.model import CancellationToken, ToolExecutionContext
-from automata_api.agent.execution.orchestrator import (
+from automata_api.core.runs.approval import ApprovalBroker, canonical_arguments_hash
+from automata_api.core.runs.model import CancellationToken, ToolExecutionContext
+from automata_api.core.tools.base import AgentTool
+from automata_api.core.tools.model import ToolDescriptor
+from automata_api.core.tools.models import ToolResult
+from automata_api.core.tools.orchestrator import (
     ToolExecutionOrchestrator,
     tool_operation_attributes,
     tool_result_attributes,
 )
-from automata_api.agent.execution.output import capture_process_output
-from automata_api.agent.execution.process import (
-    process_execution_scope,
-    subprocess_group_kwargs,
-)
-from automata_api.agent.tools.base import AgentTool
-from automata_api.agent.tools.model import ToolDescriptor
-from automata_api.agent.tools.models import ToolResult
-from automata_api.agent.tools.router import ToolRouter
-from automata_api.execution.permissions import PermissionPreset
+from automata_api.core.tools.permissions import PermissionPreset
+from automata_api.core.tools.process_scope import process_execution_scope
+from automata_api.core.tools.router import ToolRouter
+from automata_api.infrastructure.processes.output import capture_process_output
+from automata_api.infrastructure.processes.process import subprocess_group_kwargs
 
 
 class RecordingTool(AgentTool):
@@ -192,9 +187,7 @@ def test_write_tool_executes_after_one_time_approval():
 
 def test_plan_mode_denies_write_without_offering_approval():
     tool = RecordingTool("write_test", read_only=False)
-    result, emitted = asyncio.run(
-        execute_with_broker(tool, risk="write", mode="plan")
-    )
+    result, emitted = asyncio.run(execute_with_broker(tool, risk="write", mode="plan"))
 
     assert result.success is False
     assert json.loads(result.content)["error"] == "blocked_by_plan_mode"
@@ -212,9 +205,7 @@ def test_external_prompt_uses_shared_approval_and_external_deny_is_final():
     assert emitted[0]["risk"] == "external"
 
     denied_tool = ExternalPolicyTool("deny")
-    denied, emitted = asyncio.run(
-        execute_with_broker(denied_tool, risk="external")
-    )
+    denied, emitted = asyncio.run(execute_with_broker(denied_tool, risk="external"))
     assert denied.success is False
     assert denied_tool.calls == []
     assert emitted == []

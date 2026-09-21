@@ -4,13 +4,14 @@ from typing import Any
 
 import pytest
 
-from automata_api.agent.backends.local import LocalBackend
-from automata_api.agent.tools import ToolResult
-from automata_api.agent.tools.base import AgentTool
-from automata_api.agent.tools.model import ToolDescriptor, ToolExposure
-from automata_api.agent.tools.providers import descriptor_for_tool
-from automata_api.agent.tools.router import ToolRouter
-from automata_api.agent.tools.tool_search import TOOL_SEARCH_NAME
+from automata_api.core.tools.base import AgentTool
+from automata_api.core.tools.model import ToolDescriptor, ToolExposure
+from automata_api.core.tools.models import ToolResult
+from automata_api.core.tools.providers import descriptor_for_tool
+from automata_api.core.tools.registry import default_tools
+from automata_api.core.tools.router import ToolRouter
+from automata_api.core.tools.tool_search import TOOL_SEARCH_NAME
+from automata_api.infrastructure.workspace.backends.local import LocalBackend
 
 
 class EchoTool(AgentTool):
@@ -72,7 +73,7 @@ def test_backend_tools_are_direct_and_keep_existing_specs(tmp_path):
     router = ToolRouter.from_backend(backend)
 
     specs = router.model_visible_specs(mode="act")
-    backend_specs = [tool.spec() for tool in backend.tools()]
+    backend_specs = [tool.spec() for tool in default_tools(backend)]
 
     assert specs == backend_specs
     assert TOOL_SEARCH_NAME not in tool_names(specs)
@@ -105,9 +106,7 @@ def test_deferred_tool_is_loaded_by_tool_search_before_dispatch():
     }
 
     not_loaded = asyncio.run(
-        router.dispatch(
-            "calendar_lookup", {"value": "today"}, mode="act"
-        )
+        router.dispatch("calendar_lookup", {"value": "today"}, mode="act")
     )
     assert json.loads(not_loaded.content)["error"] == "tool_not_loaded"
 
@@ -127,9 +126,7 @@ def test_deferred_tool_is_loaded_by_tool_search_before_dispatch():
     }
 
     loaded = asyncio.run(
-        router.dispatch(
-            "calendar_lookup", {"value": "today"}, mode="act"
-        )
+        router.dispatch("calendar_lookup", {"value": "today"}, mode="act")
     )
     assert loaded.success is True
     assert json.loads(loaded.content)["tool"] == "calendar_lookup"
@@ -161,9 +158,7 @@ def test_plan_mode_filters_mutating_tools_and_searches_only_read_only_deferred()
         TOOL_SEARCH_NAME,
     }
 
-    blocked = asyncio.run(
-        router.dispatch("write_direct", {"value": "no"}, mode="plan")
-    )
+    blocked = asyncio.run(router.dispatch("write_direct", {"value": "no"}, mode="plan"))
     blocked_payload = json.loads(blocked.content)
     assert blocked.success is False
     assert blocked_payload["error"] == "blocked_by_plan_mode"

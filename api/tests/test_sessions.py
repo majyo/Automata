@@ -1,8 +1,8 @@
 from pathlib import Path
 
-from automata_api.agent.backends.factory import default_backend_kind
-from automata_api.agent.prompts import agent_workspace
-from automata_api.repositories.sessions import (
+from automata_api.core.agent.prompts import agent_workspace
+from automata_api.core.sessions.rules import PlanNotFoundError, SessionNotFoundError
+from automata_api.infrastructure.persistence.sessions import (
     approve_plan,
     create_plan,
     fetch_context_summary,
@@ -17,10 +17,7 @@ from automata_api.repositories.sessions import (
     update_tool_run_result,
     upsert_context_summary,
 )
-from automata_api.sessions.domain import (
-    PlanNotFoundError,
-    SessionNotFoundError,
-)
+from automata_api.infrastructure.workspace.backends.factory import default_backend_kind
 
 
 def test_session_crud_and_messages(client):
@@ -176,7 +173,10 @@ def test_context_summary_is_hidden_from_visible_messages(client):
 
     assert stored["created_at"] == updated["created_at"]
     assert fetch_context_summary(session["id"])["content"] == "updated hidden summary"
-    assert fetch_context_summary(session["id"])["through_sequence"] == message["sequence"] + 1
+    assert (
+        fetch_context_summary(session["id"])["through_sequence"]
+        == message["sequence"] + 1
+    )
     assert [row["content"] for row in list_messages(session["id"])] == [
         "visible message"
     ]
@@ -216,7 +216,10 @@ def test_tool_run_messages_are_visible_structured_and_counted(client):
     assert messages[1]["metadata"]["tool_call_id"] == "call_read"
     assert messages[1]["metadata"]["tool"] == "read_file"
     assert messages[1]["metadata"]["arguments"] == '{"path": "README.md"}'
-    assert messages[1]["metadata"]["result"]["content"] == '{"ok": true, "content": "readme"}'
+    assert (
+        messages[1]["metadata"]["result"]["content"]
+        == '{"ok": true, "content": "readme"}'
+    )
     assert sessions[0]["message_count"] == 2
 
 

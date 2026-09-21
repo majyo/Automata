@@ -9,9 +9,10 @@ from pathlib import Path
 
 import pytest
 
-from automata_api.agent import llm, tools
+from automata_api.bootstrap.tools import run_tool
 from automata_api.config import AgentConfig
-from automata_api.observability import (
+from automata_api.infrastructure.llm import client as llm
+from automata_api.infrastructure.observability import (
     emit_content_record,
     emit_profile_event,
     get_observability_manager,
@@ -19,14 +20,14 @@ from automata_api.observability import (
     start_observability,
     stop_observability,
 )
-from automata_api.observability.config import (
+from automata_api.infrastructure.observability.config import (
     ObservabilityConfig,
     ObservabilityConfigurationError,
     get_observability_config,
 )
-from automata_api.observability.retention import enforce_file_retention
-from automata_api.observability.runtime import ObservabilityManager
-from automata_api.observability.store import ObservabilityStore
+from automata_api.infrastructure.observability.retention import enforce_file_retention
+from automata_api.infrastructure.observability.runtime import ObservabilityManager
+from automata_api.infrastructure.observability.store import ObservabilityStore
 
 
 def observability_config(
@@ -97,22 +98,17 @@ def test_diagnostic_records_spans_without_content(tmp_path):
 
     asyncio.run(scenario())
 
-    records = read_jsonl_files(
-        tmp_path / "observability" / "logs"
-    )
+    records = read_jsonl_files(tmp_path / "observability" / "logs")
     serialized = json.dumps(records, ensure_ascii=False)
     assert sentinel not in serialized
     assert "Provider request failed: %s" in serialized
     assert any(
-        record.get("record_type") == "span_end"
-        and record.get("name") == "agent.run"
+        record.get("record_type") == "span_end" and record.get("name") == "agent.run"
         for record in records
     )
     assert not (tmp_path / "observability" / "profiles").exists()
 
-    db = sqlite3.connect(
-        tmp_path / "observability" / "observability.db"
-    )
+    db = sqlite3.connect(tmp_path / "observability" / "observability.db")
     try:
         assert db.execute("SELECT COUNT(*) FROM traces").fetchone()[0] == 1
         assert db.execute("SELECT COUNT(*) FROM spans").fetchone()[0] == 1
@@ -147,34 +143,25 @@ def test_profile_writes_samples_and_explicit_redacted_content(tmp_path):
 
     asyncio.run(scenario())
 
-    profile_dirs = list(
-        (tmp_path / "observability" / "profiles").iterdir()
-    )
+    profile_dirs = list((tmp_path / "observability" / "profiles").iterdir())
     assert len(profile_dirs) == 1
     profile_dir = profile_dirs[0]
-    manifest = json.loads(
-        (profile_dir / "manifest.json").read_text(encoding="utf-8")
-    )
+    manifest = json.loads((profile_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["clean_shutdown"] is True
     assert manifest["capture_content"] is True
     assert manifest["collector_stats"]["profile_samples"] >= 1
-    assert (
-        manifest["collector_stats"]["profile_sampler_overhead_ns"] > 0
-    )
+    assert manifest["collector_stats"]["profile_sampler_overhead_ns"] > 0
     assert list(profile_dir.glob("samples-*.jsonl"))
     assert list(profile_dir.glob("events-*.jsonl"))
     content = "\n".join(
-        path.read_text(encoding="utf-8")
-        for path in profile_dir.glob("content-*.jsonl")
+        path.read_text(encoding="utf-8") for path in profile_dir.glob("content-*.jsonl")
     )
     assert "captured prompt" in content
     assert "should-not-appear" not in content
     assert "[redacted]" in content
     samples = read_jsonl_files(profile_dir)
     resource_sample = next(
-        record
-        for record in samples
-        if record.get("record_type") == "resource_sample"
+        record for record in samples if record.get("record_type") == "resource_sample"
     )
     assert "event_loop_lag_ms" in resource_sample["attributes"]
     assert "managed_process_count" in resource_sample["attributes"]
@@ -189,10 +176,8 @@ def test_rg_files_profile_records_summary_without_paths(tmp_path):
     (workspace / sentinel).write_text("", encoding="utf-8")
 
     async def scenario():
-        await start_observability(
-            observability_config(tmp_path, mode="profile")
-        )
-        result = await tools.run_tool(
+        await start_observability(observability_config(tmp_path, mode="profile"))
+        result = await run_tool(
             "rg",
             {"mode": "files", "path": "."},
             str(workspace),
@@ -203,15 +188,12 @@ def test_rg_files_profile_records_summary_without_paths(tmp_path):
     result = asyncio.run(scenario())
     assert result.success is True
 
-    profile_dir = next(
-        (tmp_path / "observability" / "profiles").iterdir()
-    )
+    profile_dir = next((tmp_path / "observability" / "profiles").iterdir())
     records = read_jsonl_files(profile_dir)
     span = next(
         record
         for record in records
-        if record.get("record_type") == "span_end"
-        and record.get("name") == "rg.files"
+        if record.get("record_type") == "span_end" and record.get("name") == "rg.files"
     )
     assert span["attributes"]["engine"] in {
         "rg",
@@ -251,9 +233,9 @@ def test_backpressure_drops_normal_events_and_falls_back_for_critical(
     stats = manager.stats_snapshot()
     assert stats["dropped_events"] == 1
     assert stats["critical_fallback_writes"] == 1
-    fallback = (
-        manager.config.output_dir / "critical-fallback.jsonl"
-    ).read_text(encoding="utf-8")
+    fallback = (manager.config.output_dir / "critical-fallback.jsonl").read_text(
+        encoding="utf-8"
+    )
     assert "critical-fallback" in fallback
 
 
@@ -331,17 +313,9 @@ def test_span_index_is_removed_when_profile_artifact_is_gone(tmp_path):
             == 0
         )
         assert (
-            store.connection.execute(
-                "SELECT COUNT(*) FROM traces"
-            ).fetchone()[0]
-            == 0
+            store.connection.execute("SELECT COUNT(*) FROM traces").fetchone()[0] == 0
         )
-        assert (
-            store.connection.execute(
-                "SELECT COUNT(*) FROM spans"
-            ).fetchone()[0]
-            == 0
-        )
+        assert store.connection.execute("SELECT COUNT(*) FROM spans").fetchone()[0] == 0
     finally:
         store.close()
 
@@ -373,10 +347,7 @@ def test_profile_captures_llm_stream_milestones_without_payload_content(
             return False
 
         async def aiter_lines(self):
-            yield (
-                'data: {"choices":[{"delta":'
-                '{"reasoning_content":"think"}}]}'
-            )
+            yield ('data: {"choices":[{"delta":{"reasoning_content":"think"}}]}')
             yield (
                 'data: {"choices":[{"delta":{"content":"answer"},'
                 '"finish_reason":"stop"}],'
@@ -411,9 +382,7 @@ def test_profile_captures_llm_stream_milestones_without_payload_content(
     monkeypatch.setattr(llm.httpx, "AsyncClient", FakeClient)
 
     async def scenario():
-        await start_observability(
-            observability_config(tmp_path, mode="profile")
-        )
+        await start_observability(observability_config(tmp_path, mode="profile"))
         chunks = [
             delta
             async for delta in llm.stream_chat_completion(
@@ -425,14 +394,13 @@ def test_profile_captures_llm_stream_milestones_without_payload_content(
 
     chunks = asyncio.run(scenario())
     assert chunks[-1]["content"] == "answer"
-    profile_dir = next(
-        (tmp_path / "observability" / "profiles").iterdir()
-    )
+    profile_dir = next((tmp_path / "observability" / "profiles").iterdir())
     records = read_jsonl_files(profile_dir)
     event_names = {
         record.get("name")
         for record in records
-        if record.get("record_type") in {
+        if record.get("record_type")
+        in {
             "span_event",
             "profile_event",
         }
@@ -448,21 +416,16 @@ def test_profile_captures_llm_stream_milestones_without_payload_content(
     llm_span = next(
         record
         for record in records
-        if record.get("record_type") == "span_end"
-        and record.get("name") == "llm.call"
+        if record.get("record_type") == "span_end" and record.get("name") == "llm.call"
     )
     assert llm_span["attributes"]["chunk_count"] == 2
-    assert llm_span["attributes"]["usage"] == {
-        "completion_tokens": 2
-    }
+    assert llm_span["attributes"]["usage"] == {"completion_tokens": 2}
     serialized = json.dumps(records, ensure_ascii=False)
     assert sentinel not in serialized
     assert "not-logged" not in serialized
 
 
-def test_observability_startup_io_failure_is_fail_open(
-    tmp_path, monkeypatch
-):
+def test_observability_startup_io_failure_is_fail_open(tmp_path, monkeypatch):
     manager = ObservabilityManager()
     config = observability_config(tmp_path)
     original_mkdir = Path.mkdir

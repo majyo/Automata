@@ -3,17 +3,23 @@ import json
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from automata_api.agent import llm, runtime
-from automata_api.agent.skills.model import SkillRoot, SkillTurnContext
-from automata_api.config import AgentConfig, ContextCompressionConfig
-from automata_api.extensions.skills.config import SkillsConfig
-from automata_api.extensions.skills.loader import load_skills_from_roots
-from automata_api.extensions.skills.manager import SkillManager, reset_skill_manager
-from automata_api.extensions.skills.runtime import (
+from automata_api.bootstrap import tools as builtin_tools
+from automata_api.core.agent import runtime
+from automata_api.core.agent.settings import TurnSettings
+from automata_api.core.agent.skills.model import SkillRoot, SkillTurnContext
+from automata_api.infrastructure.extensions.skills.config import SkillsConfig
+from automata_api.infrastructure.extensions.skills.loader import load_skills_from_roots
+from automata_api.infrastructure.extensions.skills.manager import (
+    SkillManager,
+    reset_skill_manager,
+)
+from automata_api.infrastructure.extensions.skills.runtime import (
     create_skill_turn_context,
     skill_selections_from_payload,
 )
-from automata_api.extensions.skills.settings import SkillSettingsStore
+from automata_api.infrastructure.extensions.skills.settings import SkillSettingsStore
+from automata_api.infrastructure.llm import client as llm
+from automata_api.infrastructure.llm.chat_completions import ChatCompletionsProvider
 
 
 def write_skill(
@@ -294,22 +300,6 @@ class MemoryStore:
 
 
 def test_runtime_inserts_skill_messages_without_persisting_them(monkeypatch):
-    monkeypatch.setattr(
-        runtime,
-        "get_agent_config",
-        lambda: AgentConfig(
-            api_key="test-key",
-            base_url="https://provider.test",
-            model="unit-model",
-            timeout_seconds=30.0,
-            temperature=0.2,
-        ),
-    )
-    monkeypatch.setattr(
-        runtime,
-        "get_context_compression_config",
-        lambda: ContextCompressionConfig(False, 10_000, 1_000),
-    )
     calls = []
 
     async def fake_stream_chat_completion(messages, tools=None):
@@ -317,11 +307,16 @@ def test_runtime_inserts_skill_messages_without_persisting_them(monkeypatch):
         yield {"content": "done"}
 
     monkeypatch.setattr(llm, "stream_chat_completion", fake_stream_chat_completion)
-    store = MemoryStore(rows=[{"message": {"role": "user", "content": "review"}, "sequence": 1}])
+    store = MemoryStore(
+        rows=[{"message": {"role": "user", "content": "review"}, "sequence": 1}]
+    )
 
     events = asyncio.run(
         collect_events(
             runtime.stream_agent_loop(
+                settings=TurnSettings(),
+                provider=ChatCompletionsProvider(),
+                tool_runner=builtin_tools.run_tool,
                 session_id="session",
                 store=store,
                 workspace="workspace",

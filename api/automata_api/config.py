@@ -185,9 +185,7 @@ def get_agent_config() -> AgentConfig:
             "AUTOMATA_ENV_FILE, or the process environment."
         )
 
-    max_steps = read_int_env(
-        "AUTOMATA_AGENT_MAX_STEPS", DEFAULT_AGENT_MAX_STEPS
-    )
+    max_steps = read_int_env("AUTOMATA_AGENT_MAX_STEPS", DEFAULT_AGENT_MAX_STEPS)
     if max_steps <= 0:
         raise AgentConfigurationError(
             "AUTOMATA_AGENT_MAX_STEPS must be greater than 0."
@@ -311,3 +309,18 @@ def read_bool_env(name: str, default: bool) -> bool:
         return False
 
     raise AgentConfigurationError(f"{name} must be a boolean.")
+
+
+def managed_runtime_roots() -> tuple[Path, ...]:
+    if os.name != "nt":
+        return ()
+    api_root = Path(__file__).resolve().parents[1]
+    candidates = {
+        api_root,
+        Path(sys.base_prefix).resolve(),
+        Path(sys.executable).resolve().parent,
+    }
+    extraction_root = getattr(sys, "_MEIPASS", None)
+    if isinstance(extraction_root, str) and extraction_root:
+        candidates.add(Path(extraction_root).resolve())
+    return tuple(sorted(candidates, key=lambda path: str(path).lower()))

@@ -2,7 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from automata_api.security import (
+from automata_api.transport.security import (
     ApiSecurityConfigurationError,
     get_api_token,
     validate_loopback_host,

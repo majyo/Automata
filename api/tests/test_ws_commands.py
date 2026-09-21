@@ -22,9 +22,7 @@ from automata_api.transport.websocket.commands import (
 
 
 def test_prompt_defaults_to_act_mode():
-    command = decode_command(
-        {"type": "prompt", "session_id": "s1", "prompt": "do it"}
-    )
+    command = decode_command({"type": "prompt", "session_id": "s1", "prompt": "do it"})
 
     assert isinstance(command, PromptCommand)
     assert command.session_id == "s1"
@@ -155,9 +153,7 @@ def test_approval_response_carries_the_decision():
 
 
 def test_cancel_run_carries_the_session_guard():
-    command = decode_command(
-        {"type": "cancel_run", "run_id": "r1", "session_id": "s1"}
-    )
+    command = decode_command({"type": "cancel_run", "run_id": "r1", "session_id": "s1"})
 
     assert isinstance(command, CancelRunCommand)
     assert command.run_id == "r1"

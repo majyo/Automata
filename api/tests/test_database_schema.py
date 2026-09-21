@@ -3,18 +3,68 @@ import sqlite3
 
 import pytest
 
-import automata_api.db.schema as schema_module
-from automata_api.db.baseline import (
+import automata_api.infrastructure.persistence.db.schema as schema_module
+from automata_api.infrastructure.persistence.db.baseline import (
     EXPECTED_COLUMNS,
     DatabaseBaselineError,
     create_current_schema,
 )
-from automata_api.db.migrations import MIGRATIONS, Migration
-from automata_api.db.schema import (
+from automata_api.infrastructure.persistence.db.migrations import MIGRATIONS, Migration
+from automata_api.infrastructure.persistence.db.schema import (
     DatabaseSchemaTooNewError,
     init_db,
 )
-from automata_api.repositories.sessions import search_context
+from automata_api.infrastructure.persistence.sessions import search_context
+
+
+@pytest.mark.parametrize(
+    "checksum",
+    [
+        "55623b2964993e7a223d7e6dd6aef90d0cffbaf60308f6cb7e7b74d3146064a6",
+        "e184e864869c1b3c180c58e8cb204ed1977d1d7e10636d38117e090943b96755",
+    ],
+)
+def test_package_move_preserves_existing_migration_history(
+    checksum,
+    tmp_path,
+    monkeypatch,
+):
+    # SHA256 of the pre-refactor migration, with LF and CRLF line endings.
+    monkeypatch.setenv("AUTOMATA_DATA_DIR", str(tmp_path))
+    init_db()
+    database = tmp_path / "automata.db"
+    with sqlite3.connect(database) as db:
+        db.execute("UPDATE schema_migrations SET checksum = ?", (checksum,))
+        db.execute(
+            "INSERT INTO sessions (id, title, working_directory, created_at, updated_at) "
+            "VALUES ('preserved', 'Existing session', ?, '2026-09-01', '2026-09-01')",
+            (str(tmp_path),),
+        )
+        before = list(db.iterdump())
+
+    init_db()
+
+    with sqlite3.connect(database) as db:
+        assert list(db.iterdump()) == before
+
+    # Import compatibility must not hide subsequent migration source edits.
+    original = schema_module.migration_checksum_source
+    monkeypatch.setattr(
+        schema_module,
+        "migration_checksum_source",
+        lambda migration: original(migration) + b"\n# changed migration\n",
+    )
+    with pytest.raises(schema_module.DatabaseMigrationChecksumError):
+        init_db()
+
+
+def test_unknown_migration_checksum_is_rejected(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTOMATA_DATA_DIR", str(tmp_path))
+    init_db()
+    with sqlite3.connect(tmp_path / "automata.db") as db:
+        db.execute("UPDATE schema_migrations SET checksum = 'unexpected'")
+    with pytest.raises(schema_module.DatabaseMigrationChecksumError):
+        init_db()
 
 
 def _add_future_marker(db: sqlite3.Connection) -> None:
@@ -43,9 +93,9 @@ def test_fresh_database_uses_current_baseline_and_context_search_migration(
         }
         assert set(EXPECTED_COLUMNS).issubset(tables)
         assert "schema_migrations" in tables
-        assert db.execute(
-            "SELECT COUNT(*) FROM schema_migrations"
-        ).fetchone()[0] == len(MIGRATIONS)
+        assert db.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[
+            0
+        ] == len(MIGRATIONS)
         context_columns = {
             str(row[1])
             for row in db.execute(
@@ -53,9 +103,12 @@ def test_fresh_database_uses_current_baseline_and_context_search_migration(
             ).fetchall()
         }
         assert "source" in context_columns
-        assert db.execute(
-            "SELECT 1 FROM sqlite_schema WHERE name = 'agent_context_search_fts'"
-        ).fetchone() is not None
+        assert (
+            db.execute(
+                "SELECT 1 FROM sqlite_schema WHERE name = 'agent_context_search_fts'"
+            ).fetchone()
+            is not None
+        )
         assert db.execute("PRAGMA quick_check").fetchone()[0] == "ok"
 
     assert MIGRATIONS
@@ -68,9 +121,9 @@ def test_current_baseline_initialization_is_idempotent(tmp_path, monkeypatch):
     init_db()
 
     with sqlite3.connect(tmp_path / "automata.db") as db:
-        assert db.execute(
-            "SELECT COUNT(*) FROM schema_migrations"
-        ).fetchone()[0] == len(MIGRATIONS)
+        assert db.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[
+            0
+        ] == len(MIGRATIONS)
         assert db.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
@@ -124,13 +177,16 @@ def test_legacy_database_is_rejected_without_modification(
 
     with sqlite3.connect(database) as db:
         assert db.execute("SELECT id FROM sessions").fetchone()[0] == "legacy"
-        assert db.execute(
-            """
+        assert (
+            db.execute(
+                """
             SELECT COUNT(*)
             FROM sqlite_schema
             WHERE type = 'table' AND name = 'schema_migrations'
             """
-        ).fetchone()[0] == 0
+            ).fetchone()[0]
+            == 0
+        )
 
 
 def test_historical_migration_history_requires_database_reset(
@@ -169,17 +225,22 @@ def test_future_migration_hook_can_apply_and_validate_a_migration(
     init_db()
 
     with sqlite3.connect(tmp_path / "automata.db") as db:
-        assert db.execute(
-            "SELECT name FROM schema_migrations WHERE version = 1"
-        ).fetchone()[0] == "add_future_marker"
-        assert db.execute(
-            """
+        assert (
+            db.execute(
+                "SELECT name FROM schema_migrations WHERE version = 1"
+            ).fetchone()[0]
+            == "add_future_marker"
+        )
+        assert (
+            db.execute(
+                """
             SELECT COUNT(*)
             FROM sqlite_schema
             WHERE type = 'table' AND name = 'future_marker'
             """
-        ).fetchone()[0] == 1
+            ).fetchone()[0]
+            == 1
+        )
         assert "future_value" in {
-            str(row[1])
-            for row in db.execute("PRAGMA table_info(sessions)").fetchall()
+            str(row[1]) for row in db.execute("PRAGMA table_info(sessions)").fetchall()
         }

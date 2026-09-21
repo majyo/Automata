@@ -4,13 +4,17 @@ from dataclasses import dataclass
 
 import pytest
 
-from automata_api.agent import llm, runtime
-from automata_api.agent.tools import ToolResult
-from automata_api.agent.tools.base import AgentTool
-from automata_api.agent.tools.model import ToolExposure
-from automata_api.agent.tools.providers import descriptor_for_tool
-from automata_api.agent.tools.router import ToolRouter
-from automata_api.config import AgentConfig, ContextCompressionConfig
+from automata_api.bootstrap import tools as builtin_tools
+from automata_api.config import ContextCompressionConfig
+from automata_api.core.agent import runtime
+from automata_api.core.agent.settings import TurnSettings
+from automata_api.core.tools.base import AgentTool
+from automata_api.core.tools.model import ToolExposure
+from automata_api.core.tools.models import ToolResult
+from automata_api.core.tools.providers import descriptor_for_tool
+from automata_api.core.tools.router import ToolRouter
+from automata_api.infrastructure.llm import client as llm
+from automata_api.infrastructure.llm.chat_completions import ChatCompletionsProvider
 
 
 @dataclass
@@ -59,29 +63,6 @@ class MemoryStore:
         }
 
 
-def configure_runtime(monkeypatch):
-    monkeypatch.setattr(
-        runtime,
-        "get_agent_config",
-        lambda: AgentConfig(
-            api_key="test-key",
-            base_url="https://provider.test",
-            model="unit-model",
-            timeout_seconds=30.0,
-            temperature=0.2,
-        ),
-    )
-    monkeypatch.setattr(
-        runtime,
-        "get_context_compression_config",
-        lambda: ContextCompressionConfig(
-            enabled=False,
-            threshold_chars=10_000,
-            target_chars=1_000,
-        ),
-    )
-
-
 async def collect_events(events):
     return [event async for event in events]
 
@@ -114,7 +95,6 @@ class RuntimeEchoTool(AgentTool):
 
 
 def test_stream_agent_loop_yields_tokens_final_and_injects_approved_plan(monkeypatch):
-    configure_runtime(monkeypatch)
     calls = []
 
     async def fake_stream_chat_completion(messages, tools=None):
@@ -127,6 +107,9 @@ def test_stream_agent_loop_yields_tokens_final_and_injects_approved_plan(monkeyp
     events = asyncio.run(
         collect_events(
             runtime.stream_agent_loop(
+                settings=TurnSettings(),
+                provider=ChatCompletionsProvider(),
+                tool_runner=builtin_tools.run_tool,
                 session_id="session-1",
                 store=MemoryStore(
                     recent_messages=[{"role": "user", "content": "implement it"}]
@@ -143,9 +126,12 @@ def test_stream_agent_loop_yields_tokens_final_and_injects_approved_plan(monkeyp
         "token",
         "final",
     ]
-    assert "".join(
-        event.get("content", "") for event in events if event["type"] == "token"
-    ) == "streamed done"
+    assert (
+        "".join(
+            event.get("content", "") for event in events if event["type"] == "token"
+        )
+        == "streamed done"
+    )
     assert events[-1] == {"type": "final", "content": "streamed done", "mode": "act"}
     assert calls[0]["messages"][0]["role"] == "system"
     assert "Current workspace: workspace" in calls[0]["messages"][0]["content"]
@@ -160,7 +146,6 @@ def test_stream_agent_loop_yields_tokens_final_and_injects_approved_plan(monkeyp
 
 
 def test_stream_plan_loop_yields_tokens_final_and_plan_tools(monkeypatch):
-    configure_runtime(monkeypatch)
     calls = []
 
     async def fake_stream_chat_completion(messages, tools=None):
@@ -173,6 +158,9 @@ def test_stream_plan_loop_yields_tokens_final_and_plan_tools(monkeypatch):
     events = asyncio.run(
         collect_events(
             runtime.stream_plan_loop(
+                settings=TurnSettings(),
+                provider=ChatCompletionsProvider(),
+                tool_runner=builtin_tools.run_tool,
                 session_id="session-1",
                 store=MemoryStore(recent_messages=[]),
                 workspace="workspace",
@@ -187,7 +175,11 @@ def test_stream_plan_loop_yields_tokens_final_and_plan_tools(monkeypatch):
         "final",
     ]
     assert events[0]["mode"] == "plan"
-    assert events[-1] == {"type": "final", "content": "# Plan\n\n1. Inspect.", "mode": "plan"}
+    assert events[-1] == {
+        "type": "final",
+        "content": "# Plan\n\n1. Inspect.",
+        "mode": "plan",
+    }
     tool_names = {tool["function"]["name"] for tool in calls[0]["tools"]}
     assert tool_names == runtime.PLAN_TOOL_NAMES
     assert "backend Plan mode" in calls[0]["messages"][0]["content"]
@@ -207,6 +199,8 @@ def test_stream_model_loop_yields_tokens_and_final(monkeypatch):
         return [
             event
             async for event in runtime.stream_model_loop(
+                provider=ChatCompletionsProvider(),
+                tool_runner=builtin_tools.run_tool,
                 messages=[{"role": "user", "content": "hello"}],
                 tools=[],
                 compression_config=ContextCompressionConfig(False, 1_000, 100),
@@ -225,9 +219,12 @@ def test_stream_model_loop_yields_tokens_and_final(monkeypatch):
         "token",
         "final",
     ]
-    assert "".join(
-        event.get("content", "") for event in events if event["type"] == "token"
-    ) == "final answer"
+    assert (
+        "".join(
+            event.get("content", "") for event in events if event["type"] == "token"
+        )
+        == "final answer"
+    )
     assert events[-1] == {"type": "final", "content": "final answer", "mode": "act"}
 
 
@@ -274,11 +271,13 @@ def test_stream_model_loop_accumulates_split_tool_call_then_streams_final(monkey
         return ToolResult(name=name, arguments={}, content='{"ok": true}', success=True)
 
     monkeypatch.setattr(llm, "stream_chat_completion", fake_stream_chat_completion)
-    monkeypatch.setattr(runtime, "run_tool", fake_run_tool)
+    monkeypatch.setattr(builtin_tools, "run_tool", fake_run_tool)
 
     events = asyncio.run(
         collect_events(
             runtime.stream_model_loop(
+                provider=ChatCompletionsProvider(),
+                tool_runner=builtin_tools.run_tool,
                 messages=[{"role": "user", "content": "inspect"}],
                 tools=[],
                 compression_config=ContextCompressionConfig(False, 1_000, 100),
@@ -368,6 +367,8 @@ def test_stream_model_loop_refreshes_tools_after_tool_search(monkeypatch):
     events = asyncio.run(
         collect_events(
             runtime.stream_model_loop(
+                provider=ChatCompletionsProvider(),
+                tool_runner=builtin_tools.run_tool,
                 messages=[{"role": "user", "content": "inspect calendar"}],
                 router=router,
                 compression_config=ContextCompressionConfig(False, 1_000, 100),
@@ -419,11 +420,13 @@ def test_stream_model_loop_does_not_emit_tool_turn_content_as_token(monkeypatch)
         return ToolResult(name=name, arguments={}, content='{"ok": true}', success=True)
 
     monkeypatch.setattr(llm, "stream_chat_completion", fake_stream_chat_completion)
-    monkeypatch.setattr(runtime, "run_tool", fake_run_tool)
+    monkeypatch.setattr(builtin_tools, "run_tool", fake_run_tool)
 
     events = asyncio.run(
         collect_events(
             runtime.stream_model_loop(
+                provider=ChatCompletionsProvider(),
+                tool_runner=builtin_tools.run_tool,
                 messages=[{"role": "user", "content": "inspect"}],
                 tools=[],
                 compression_config=ContextCompressionConfig(False, 1_000, 100),
@@ -459,6 +462,8 @@ def test_stream_model_loop_rejects_empty_response(monkeypatch):
         asyncio.run(
             collect_events(
                 runtime.stream_model_loop(
+                    provider=ChatCompletionsProvider(),
+                    tool_runner=builtin_tools.run_tool,
                     messages=[],
                     tools=[],
                     compression_config=ContextCompressionConfig(False, 1_000, 100),
@@ -488,12 +493,14 @@ def test_stream_model_loop_rejects_max_steps(monkeypatch):
         return ToolResult(name=name, arguments={}, content="{}", success=True)
 
     monkeypatch.setattr(llm, "stream_chat_completion", fake_stream_chat_completion)
-    monkeypatch.setattr(runtime, "run_tool", fake_run_tool)
+    monkeypatch.setattr(builtin_tools, "run_tool", fake_run_tool)
 
     with pytest.raises(llm.AgentProviderError, match="maximum step limit"):
         asyncio.run(
             collect_events(
                 runtime.stream_model_loop(
+                    provider=ChatCompletionsProvider(),
+                    tool_runner=builtin_tools.run_tool,
                     messages=[],
                     tools=[],
                     compression_config=ContextCompressionConfig(False, 1_000, 100),
@@ -531,11 +538,13 @@ def test_stream_model_loop_can_finish_on_configured_last_step(monkeypatch):
         return ToolResult(name=name, arguments={}, content="{}", success=True)
 
     monkeypatch.setattr(llm, "stream_chat_completion", fake_stream_chat_completion)
-    monkeypatch.setattr(runtime, "run_tool", fake_run_tool)
+    monkeypatch.setattr(builtin_tools, "run_tool", fake_run_tool)
 
     events = asyncio.run(
         collect_events(
             runtime.stream_model_loop(
+                provider=ChatCompletionsProvider(),
+                tool_runner=builtin_tools.run_tool,
                 messages=[],
                 tools=[],
                 compression_config=ContextCompressionConfig(False, 1_000, 100),
@@ -556,7 +565,9 @@ def test_stream_model_loop_can_finish_on_configured_last_step(monkeypatch):
     }
 
 
-def test_stream_execute_tool_call_yields_events_and_appends_provider_result(monkeypatch):
+def test_stream_execute_tool_call_yields_events_and_appends_provider_result(
+    monkeypatch,
+):
     async def fake_run_tool(name, arguments, workspace):
         assert name == "read_file"
         assert arguments == '{"path": "README.md"}'
@@ -568,12 +579,13 @@ def test_stream_execute_tool_call_yields_events_and_appends_provider_result(monk
             success=True,
         )
 
-    monkeypatch.setattr(runtime, "run_tool", fake_run_tool)
+    monkeypatch.setattr(builtin_tools, "run_tool", fake_run_tool)
 
     messages = []
     events = asyncio.run(
         collect_events(
             runtime.stream_execute_tool_call(
+                tool_runner=builtin_tools.run_tool,
                 messages=messages,
                 tool_call={
                     "id": "call_read",
@@ -616,12 +628,13 @@ def test_stream_execute_tool_call_blocks_disallowed_plan_tool(monkeypatch):
     async def fail_run_tool(name, arguments, workspace):
         raise AssertionError("blocked tools must not execute")
 
-    monkeypatch.setattr(runtime, "run_tool", fail_run_tool)
+    monkeypatch.setattr(builtin_tools, "run_tool", fail_run_tool)
 
     messages = []
     events = asyncio.run(
         collect_events(
             runtime.stream_execute_tool_call(
+                tool_runner=builtin_tools.run_tool,
                 messages=messages,
                 tool_call={
                     "id": "call_write",
@@ -654,7 +667,10 @@ def test_stream_execute_tool_call_rejects_invalid_tool_call(tool_call, message):
         asyncio.run(
             collect_events(
                 runtime.stream_execute_tool_call(
-                    messages=[], tool_call=tool_call, workspace="workspace"
+                    tool_runner=builtin_tools.run_tool,
+                    messages=[],
+                    tool_call=tool_call,
+                    workspace="workspace",
                 )
             )
         )

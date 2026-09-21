@@ -4,11 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from automata_api.agent import tools
-from automata_api.repositories.sessions import (
+from automata_api.infrastructure.persistence.sessions import (
     fetch_plan,
     get_context_messages_after_sequence,
 )
+from automata_api.infrastructure.processes.processes import resolve_bash_executable
 
 
 def patch_text(*lines):
@@ -243,7 +243,7 @@ def test_chat_websocket_discovers_activates_and_calls_stdio_mcp_tool(
         }
 
     monkeypatch.setattr(
-        "automata_api.agent.llm.stream_chat_completion",
+        "automata_api.infrastructure.llm.client.stream_chat_completion",
         stream_from_completion(fake_create_llm_response),
     )
 
@@ -277,7 +277,9 @@ def test_chat_websocket_discovers_activates_and_calls_stdio_mcp_tool(
     assert closed_marker.read_text(encoding="utf-8") == "closed\n"
 
 
-def test_chat_websocket_runs_agent_loop_with_read_file_tool(client, monkeypatch, tmp_path):
+def test_chat_websocket_runs_agent_loop_with_read_file_tool(
+    client, monkeypatch, tmp_path
+):
     monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
     default_workspace = tmp_path / "default"
     session_workspace = tmp_path / "session"
@@ -285,7 +287,9 @@ def test_chat_websocket_runs_agent_loop_with_read_file_tool(client, monkeypatch,
     session_workspace.mkdir()
     monkeypatch.setenv("AUTOMATA_WORKSPACE_DIR", str(default_workspace))
     (default_workspace / "README.md").write_text("default details\n", encoding="utf-8")
-    (session_workspace / "README.md").write_text("workspace details\n", encoding="utf-8")
+    (session_workspace / "README.md").write_text(
+        "workspace details\n", encoding="utf-8"
+    )
     session = client.post(
         "/sessions",
         json={
@@ -300,9 +304,7 @@ def test_chat_websocket_runs_agent_loop_with_read_file_tool(client, monkeypatch,
         calls.append({"messages": list(messages), "tools": tools})
         if len(calls) == 1:
             assert tools is not None
-            assert any(
-                tool["function"]["name"] == "read_file" for tool in tools
-            )
+            assert any(tool["function"]["name"] == "read_file" for tool in tools)
             return {
                 "role": "assistant",
                 "content": "",
@@ -332,7 +334,7 @@ def test_chat_websocket_runs_agent_loop_with_read_file_tool(client, monkeypatch,
         }
 
     monkeypatch.setattr(
-        "automata_api.agent.llm.stream_chat_completion",
+        "automata_api.infrastructure.llm.client.stream_chat_completion",
         stream_from_completion(fake_create_llm_response),
     )
 
@@ -428,7 +430,7 @@ def test_chat_websocket_keeps_agent_text_before_and_after_tool_separate(
         yield {"content": "The file contains workspace details."}
 
     monkeypatch.setattr(
-        "automata_api.agent.llm.stream_chat_completion",
+        "automata_api.infrastructure.llm.client.stream_chat_completion",
         fake_stream_chat_completion,
     )
 
@@ -565,7 +567,7 @@ def test_chat_websocket_restores_persisted_tool_protocol_context(
         }
 
     monkeypatch.setattr(
-        "automata_api.agent.llm.stream_chat_completion",
+        "automata_api.infrastructure.llm.client.stream_chat_completion",
         stream_from_completion(fake_create_llm_response),
     )
 
@@ -658,7 +660,7 @@ def test_chat_websocket_restores_persisted_tool_protocol_context(
 
 
 def test_chat_websocket_runs_agent_loop_with_real_bash_tool(client, monkeypatch):
-    if tools.resolve_bash_executable() is None:
+    if resolve_bash_executable() is None:
         pytest.skip("bash is not available")
 
     monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
@@ -683,8 +685,7 @@ def test_chat_websocket_runs_agent_loop_with_real_bash_tool(client, monkeypatch)
                         "function": {
                             "name": "run_bash",
                             "arguments": (
-                                '{"command": "printf agent-bash", '
-                                '"timeout_seconds": 5}'
+                                '{"command": "printf agent-bash", "timeout_seconds": 5}'
                             ),
                         },
                     }
@@ -704,7 +705,7 @@ def test_chat_websocket_runs_agent_loop_with_real_bash_tool(client, monkeypatch)
         }
 
     monkeypatch.setattr(
-        "automata_api.agent.llm.stream_chat_completion",
+        "automata_api.infrastructure.llm.client.stream_chat_completion",
         stream_from_completion(fake_create_llm_response),
     )
 
@@ -758,7 +759,7 @@ def test_chat_websocket_runs_agent_loop_with_real_bash_tool(client, monkeypatch)
 
 
 def test_chat_websocket_runs_agent_loop_with_exec_command_tool(client, monkeypatch):
-    if tools.resolve_bash_executable() is None:
+    if resolve_bash_executable() is None:
         pytest.skip("bash is not available")
 
     monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
@@ -806,7 +807,7 @@ def test_chat_websocket_runs_agent_loop_with_exec_command_tool(client, monkeypat
         }
 
     monkeypatch.setattr(
-        "automata_api.agent.llm.stream_chat_completion",
+        "automata_api.infrastructure.llm.client.stream_chat_completion",
         stream_from_completion(fake_create_llm_response),
     )
 
@@ -891,7 +892,7 @@ def test_chat_websocket_runs_agent_loop_with_rg_tool(client, monkeypatch):
                             "name": "rg",
                             "arguments": (
                                 '{"pattern": "async def run_tool", '
-                                '"path": "api/automata_api/agent/tools/__init__.py"}'
+                                '"path": "api/automata_api/bootstrap/tools.py"}'
                             ),
                         },
                     }
@@ -912,7 +913,7 @@ def test_chat_websocket_runs_agent_loop_with_rg_tool(client, monkeypatch):
         }
 
     monkeypatch.setattr(
-        "automata_api.agent.llm.stream_chat_completion",
+        "automata_api.infrastructure.llm.client.stream_chat_completion",
         stream_from_completion(fake_create_llm_response),
     )
 
@@ -1023,7 +1024,7 @@ def test_chat_websocket_runs_agent_loop_with_file_tools(client, monkeypatch, tmp
         }
 
     monkeypatch.setattr(
-        "automata_api.agent.llm.stream_chat_completion",
+        "automata_api.infrastructure.llm.client.stream_chat_completion",
         stream_from_completion(fake_create_llm_response),
     )
 
@@ -1086,7 +1087,9 @@ def test_chat_websocket_runs_agent_loop_with_file_tools(client, monkeypatch, tmp
     assert len(calls) == 2
 
 
-def test_chat_websocket_runs_agent_loop_with_apply_patch_tool(client, monkeypatch, tmp_path):
+def test_chat_websocket_runs_agent_loop_with_apply_patch_tool(
+    client, monkeypatch, tmp_path
+):
     monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
     monkeypatch.setenv("AUTOMATA_WORKSPACE_DIR", str(tmp_path))
     source = tmp_path / "sample.txt"
@@ -1122,9 +1125,7 @@ def test_chat_websocket_runs_agent_loop_with_apply_patch_tool(client, monkeypatc
                         "type": "function",
                         "function": {
                             "name": "apply_patch",
-                            "arguments": json.dumps(
-                                {"patch": patch, "dry_run": False}
-                            ),
+                            "arguments": json.dumps({"patch": patch, "dry_run": False}),
                         },
                     }
                 ],
@@ -1146,7 +1147,7 @@ def test_chat_websocket_runs_agent_loop_with_apply_patch_tool(client, monkeypatc
         }
 
     monkeypatch.setattr(
-        "automata_api.agent.llm.stream_chat_completion",
+        "automata_api.infrastructure.llm.client.stream_chat_completion",
         stream_from_completion(fake_create_llm_response),
     )
 
@@ -1221,7 +1222,7 @@ def test_chat_websocket_plan_mode_persists_pending_plan(client, monkeypatch):
         }
 
     monkeypatch.setattr(
-        "automata_api.agent.llm.stream_chat_completion",
+        "automata_api.infrastructure.llm.client.stream_chat_completion",
         stream_from_completion(fake_create_llm_response),
     )
 
@@ -1303,7 +1304,7 @@ def test_chat_websocket_plan_mode_blocks_mutating_tools(client, monkeypatch, tmp
         }
 
     monkeypatch.setattr(
-        "automata_api.agent.llm.stream_chat_completion",
+        "automata_api.infrastructure.llm.client.stream_chat_completion",
         stream_from_completion(fake_create_llm_response),
     )
 
@@ -1385,7 +1386,7 @@ def test_chat_websocket_approve_plan_executes_and_marks_executed(client, monkeyp
         }
 
     monkeypatch.setattr(
-        "automata_api.agent.llm.stream_chat_completion",
+        "automata_api.infrastructure.llm.client.stream_chat_completion",
         stream_from_completion(fake_create_llm_response),
     )
 
@@ -1407,7 +1408,9 @@ def test_chat_websocket_approve_plan_executes_and_marks_executed(client, monkeyp
             if event["type"] == "done":
                 break
 
-        plan_ready = next(event for event in plan_events if event["type"] == "plan_ready")
+        plan_ready = next(
+            event for event in plan_events if event["type"] == "plan_ready"
+        )
         plan_id = plan_ready["plan_id"]
         websocket.send_json(
             {

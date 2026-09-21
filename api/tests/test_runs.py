@@ -4,10 +4,11 @@ import sqlite3
 
 import pytest
 
-from automata_api.agent.execution.events import DurableRunEventSink
-from automata_api.db.connection import db_path
-from automata_api.repositories import runs
-from automata_api.repositories.sessions import create_plan, save_message
+from automata_api.core.runs.events import DurableRunEventSink
+from automata_api.infrastructure.persistence import runs
+from automata_api.infrastructure.persistence.db.connection import db_path
+from automata_api.infrastructure.persistence.runs import SqliteRunStore
+from automata_api.infrastructure.persistence.sessions import create_plan, save_message
 
 
 def test_run_repository_persists_state_and_ordered_events(client):
@@ -31,7 +32,10 @@ def test_run_repository_persists_state_and_ordered_events(client):
     assert profile["profile_hash"]
     assert profile["preset"] == "default"
     assert run["request_message_id"] == prompt["id"]
-    assert client.get(f"/sessions/{session['id']}/messages").json()[0]["content"] == "hello"
+    assert (
+        client.get(f"/sessions/{session['id']}/messages").json()[0]["content"]
+        == "hello"
+    )
 
     runs.transition_run(
         run["id"],
@@ -96,7 +100,7 @@ def test_durable_event_sink_bounds_total_tool_output_per_run(
     runs.transition_run(run["id"], expected=("queued",), target="running")
 
     async def emit():
-        sink = DurableRunEventSink(run_id=run["id"])
+        sink = DurableRunEventSink(store=SqliteRunStore(), run_id=run["id"])
         await sink.send_json(
             {
                 "type": "tool_output_delta",
@@ -126,9 +130,7 @@ def test_durable_event_sink_bounds_total_tool_output_per_run(
     assert events[-1]["truncated"] is True
 
 
-def test_final_message_and_run_terminal_state_commit_atomically(
-    client, monkeypatch
-):
+def test_final_message_and_run_terminal_state_commit_atomically(client, monkeypatch):
     session = client.post("/sessions", json={"title": "Atomic finish"}).json()
     run = runs.create_run(
         session_id=session["id"],
@@ -182,9 +184,10 @@ def test_terminal_event_retention_keeps_summary_and_invalidates_old_cursor(clien
         )
 
     assert runs.prune_terminal_run_events(30) == 2
-    assert runs.list_events(
-        run["id"], after_sequence=terminal["seq"] - 1
-    )[0]["type"] == "done"
+    assert (
+        runs.list_events(run["id"], after_sequence=terminal["seq"] - 1)[0]["type"]
+        == "done"
+    )
     with pytest.raises(runs.EventCursorError):
         runs.list_events(run["id"], after_sequence=0)
 
@@ -333,7 +336,7 @@ def test_run_events_do_not_store_secret_fields(client):
         owner_instance_id="instance-a",
     )
     asyncio.run(
-        DurableRunEventSink(run_id=run["id"]).send_json(
+        DurableRunEventSink(store=SqliteRunStore(), run_id=run["id"]).send_json(
             {
                 "type": "test",
                 "authorization": "Bearer secret",

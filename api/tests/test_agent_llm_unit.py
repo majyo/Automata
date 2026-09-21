@@ -3,8 +3,9 @@ import json
 
 import pytest
 
-from automata_api.agent import llm
 from automata_api.config import AgentConfig
+from automata_api.core.agent.messages import AssistantStreamAccumulator
+from automata_api.infrastructure.llm import client as llm
 
 
 def agent_config() -> AgentConfig:
@@ -299,7 +300,7 @@ def test_parse_stream_delta_extracts_reasoning_finish_and_tool_calls():
 
 
 def test_assistant_stream_accumulator_merges_content_reasoning_and_tool_calls():
-    accumulator = llm.AssistantStreamAccumulator()
+    accumulator = AssistantStreamAccumulator()
     accumulator.add({"content": "hel", "reasoning_content": "think "})
     accumulator.add(
         {
@@ -419,7 +420,9 @@ def test_parse_completion_message_rejects_invalid_payload(response, message):
 
 def test_normalize_tool_calls_and_stream_chunk_invalid_inputs():
     assert llm.normalize_tool_calls(None) == []
-    assert llm.normalize_tool_calls([{"function": {"name": "tool", "arguments": "x"}}]) == [
+    assert llm.normalize_tool_calls(
+        [{"function": {"name": "tool", "arguments": "x"}}]
+    ) == [
         {
             "id": "call_0",
             "type": "function",
@@ -429,9 +432,10 @@ def test_normalize_tool_calls_and_stream_chunk_invalid_inputs():
     assert llm.parse_stream_chunk("not json") == ""
     assert llm.parse_stream_chunk('{"choices": []}') == ""
     assert llm.parse_stream_chunk('{"choices": [{"delta": "bad"}]}') == ""
-    assert llm.parse_stream_chunk(
-        '{"choices": [{"delta": {"content": "chunk"}}]}'
-    ) == "chunk"
+    assert (
+        llm.parse_stream_chunk('{"choices": [{"delta": {"content": "chunk"}}]}')
+        == "chunk"
+    )
 
 
 def test_provider_error_message_prefers_structured_messages():

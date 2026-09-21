@@ -1,15 +1,17 @@
 import asyncio
 import json
 
-from automata_api.agent import context as agent_context
-from automata_api.agent import llm, runtime
-from automata_api.agent.tools import ToolResult
+from automata_api.bootstrap import tools as builtin_tools
 from automata_api.config import ContextCompressionConfig
-from automata_api.repositories.agent_store import SessionAgentContextStore
-from automata_api.repositories.sessions import (
+from automata_api.core.agent import context as agent_context
+from automata_api.core.tools.models import ToolResult
+from automata_api.infrastructure.llm import client as llm
+from automata_api.infrastructure.llm.chat_completions import ChatCompletionsProvider
+from automata_api.infrastructure.persistence.sessions import (
     fetch_context_summary,
     save_context_message,
 )
+from automata_api.infrastructure.persistence.stores import SqliteContextStore
 
 
 def receive_agent_event(websocket):
@@ -110,9 +112,10 @@ def test_fetch_agent_context_compresses_long_history(client, monkeypatch):
     websocket = CapturingWebSocket()
     messages = asyncio.run(
         agent_context.fetch_agent_context(
+            provider=ChatCompletionsProvider(),
             emit_event=websocket.send_json,
             session_id=session["id"],
-            store=SessionAgentContextStore(),
+            store=SqliteContextStore(),
             compression_config=ContextCompressionConfig(
                 enabled=True,
                 threshold_chars=1_200,
@@ -152,9 +155,10 @@ def test_fetch_agent_context_skips_summary_when_under_threshold(client, monkeypa
     websocket = CapturingWebSocket()
     messages = asyncio.run(
         agent_context.fetch_agent_context(
+            provider=ChatCompletionsProvider(),
             emit_event=websocket.send_json,
             session_id=session["id"],
-            store=SessionAgentContextStore(),
+            store=SqliteContextStore(),
             compression_config=ContextCompressionConfig(
                 enabled=True,
                 threshold_chars=100_000,
@@ -207,6 +211,7 @@ def test_loop_context_compression_replaces_tool_protocol_messages(monkeypatch):
     websocket = CapturingWebSocket()
     compressed = asyncio.run(
         agent_context.compress_loop_context_if_needed(
+            provider=ChatCompletionsProvider(),
             emit_event=websocket.send_json,
             messages=messages,
             compression_config=ContextCompressionConfig(
@@ -421,7 +426,7 @@ def test_chat_websocket_emits_loop_compression_event(client, monkeypatch):
         "stream_chat_completion",
         stream_from_completion(fake_create_llm_response),
     )
-    monkeypatch.setattr(runtime, "run_tool", fake_run_tool)
+    monkeypatch.setattr(builtin_tools, "run_tool", fake_run_tool)
 
     with client.websocket_connect("/ws/chat") as websocket:
         websocket.receive_json()

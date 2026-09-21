@@ -1,2 +1,1 @@
 """Automata API package."""
-

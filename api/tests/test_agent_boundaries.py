@@ -2,14 +2,16 @@ import ast
 from pathlib import Path
 
 FORBIDDEN_IMPORTS = (
+    "automata_api.infrastructure",
+    "automata_api.bootstrap",
     "automata_api.services",
-    "automata_api.routers",
+    "automata_api.transport.http",
     "fastapi",
 )
 
 
 def test_agent_package_does_not_depend_on_api_transport_layers():
-    agent_dir = Path(__file__).resolve().parents[1] / "automata_api" / "agent"
+    agent_dir = Path(__file__).resolve().parents[1] / "automata_api" / "core"
     violations = []
 
     for path in sorted(agent_dir.rglob("*.py")):

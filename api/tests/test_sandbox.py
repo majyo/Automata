@@ -5,42 +5,31 @@ from types import SimpleNamespace
 
 import pytest
 
-from automata_api.agent.execution.approval import ApprovalBroker
-from automata_api.agent.execution.model import (
-    CancellationToken,
-    ToolExecutionContext,
-)
-from automata_api.agent.execution.orchestrator import ToolExecutionOrchestrator
-from automata_api.agent.execution.process import current_process_scope
-from automata_api.agent.execution.sandbox import process_launcher
-from automata_api.agent.execution.sandbox.backends.linux import (
-    LinuxSandboxBackend,
-)
-from automata_api.agent.execution.sandbox.backends.macos import (
-    _seatbelt_profile,
-)
-from automata_api.agent.execution.sandbox.backends.windows import (
-    find_windows_sandbox_host,
-)
-from automata_api.agent.execution.sandbox.environment import (
-    build_tool_environment,
-)
-from automata_api.agent.execution.sandbox.model import (
-    ProcessLaunchRequest,
-    SandboxMetadata,
-)
-from automata_api.agent.execution.sandbox.protocol import (
-    classify_sandbox_failure,
-)
-from automata_api.agent.tools.base import AgentTool
-from automata_api.agent.tools.model import ToolDescriptor
-from automata_api.agent.tools.models import ToolResult
-from automata_api.agent.tools.router import ToolRouter
-from automata_api.execution.permissions import (
+from automata_api.core.runs.approval import ApprovalBroker
+from automata_api.core.runs.model import CancellationToken, ToolExecutionContext
+from automata_api.core.tools.base import AgentTool
+from automata_api.core.tools.model import ToolDescriptor
+from automata_api.core.tools.models import ToolResult
+from automata_api.core.tools.orchestrator import ToolExecutionOrchestrator
+from automata_api.core.tools.permissions import (
     compile_permission_profile,
     permission_profile_from_json,
     sandbox_backend_for_profile,
 )
+from automata_api.core.tools.process_scope import current_process_scope
+from automata_api.core.tools.router import ToolRouter
+from automata_api.infrastructure.sandbox import process_launcher
+from automata_api.infrastructure.sandbox.backends.linux import LinuxSandboxBackend
+from automata_api.infrastructure.sandbox.backends.macos import _seatbelt_profile
+from automata_api.infrastructure.sandbox.backends.windows import (
+    find_windows_sandbox_host,
+)
+from automata_api.infrastructure.sandbox.environment import build_tool_environment
+from automata_api.infrastructure.sandbox.model import (
+    ProcessLaunchRequest,
+    SandboxMetadata,
+)
+from automata_api.infrastructure.sandbox.protocol import classify_sandbox_failure
 
 
 class RetryTool(AgentTool):
@@ -115,9 +104,7 @@ def test_permission_profiles_are_hashed_immutable_and_platform_routed(tmp_path):
         "windows-appcontainer"
     )
     assert sandbox_backend_for_profile(managed, platform="linux") == "linux-bwrap"
-    assert sandbox_backend_for_profile(managed, platform="darwin") == (
-        "macos-seatbelt"
-    )
+    assert sandbox_backend_for_profile(managed, platform="darwin") == ("macos-seatbelt")
 
     payload = json.loads(managed.to_json())
     payload["network"] = "enabled"
@@ -194,11 +181,11 @@ def test_linux_bwrap_policy_uses_namespaces_read_only_root_and_write_bind(
         return SimpleNamespace(pid=1)
 
     monkeypatch.setattr(
-        "automata_api.agent.execution.sandbox.backends.linux.shutil.which",
+        "automata_api.infrastructure.sandbox.backends.linux.shutil.which",
         lambda name: "/usr/bin/bwrap" if name == "bwrap" else None,
     )
     monkeypatch.setattr(
-        "automata_api.agent.execution.sandbox.backends.linux.asyncio.create_subprocess_exec",
+        "automata_api.infrastructure.sandbox.backends.linux.asyncio.create_subprocess_exec",
         fake_spawn,
     )
     request = ProcessLaunchRequest(
@@ -303,9 +290,7 @@ def test_sandbox_denial_allows_one_explicit_unsandboxed_retry(tmp_path):
         )
         await asyncio.wait_for(approval_ready.wait(), timeout=1)
         approval = next(
-            event
-            for event in emitted
-            if event["type"] == "tool_approval_required"
+            event for event in emitted if event["type"] == "tool_approval_required"
         )
         broker.resolve(
             run_id="run",
@@ -318,9 +303,7 @@ def test_sandbox_denial_allows_one_explicit_unsandboxed_retry(tmp_path):
 
     assert result.success is True
     assert tool.enforcements == ["managed", "disabled"]
-    assert sum(
-        event["type"] == "sandbox_retry_started" for event in emitted
-    ) == 1
+    assert sum(event["type"] == "sandbox_retry_started" for event in emitted) == 1
 
 
 def test_deny_read_profile_blocks_unsandboxed_retry(tmp_path):
@@ -370,9 +353,7 @@ def test_deny_read_profile_blocks_unsandboxed_retry(tmp_path):
     assert result.error_code == "sandbox_denied"
     assert tool.enforcements == ["managed"]
     assert any(event["type"] == "sandbox_retry_blocked" for event in emitted)
-    assert not any(
-        event["type"] == "tool_approval_required" for event in emitted
-    )
+    assert not any(event["type"] == "tool_approval_required" for event in emitted)
 
 
 @pytest.mark.skipif(

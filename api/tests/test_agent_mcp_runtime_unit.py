@@ -4,10 +4,10 @@ import asyncio
 import json
 import sys
 
-from automata_api.agent.backends.local import LocalBackend
-from automata_api.extensions.mcp.config import load_mcp_config
-from automata_api.extensions.mcp.runtime import create_mcp_tool_runtime
-from automata_api.extensions.mcp.trust import McpTrustStore, create_grant
+from automata_api.infrastructure.extensions.mcp.config import load_mcp_config
+from automata_api.infrastructure.extensions.mcp.runtime import create_mcp_tool_runtime
+from automata_api.infrastructure.extensions.mcp.trust import McpTrustStore, create_grant
+from automata_api.infrastructure.workspace.backends.local import LocalBackend
 
 
 def write_workspace_server(workspace, *, command, args):

@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 PACKAGE = Path(__file__).resolve().parents[1] / "automata_api"
-TOOLS = PACKAGE / "agent" / "tools"
+TOOLS = PACKAGE / "core" / "tools"
 
 # Modules the registry imports to declare the builtin tool set. Adding a
 # builtin tool should mean adding one of these and one entry below.
@@ -28,6 +28,7 @@ TOOL_MODULES = (
     "patch",
     "search",
     "write_stdin",
+    "powershell",
 )
 
 # The one module allowed to name the concrete tool classes.
@@ -38,7 +39,7 @@ def _importing_files(module_name: str) -> set[str]:
     """Files that import ``module_name`` from the tools package."""
     needles = (
         f"from .{module_name} import",
-        f"from automata_api.agent.tools.{module_name} import",
+        f"from automata_api.core.tools.{module_name} import",
         f"from .{module_name} import (",
     )
     found: set[str] = set()
@@ -53,8 +54,8 @@ def _importing_files(module_name: str) -> set[str]:
 def test_concrete_tools_are_imported_only_by_the_registry(module_name):
     importers = _importing_files(module_name)
 
-    assert importers <= {f"agent/tools/{REGISTRY}"}, (
-        f"agent/tools/{module_name}.py is imported by {sorted(importers)}; "
+    assert importers <= {f"core/tools/{REGISTRY}"}, (
+        f"core/tools/{module_name}.py is imported by {sorted(importers)}; "
         "adding or changing a tool should only touch the tools package and "
         "its registry entry, not the agent loop, backends or workspace"
     )
@@ -82,13 +83,16 @@ def test_registry_declares_every_registered_tool():
 def test_backends_do_not_import_builtin_tools():
     """The local backend must not depend on the builtin tool modules.
 
-    `agent/backends` may use workspace and execution capabilities, but the
+    `infrastructure/workspace/backends` may use workspace and execution capabilities, but the
     concrete tool implementations are registered above it.
     """
     offenders: list[str] = []
-    for path in (PACKAGE / "agent" / "backends").rglob("*.py"):
+    for path in (PACKAGE / "infrastructure" / "workspace" / "backends").rglob("*.py"):
         text = path.read_text(encoding="utf-8")
-        if "automata_api.agent.tools import _core" in text:
+        if any(
+            f"automata_api.core.tools.{module}" in text
+            for module in (*TOOL_MODULES, "registry", "providers", "_core")
+        ):
             offenders.append(path.name)
     assert offenders == []
 

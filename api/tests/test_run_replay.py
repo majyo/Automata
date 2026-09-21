@@ -14,13 +14,14 @@ from typing import Any
 
 import pytest
 
-from automata_api.repositories import runs as run_repository
-from automata_api.runs.replay import ReplayService
+from automata_api.core.runs.replay import ReplayService
+from automata_api.infrastructure.persistence import runs as run_repository
+from automata_api.infrastructure.persistence.runs import SqliteRunStore
 
 REPLAY_CONTRACT = json.loads(
-    (
-        Path(__file__).resolve().parent / "contracts" / "replay_scenarios.json"
-    ).read_text("utf-8")
+    (Path(__file__).resolve().parent / "contracts" / "replay_scenarios.json").read_text(
+        "utf-8"
+    )
 )
 SCENARIOS = REPLAY_CONTRACT["scenarios"]
 
@@ -55,11 +56,7 @@ class RecordingSender:
         """Live traffic while replay is in flight (mirrors the real sender)."""
         run_id = data.get("run_id")
         seq = int(data.get("seq", 0))
-        if (
-            self._drop_through
-            and isinstance(run_id, str)
-            and run_id in self.buffers
-        ):
+        if self._drop_through and isinstance(run_id, str) and run_id in self.buffers:
             self.live.setdefault(run_id, []).append(data)
             return
         self.delivered.append(seq)
@@ -82,7 +79,7 @@ def database(tmp_path, monkeypatch):
     monkeypatch.setenv(
         "AUTOMATA_API_TOKEN", "test-api-token-that-is-at-least-32-characters"
     )
-    from automata_api.db.schema import init_db
+    from automata_api.infrastructure.persistence.db.schema import init_db
 
     init_db()
     return tmp_path
@@ -100,7 +97,10 @@ def make_run(session_id: str, *, prompt: str = "hello") -> str:
 
 def prune_events_before(run_id: str, sequence: int) -> None:
     """Drop retained events below ``sequence`` to simulate retention."""
-    from automata_api.db.connection import connect_db, db_lock
+    from automata_api.infrastructure.persistence.db.connection import (
+        connect_db,
+        db_lock,
+    )
 
     with db_lock, connect_db() as db:
         db.execute(
@@ -125,7 +125,7 @@ def populate(run_id: str, scenario: dict[str, Any]) -> None:
 
 
 def make_session() -> str:
-    from automata_api.repositories.sessions import create_session
+    from automata_api.infrastructure.persistence.sessions import create_session
 
     return str(create_session("replay", None, None, "default")["id"])
 
@@ -136,7 +136,9 @@ def append(run_id: str, payload: dict[str, Any]) -> int:
 
 def test_replay_scenarios_match_the_contract(database):
     """Every JSON scenario behaves the way the shared contract says."""
-    service = ReplayService()
+    service = ReplayService(
+        store=SqliteRunStore(),
+    )
     for scenario in SCENARIOS:
         session_id = make_session()
         run_id = make_run(session_id)
@@ -174,7 +176,9 @@ def test_resume_started_precedes_replayed_events(database):
 
     sender = RecordingSender()
     asyncio.run(
-        ReplayService().resume(
+        ReplayService(
+            store=SqliteRunStore(),
+        ).resume(
             sender=sender,
             session_id=session_id,
             run_id=run_id,
@@ -192,7 +196,9 @@ def test_unknown_run_reports_cursor_error_not_a_crash(database):
 
     sender = RecordingSender()
     outcome = asyncio.run(
-        ReplayService().resume(
+        ReplayService(
+            store=SqliteRunStore(),
+        ).resume(
             sender=sender,
             session_id=session_id,
             run_id="does-not-exist",
@@ -250,7 +256,9 @@ def test_replay_delivers_a_long_backlog_in_order(database):
 
     sender = RecordingSender()
     asyncio.run(
-        ReplayService().resume(
+        ReplayService(
+            store=SqliteRunStore(),
+        ).resume(
             sender=sender,
             session_id=session_id,
             run_id=run_id,

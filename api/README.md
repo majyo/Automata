@@ -13,49 +13,75 @@ environment variable is missing, local development falls back to
 ## Project layout
 
 ```text
-main.py                       Thin compatibility entrypoint for uvicorn and PyInstaller
-automata_api/main.py          Thin create_app compatibility entrypoint
-automata_api/bootstrap/       Dependency assembly: settings, AppContainer, lifecycle
-automata_api/transport/       Dependency helpers for the FastAPI routers
-automata_api/contracts/       External protocol DTOs and shared primitives
-automata_api/routers/         HTTP and WebSocket routes
-automata_api/services/        WebSocket connection handling and turn dispatch
-automata_api/agent/           Agent turn engine, context, prompts and the model port
-automata_api/agent/tools/     Tool catalog, dispatch policy and builtin tools
-automata_api/agent/adapters/  Model provider adapters (chat completions)
-automata_api/agent/execution/ Process execution, output capture and sandboxing
-automata_api/workspace/       Path constraints, file capabilities and patch algorithms
-automata_api/runs/            Run lifecycle, approvals and event replay
-automata_api/sessions/        Session domain rules and storage ports
-automata_api/extensions/      MCP and Skills extensions
-automata_api/storage/sqlite/  SQLite adapters for the storage ports
-automata_api/execution/       Permission vocabulary and runtime paths
-automata_api/db/              SQLite connection, schema and baseline
-automata_api/observability/   Structured logs, spans, profile samples and retention
-automata_api/repositories/    SQLite-backed persistence used by the adapters
-tests/architecture/           Import boundary and layering rules
-tests/contracts/              Frozen protocol and payload fixtures
-tests/                        FastAPI TestClient and unit coverage
+main.py                          Direct launch / PyInstaller entrypoint
+ automata_api/
+   main.py                       create_app and default ASGI app
+   bootstrap/                    Dependency assembly, settings and lifecycle
+   transport/
+     http/                       REST routes and middleware
+     websocket/                  Authentication, commands, sending and replay wiring
+     schemas.py                  Public HTTP DTOs
+     security.py                 Transport authentication
+   core/
+     sessions/                   Session rules, context vocabulary and storage ports
+     runs/                       Run/Plan use cases, lifecycle, approvals and replay
+     agent/                      Model loop, context compression and model port
+     tools/                      Tool contracts, registration, dispatch and policy
+     telemetry.py                Observation port and no-op implementation
+     utils.py                    Shared identifiers and timestamps
+   infrastructure/
+     persistence/                SQLite stores, transactions, schema and migrations
+     llm/                        HTTP client and chat-completions adapter
+     workspace/                  Local/Windows file and workspace capabilities
+     processes/                  OS processes, sessions, output and cancellation
+     sandbox/                    Platform sandbox implementations and setup
+     extensions/                 MCP and Skills implementations
+     observability/              Structured logs, spans, profiling and retention
+   config.py                     Shared configuration values and environment helpers
+ tests/architecture/             Enforced import boundaries and isolated core imports
+ tests/contracts/                Frozen external protocol fixtures
+ tests/                          Behavior, adapter and integration tests
 ```
 
-Dependencies point one way. `transport` calls application use cases;
-`agent`/`runs`/`sessions` do not import `extensions`; `workspace` and
-`execution` never import `tools`; and only `bootstrap` chooses concrete
-implementations. `tests/architecture` enforces those rules, so a new
-cross-layer import fails the suite rather than being discovered later.
+`core` combines use-case orchestration and business rules; there are no separate
+application/domain directory trees. Related code stays together inside its
+business module. `transport` calls core services or core-owned transactional
+ports. `infrastructure` implements those ports. `bootstrap` selects concrete
+implementations and manages their lifetime. The transport dependency helper is
+the explicit bridge to `app.state.container`.
+
+Core must not import transport, bootstrap, infrastructure, FastAPI, HTTPX,
+SQLite, subprocess or the MCP SDK. Infrastructure must not import transport or
+bootstrap; transport must not import infrastructure. Architecture tests check
+these edges (including relative, nested and type-only imports), and import core
+in a fresh interpreter to detect hidden adapter loading or circular imports.
+
+A prompt follows `AgentConnection → RunService → RunCoordinator → TurnService
+→ agent loop → ModelProvider / ToolRouter`. The coordinator persists events
+through `RunStore`; disconnecting the WebSocket does not cancel the Run.
+`DefaultTurnResourcesFactory` creates backend/MCP/Skills resources for one turn
+and closes them on completion, error or cancellation. Tools consume the
+core-owned workspace capabilities; backends do not register concrete tools.
+
+See [the architecture guide](../Docs/project-structure-refactoring-plan.md)
+for module ownership, extension points and compatibility constraints.
 
 ## Database schema
 
 The development database does not support upgrades from historical schemas.
-`automata_api/db/baseline.py` creates and validates the complete current schema
+`automata_api/infrastructure/persistence/db/baseline.py` creates and validates the complete current schema
 directly. If an existing database does not match that baseline, delete
 `automata.db` and restart the backend.
 
-The migration hook remains in `automata_api/db/migrations/__init__.py` and
-`automata_api/db/schema.py`, including ordered versions, checksums,
+The migration hook remains in `automata_api/infrastructure/persistence/db/migrations/__init__.py` and
+`automata_api/infrastructure/persistence/db/schema.py`, including ordered versions, checksums,
 per-migration transactions, backups, and integrity checks. Migration 1 adds the
 thread-context search source marker, the rebuildable SQLite FTS5 search index,
 and indexes any existing agent context messages without deleting them.
+The package relocation preserves migration 1's checksum identity by mapping its
+single moved import back to the historical spelling. Both historical LF and
+CRLF checkouts are accepted; all remaining migration source is still hashed.
+The refactor does not reset or rewrite existing migration records.
 
 ## LLM configuration
 
@@ -135,13 +161,13 @@ From `api/`:
 
 ```bash
 uv sync
-uv run uvicorn main:app --host 127.0.0.1 --port 8765 --reload
+uv run uvicorn automata_api.main:app --host 127.0.0.1 --port 8765 --reload
 ```
 
 Or from the repository root:
 
 ```bash
-uv run --directory api uvicorn main:app --host 127.0.0.1 --port 8765
+uv run --directory api uvicorn automata_api.main:app --host 127.0.0.1 --port 8765
 ```
 
 The sidecar build uses the `build` extra:

@@ -32,7 +32,7 @@ def test_different_sessions_run_concurrently_and_same_session_is_rejected(
 ):
     monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
     monkeypatch.setattr(
-        "automata_api.agent.llm.stream_chat_completion", waiting_model
+        "automata_api.infrastructure.llm.client.stream_chat_completion", waiting_model
     )
     session = client.post("/sessions", json={"title": "Busy"}).json()
     other_session = client.post("/sessions", json={"title": "Also busy"}).json()
@@ -55,16 +55,19 @@ def test_different_sessions_run_concurrently_and_same_session_is_rejected(
         )
         other_started = receive_matching(
             first,
-            lambda event: event.get("type") == "started"
-            and event.get("session_id") == other_session["id"],
+            lambda event: (
+                event.get("type") == "started"
+                and event.get("session_id") == other_session["id"]
+            ),
         )
         assert other_started["run_id"] != started["run_id"]
 
         with client.websocket_connect("/ws/chat") as second:
             ready = second.receive_json()
-            assert {
-                run["id"] for run in ready["active_runs"]
-            } == {started["run_id"], other_started["run_id"]}
+            assert {run["id"] for run in ready["active_runs"]} == {
+                started["run_id"],
+                other_started["run_id"],
+            }
             second.send_json(
                 {"type": "prompt", "session_id": session["id"], "prompt": "race"}
             )
@@ -80,12 +83,8 @@ def test_different_sessions_run_concurrently_and_same_session_is_rejected(
                     "run_id": started["run_id"],
                 }
             )
-            assert receive_run_event(
-                second, started["run_id"], "run_cancel_requested"
-            )
-            cancelled = receive_run_event(
-                second, started["run_id"], "run_cancelled"
-            )
+            assert receive_run_event(second, started["run_id"], "run_cancel_requested")
+            cancelled = receive_run_event(second, started["run_id"], "run_cancelled")
         assert cancelled["type"] == "run_cancelled"
         assert cancelled["run_id"] == started["run_id"]
 
@@ -96,12 +95,8 @@ def test_different_sessions_run_concurrently_and_same_session_is_rejected(
                 "run_id": other_started["run_id"],
             }
         )
-        assert receive_run_event(
-            first, other_started["run_id"], "run_cancel_requested"
-        )
-        assert receive_run_event(
-            first, other_started["run_id"], "run_cancelled"
-        )
+        assert receive_run_event(first, other_started["run_id"], "run_cancel_requested")
+        assert receive_run_event(first, other_started["run_id"], "run_cancelled")
 
 
 def test_cancel_while_waiting_for_approval_prevents_tool_execution(
@@ -109,7 +104,8 @@ def test_cancel_while_waiting_for_approval_prevents_tool_execution(
 ):
     monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
     monkeypatch.setattr(
-        "automata_api.agent.llm.stream_chat_completion", write_tool_model
+        "automata_api.infrastructure.llm.client.stream_chat_completion",
+        write_tool_model,
     )
     session = client.post(
         "/sessions",
@@ -131,18 +127,14 @@ def test_cancel_while_waiting_for_approval_prevents_tool_execution(
             if event["type"] == "tool_approval_required":
                 approval = event
 
-        websocket.send_json(
-            {"type": "cancel_run", "run_id": approval["run_id"]}
-        )
+        websocket.send_json({"type": "cancel_run", "run_id": approval["run_id"]})
         assert websocket.receive_json()["type"] == "run_cancel_requested"
         assert websocket.receive_json()["type"] == "run_cancelled"
 
     assert not (tmp_path / "cancelled.txt").exists()
 
 
-def test_full_access_run_executes_write_without_approval(
-    client, monkeypatch, tmp_path
-):
+def test_full_access_run_executes_write_without_approval(client, monkeypatch, tmp_path):
     monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
     calls = 0
 
@@ -156,7 +148,7 @@ def test_full_access_run_executes_write_without_approval(
         yield {"content": "Write completed."}
 
     monkeypatch.setattr(
-        "automata_api.agent.llm.stream_chat_completion",
+        "automata_api.infrastructure.llm.client.stream_chat_completion",
         model,
     )
     session = client.post(
@@ -190,18 +182,14 @@ def test_full_access_run_executes_write_without_approval(
     assert (tmp_path / "cancelled.txt").read_text(encoding="utf-8") == (
         "must not exist"
     )
-    run = client.get(
-        f"/sessions/{session['id']}/runs/{started['run_id']}"
-    ).json()
+    run = client.get(f"/sessions/{session['id']}/runs/{started['run_id']}").json()
     assert run["permission_preset"] == "full_access"
 
 
-def test_disconnect_keeps_run_in_background_until_explicit_cancel(
-    client, monkeypatch
-):
+def test_disconnect_keeps_run_in_background_until_explicit_cancel(client, monkeypatch):
     monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
     monkeypatch.setattr(
-        "automata_api.agent.llm.stream_chat_completion", waiting_model
+        "automata_api.infrastructure.llm.client.stream_chat_completion", waiting_model
     )
     session = client.post("/sessions", json={"title": "Disconnect"}).json()
 
@@ -216,9 +204,7 @@ def test_disconnect_keeps_run_in_background_until_explicit_cancel(
 
     with client.websocket_connect("/ws/chat") as websocket:
         ready = websocket.receive_json()
-        assert [run["id"] for run in ready["active_runs"]] == [
-            started["run_id"]
-        ]
+        assert [run["id"] for run in ready["active_runs"]] == [started["run_id"]]
         websocket.send_json(
             {"type": "prompt", "session_id": session["id"], "prompt": "again"}
         )
@@ -259,7 +245,7 @@ def test_run_completes_without_any_frontend_connection(client, monkeypatch):
         yield {"content": "completed in background"}
 
     monkeypatch.setattr(
-        "automata_api.agent.llm.stream_chat_completion", delayed_model
+        "automata_api.infrastructure.llm.client.stream_chat_completion", delayed_model
     )
     session = client.post("/sessions", json={"title": "Background"}).json()
 
@@ -274,9 +260,7 @@ def test_run_completes_without_any_frontend_connection(client, monkeypatch):
     deadline = time.monotonic() + 2
     run = None
     while time.monotonic() < deadline:
-        run = client.get(
-            f"/sessions/{session['id']}/runs/{started['run_id']}"
-        ).json()
+        run = client.get(f"/sessions/{session['id']}/runs/{started['run_id']}").json()
         if run["status"] == "completed":
             break
         time.sleep(0.02)
@@ -323,7 +307,7 @@ def test_plan_mode_write_is_denied_without_approval_even_if_client_tries_to_allo
         yield {"content": "Write was correctly blocked."}
 
     monkeypatch.setattr(
-        "automata_api.agent.llm.stream_chat_completion", plan_model
+        "automata_api.infrastructure.llm.client.stream_chat_completion", plan_model
     )
     session = client.post(
         "/sessions",
@@ -381,7 +365,7 @@ def test_failed_plan_can_be_retried_with_new_attempt(client, monkeypatch):
         yield {"content": "Retry completed."}
 
     monkeypatch.setattr(
-        "automata_api.agent.llm.stream_chat_completion",
+        "automata_api.infrastructure.llm.client.stream_chat_completion",
         model,
     )
     session = client.post("/sessions", json={"title": "Retry plan"}).json()
@@ -401,8 +385,10 @@ def test_failed_plan_can_be_retried_with_new_attempt(client, monkeypatch):
         )
         receive_matching(
             websocket,
-            lambda event: event.get("type") == "done"
-            and event.get("run_id") == plan_ready["run_id"],
+            lambda event: (
+                event.get("type") == "done"
+                and event.get("run_id") == plan_ready["run_id"]
+            ),
         )
 
         websocket.send_json(
@@ -415,14 +401,18 @@ def test_failed_plan_can_be_retried_with_new_attempt(client, monkeypatch):
         )
         failed = receive_matching(
             websocket,
-            lambda event: event.get("type") == "error"
-            and event.get("session_id") == session["id"],
+            lambda event: (
+                event.get("type") == "error"
+                and event.get("session_id") == session["id"]
+            ),
         )
         assert failed["code"] == "run_failed"
 
         messages = client.get(f"/sessions/{session['id']}/messages").json()
         stored_plan = next(
-            message for message in messages if message["plan_id"] == plan_ready["plan_id"]
+            message
+            for message in messages
+            if message["plan_id"] == plan_ready["plan_id"]
         )
         assert stored_plan["plan_status"] == "failed"
 
@@ -437,8 +427,9 @@ def test_failed_plan_can_be_retried_with_new_attempt(client, monkeypatch):
         )
         retried = receive_matching(
             websocket,
-            lambda event: event.get("type") == "done"
-            and event.get("session_id") == session["id"],
+            lambda event: (
+                event.get("type") == "done" and event.get("session_id") == session["id"]
+            ),
         )
         assert retried["message"]["content"] == "Retry completed."
 
@@ -459,6 +450,5 @@ def receive_matching(websocket, predicate):
 def receive_run_event(websocket, run_id: str, event_type: str):
     return receive_matching(
         websocket,
-        lambda event: event.get("run_id") == run_id
-        and event.get("type") == event_type,
+        lambda event: event.get("run_id") == run_id and event.get("type") == event_type,
     )

@@ -1,7 +1,7 @@
 import sys
 
 if __name__ == "__main__" and sys.argv[1:] == ["--sandbox-file-worker"]:
-    from automata_api.agent.execution.sandbox.file_worker import run_file_worker
+    from automata_api.infrastructure.sandbox.file_worker import run_file_worker
 
     raise SystemExit(run_file_worker())
 

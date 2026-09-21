@@ -20,13 +20,13 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from automata_api.bootstrap.container import AppContainer
-from automata_api.db.schema import init_db
-from automata_api.observability import (
+from automata_api.infrastructure.observability import (
     get_observability_manager,
     start_observability,
     stop_observability,
 )
-from automata_api.security import get_api_token, validate_loopback_host
+from automata_api.infrastructure.persistence.db.schema import init_db
+from automata_api.transport.security import get_api_token, validate_loopback_host
 
 logger = logging.getLogger(__name__)
 

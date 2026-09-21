@@ -56,10 +56,13 @@ def test_mcp_server_candidate_can_be_granted_and_revoked(client, tmp_path):
 
     response = client.delete(f"/mcp/grants/{candidate['fingerprint']}")
     assert response.status_code == 204
-    assert client.get(
-        "/mcp/servers",
-        params={"workspace": str(workspace)},
-    ).json()[0]["granted"] is False
+    assert (
+        client.get(
+            "/mcp/servers",
+            params={"workspace": str(workspace)},
+        ).json()[0]["granted"]
+        is False
+    )
 
 
 def test_mcp_server_status_reports_streamable_http_transport(client, tmp_path):

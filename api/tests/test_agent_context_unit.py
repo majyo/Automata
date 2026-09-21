@@ -3,8 +3,10 @@ import json
 
 import pytest
 
-from automata_api.agent import context, llm
 from automata_api.config import ContextCompressionConfig
+from automata_api.core.agent import context
+from automata_api.infrastructure.llm import client as llm
+from automata_api.infrastructure.llm.chat_completions import ChatCompletionsProvider
 
 
 class MemoryStore:
@@ -32,9 +34,7 @@ class MemoryStore:
     def get_messages_after_sequence(self, session_id: str, sequence: int) -> list[dict]:
         self.calls.append(("after", session_id, sequence))
         return [
-            row
-            for row in self.rows_after_sequence
-            if int(row["sequence"]) > sequence
+            row for row in self.rows_after_sequence if int(row["sequence"]) > sequence
         ]
 
     def get_recent_context_messages(self, session_id: str, limit: int) -> list[dict]:
@@ -163,6 +163,7 @@ def test_fetch_agent_context_skips_compression_when_disabled(monkeypatch):
     recorder = EventRecorder()
     messages = asyncio.run(
         context.fetch_agent_context(
+            provider=ChatCompletionsProvider(),
             emit_event=recorder.emit,
             session_id="session-1",
             store=store,
@@ -188,6 +189,7 @@ def test_fetch_agent_context_keeps_uncompressed_messages_below_threshold(monkeyp
     recorder = EventRecorder()
     messages = asyncio.run(
         context.fetch_agent_context(
+            provider=ChatCompletionsProvider(),
             emit_event=recorder.emit,
             session_id="session-1",
             store=store,
@@ -215,6 +217,7 @@ def test_fetch_agent_context_skips_history_compression_when_tail_too_short(monke
     recorder = EventRecorder()
     messages = asyncio.run(
         context.fetch_agent_context(
+            provider=ChatCompletionsProvider(),
             emit_event=recorder.emit,
             session_id="session-1",
             store=store,
@@ -230,7 +233,7 @@ def test_fetch_agent_context_skips_history_compression_when_tail_too_short(monke
 
 def test_fetch_agent_context_compresses_history_and_persists_summary(monkeypatch):
     async def fake_create_context_summary(
-        *, title, existing_summary, content, target_chars
+        provider, *, title, existing_summary, content, target_chars
     ):
         assert title == "Conversation history compression"
         assert existing_summary == "old summary"
@@ -248,6 +251,7 @@ def test_fetch_agent_context_compresses_history_and_persists_summary(monkeypatch
     recorder = EventRecorder()
     messages = asyncio.run(
         context.fetch_agent_context(
+            provider=ChatCompletionsProvider(),
             emit_event=recorder.emit,
             session_id="session-1",
             store=store,
@@ -281,6 +285,7 @@ def test_fetch_agent_context_keeps_history_when_summary_fails(monkeypatch):
     recorder = EventRecorder()
     messages = asyncio.run(
         context.fetch_agent_context(
+            provider=ChatCompletionsProvider(),
             emit_event=recorder.emit,
             session_id="session-1",
             store=store,
@@ -307,6 +312,7 @@ def test_compress_loop_context_skips_when_disabled_or_under_threshold(monkeypatc
     recorder = EventRecorder()
     disabled = asyncio.run(
         context.compress_loop_context_if_needed(
+            provider=ChatCompletionsProvider(),
             emit_event=recorder.emit,
             messages=messages,
             compression_config=ContextCompressionConfig(False, 1, 1),
@@ -314,6 +320,7 @@ def test_compress_loop_context_skips_when_disabled_or_under_threshold(monkeypatc
     )
     under_threshold = asyncio.run(
         context.compress_loop_context_if_needed(
+            provider=ChatCompletionsProvider(),
             emit_event=recorder.emit,
             messages=messages,
             compression_config=ContextCompressionConfig(True, 10_000, 1),
@@ -338,6 +345,7 @@ def test_compress_loop_context_skips_without_tool_protocol(monkeypatch):
     recorder = EventRecorder()
     compressed = asyncio.run(
         context.compress_loop_context_if_needed(
+            provider=ChatCompletionsProvider(),
             emit_event=recorder.emit,
             messages=messages,
             compression_config=ContextCompressionConfig(True, 1, 100),
@@ -349,7 +357,9 @@ def test_compress_loop_context_skips_without_tool_protocol(monkeypatch):
 
 
 def test_compress_loop_context_replaces_latest_tool_protocol(monkeypatch):
-    async def fake_create_context_summary(*, title, existing_summary, content, target_chars):
+    async def fake_create_context_summary(
+        *, provider, title, existing_summary, content, target_chars
+    ):
         assert title == "Recent tool activity compression"
         assert existing_summary == ""
         assert "call_latest" in content
@@ -378,6 +388,7 @@ def test_compress_loop_context_replaces_latest_tool_protocol(monkeypatch):
     recorder = EventRecorder()
     compressed = asyncio.run(
         context.compress_loop_context_if_needed(
+            provider=ChatCompletionsProvider(),
             emit_event=recorder.emit,
             messages=messages,
             compression_config=ContextCompressionConfig(True, 1, 80),
@@ -412,6 +423,7 @@ def test_compress_loop_context_keeps_messages_when_summary_fails(monkeypatch):
     recorder = EventRecorder()
     compressed = asyncio.run(
         context.compress_loop_context_if_needed(
+            provider=ChatCompletionsProvider(),
             emit_event=recorder.emit,
             messages=messages,
             compression_config=ContextCompressionConfig(True, 1, 100),
@@ -433,6 +445,7 @@ def test_create_context_summary_strips_content_and_rejects_empty(monkeypatch):
 
     summary = asyncio.run(
         context.create_context_summary(
+            provider=ChatCompletionsProvider(),
             title="Title",
             existing_summary="old",
             content="content",
@@ -451,6 +464,7 @@ def test_create_context_summary_strips_content_and_rejects_empty(monkeypatch):
     with pytest.raises(llm.AgentProviderError, match="empty context summary"):
         asyncio.run(
             context.create_context_summary(
+                provider=ChatCompletionsProvider(),
                 title="Title",
                 existing_summary="",
                 content="content",
@@ -463,9 +477,7 @@ def test_context_formatting_helpers():
     history = context.history_rows_text(
         [{"sequence": 3, "role": "tool", "content": "Tool result: rg completed"}]
     )
-    serialized = context.messages_text(
-        [{"role": "user", "content": "hello", "z": 1}]
-    )
+    serialized = context.messages_text([{"role": "user", "content": "hello", "z": 1}])
     event_recorder = EventRecorder()
 
     asyncio.run(

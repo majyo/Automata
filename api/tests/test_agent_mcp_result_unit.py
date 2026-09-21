@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import json
 
-from automata_api.extensions.mcp.result import (
+from automata_api.infrastructure.extensions.mcp.result import (
     MAX_TEXT_CHARS,
     mcp_result_to_tool_result,
 )
-from automata_api.extensions.mcp.schema import McpCallResult, McpToolMetadata
+from automata_api.infrastructure.extensions.mcp.schema import (
+    McpCallResult,
+    McpToolMetadata,
+)
 
 
 def metadata():
@@ -79,11 +82,7 @@ def test_binary_content_is_omitted_and_resource_uris_are_filtered():
 
 def test_text_result_is_bounded_before_entering_model_context():
     _, payload = convert(
-        McpCallResult(
-            content=(
-                {"type": "text", "text": "x" * (MAX_TEXT_CHARS + 100)},
-            )
-        )
+        McpCallResult(content=({"type": "text", "text": "x" * (MAX_TEXT_CHARS + 100)},))
     )
 
     assert len(payload["text"]) == MAX_TEXT_CHARS

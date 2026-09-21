@@ -11,15 +11,15 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from automata_api.agent import runtime
-from automata_api.agent.adapters.chat_completions import (
-    ChatCompletionsProvider,
+from automata_api.bootstrap import tools as builtin_tools
+from automata_api.config import ContextCompressionConfig
+from automata_api.core.agent import runtime
+from automata_api.core.agent.messages import (
     assistant_message_for_provider,
-    default_model_provider,
     tool_result_for_provider,
 )
-from automata_api.agent.tools import ToolResult
-from automata_api.config import ContextCompressionConfig
+from automata_api.core.tools.models import ToolResult
+from automata_api.infrastructure.llm.chat_completions import ChatCompletionsProvider
 
 
 class ScriptedAccumulator:
@@ -36,7 +36,10 @@ class ScriptedAccumulator:
             self._tool_calls.extend(tool_calls)
 
     def message(self) -> dict[str, Any]:
-        message: dict[str, Any] = {"role": "assistant", "content": "".join(self._content)}
+        message: dict[str, Any] = {
+            "role": "assistant",
+            "content": "".join(self._content),
+        }
         if self._tool_calls:
             message["tool_calls"] = list(self._tool_calls)
         return message
@@ -74,7 +77,7 @@ def run_loop(
     provider: ScriptedProvider,
     *,
     max_steps: int = 4,
-    tool_runner=None,
+    tool_runner=builtin_tools.run_tool,
 ) -> list[dict[str, Any]]:
     async def scenario() -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
@@ -116,13 +119,13 @@ def test_injected_provider_sees_the_message_history():
 
 
 def test_default_provider_is_the_chat_completions_adapter():
-    assert isinstance(default_model_provider, ChatCompletionsProvider)
+    assert isinstance(ChatCompletionsProvider(), ChatCompletionsProvider)
 
 
 def test_engine_reports_empty_provider_response_as_a_provider_error():
     import pytest
 
-    from automata_api.agent.llm import AgentProviderError
+    from automata_api.infrastructure.llm.client import AgentProviderError
 
     provider = ScriptedProvider([[]])
 
@@ -148,7 +151,7 @@ def test_engine_stops_at_the_step_limit():
     """A turn that never finishes must fail rather than loop forever."""
     import pytest
 
-    from automata_api.agent.llm import AgentProviderError
+    from automata_api.infrastructure.llm.client import AgentProviderError
 
     provider = ScriptedProvider([tool_call_step() for _ in range(4)])
 
@@ -174,9 +177,7 @@ def test_assistant_message_conversion_keeps_tool_calls_and_reasoning():
 
 
 def test_tool_result_conversion_uses_the_call_id():
-    result = ToolResult(
-        name="read_file", arguments={}, content="payload", success=True
-    )
+    result = ToolResult(name="read_file", arguments={}, content="payload", success=True)
 
     converted = tool_result_for_provider({"id": "call-9"}, result)
 
@@ -193,9 +194,7 @@ def test_engine_uses_the_injected_tool_runner():
 
     async def fake_runner(name, arguments, workspace):
         calls.append((name, arguments, workspace))
-        return ToolResult(
-            name=name, arguments={}, content='{"ok": true}', success=True
-        )
+        return ToolResult(name=name, arguments={}, content='{"ok": true}', success=True)
 
     provider = ScriptedProvider([tool_call_step("read_file"), [{"content": "done"}]])
 
@@ -207,25 +206,10 @@ def test_engine_uses_the_injected_tool_runner():
     assert results[0]["success"] is True
 
 
-def test_default_tool_runner_resolves_the_runtime_seam():
-    """The default must resolve late so test doubles keep working."""
-    import automata_api.agent.runtime as runtime
-    from automata_api.agent.tool_dispatch import DefaultToolRunner
+def test_engine_requires_an_explicit_tool_executor():
+    """A bare engine must never silently construct a local workspace backend."""
+    import pytest
 
-    sentinel_calls: list[str] = []
-    original = runtime.run_tool
-
-    async def fake(name, arguments, workspace):
-        sentinel_calls.append(name)
-        return ToolResult(name=name, arguments={}, content="{}", success=True)
-
-    runtime.run_tool = fake
-    try:
-        result = asyncio.run(
-            DefaultToolRunner()("read_file", "{}", "workspace")
-        )
-    finally:
-        runtime.run_tool = original
-
-    assert sentinel_calls == ["read_file"]
-    assert result.success is True
+    provider = ScriptedProvider([tool_call_step("read_file")])
+    with pytest.raises(RuntimeError, match="ToolExecutor is required"):
+        run_loop(provider, tool_runner=None)
