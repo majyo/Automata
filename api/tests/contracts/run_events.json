@@ -4,7 +4,10 @@
     "These mirror what DurableRunEventSink persists and broadcasts: the",
     "event is the agent payload plus run_id/session_id/seq/schema_version.",
     "Frontend fixtures read this same file so both sides agree on shape.",
-    "Only non-deterministic values (ids, timestamps) are normalised."
+    "Only non-deterministic values (ids, timestamps) are normalised.",
+    "Optional published fields may be absent: `input_id` on `started` marks a",
+    "materialized queued input, and `cancelled_input_ids` on a failed run's",
+    "terminal `error` lists the follow-ups withdrawn together with it."
   ],
   "schema_version": 1,
   "envelope_required_fields": [

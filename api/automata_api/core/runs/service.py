@@ -60,10 +60,12 @@ class RunService:
             )
 
         async def execute(run: RunHandle, user_message: dict[str, Any]) -> RunOutcome:
+            # A direct prompt has no `agent_inputs` row, so it carries no
+            # input id: publishing the message id as one would tell the client
+            # that a queued input had materialized.
             return await self._execute_input(
                 run,
                 {
-                    "id": user_message["id"],
                     "message_id": user_message["id"],
                     "prompt": prompt,
                     "mode": resolved_mode,

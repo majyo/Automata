@@ -1,6 +1,8 @@
 import asyncio
 import threading
 
+from automata_api.infrastructure.persistence import runs
+
 
 def test_steer_is_applied_before_the_next_model_call(client, monkeypatch):
     monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
@@ -155,6 +157,33 @@ def test_queue_materializes_a_successor_run_after_completion(client, monkeypatch
     ]
 
 
+def test_a_direct_prompt_reports_no_input_id(client, monkeypatch):
+    """Only a materialized queued input has an `agent_inputs` row behind it."""
+    monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
+
+    async def model(_messages, **_kwargs):
+        yield {"content": "answer"}
+
+    monkeypatch.setattr(
+        "automata_api.infrastructure.llm.client.stream_chat_completion", model
+    )
+    session = client.post("/sessions", json={"title": "Direct"}).json()
+
+    with client.websocket_connect("/ws/chat") as websocket:
+        websocket.receive_json()
+        websocket.send_json(
+            {"type": "prompt", "session_id": session["id"], "prompt": "first"}
+        )
+        started = receive_matching(websocket, lambda event: event["type"] == "started")
+
+        assert "input_id" not in started
+        receive_matching(
+            websocket,
+            lambda event: event.get("type") == "done"
+            and event.get("run_id") == started["run_id"],
+        )
+
+
 def receive_matching(websocket, predicate):
     while True:
         event = websocket.receive_json()
@@ -298,3 +327,121 @@ def test_cancelling_the_same_input_twice_is_idempotent(client, monkeypatch):
 
     messages = client.get(f"/sessions/{session['id']}/messages").json()
     assert [message["content"] for message in messages] == ["first", "answer"]
+
+
+def test_a_failed_run_cancels_the_follow_ups_and_reports_them(client, monkeypatch):
+    monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
+    release = threading.Event()
+
+    async def model(_messages, **_kwargs):
+        while not release.is_set():
+            await asyncio.sleep(0.01)
+        raise RuntimeError("provider exploded")
+        yield {"content": "unreachable"}
+
+    monkeypatch.setattr(
+        "automata_api.infrastructure.llm.client.stream_chat_completion", model
+    )
+    session = client.post("/sessions", json={"title": "Fail queue"}).json()
+
+    with client.websocket_connect("/ws/chat") as websocket:
+        websocket.receive_json()
+        websocket.send_json(
+            {"type": "prompt", "session_id": session["id"], "prompt": "first"}
+        )
+        started = receive_matching(websocket, lambda event: event["type"] == "started")
+        receive_matching(
+            websocket,
+            lambda event: event.get("type") == "agent_step"
+            and event.get("run_id") == started["run_id"],
+        )
+
+        websocket.send_json(
+            {
+                "type": "prompt",
+                "session_id": session["id"],
+                "prompt": "second",
+                "delivery": "queue",
+                "request_id": "fail-queue-1",
+            }
+        )
+        accepted = receive_matching(
+            websocket, lambda event: event["type"] == "input_accepted"
+        )
+        assert accepted["status"] == "pending"
+
+        release.set()
+        failure = receive_matching(
+            websocket,
+            lambda event: event.get("type") == "error"
+            and event.get("run_id") == started["run_id"],
+        )
+        assert failure["cancelled_input_ids"] == [accepted["input_id"]]
+
+    # The follow-up was withdrawn, so it never becomes a Run of its own and the
+    # session's queue is not blocked behind it.
+    messages = client.get(f"/sessions/{session['id']}/messages").json()
+    assert [message["content"] for message in messages] == ["first"]
+    assert runs.pending_queue_session_ids() == []
+
+
+def test_a_cancelled_run_keeps_its_follow_ups(client, monkeypatch):
+    monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
+    release = threading.Event()
+
+    async def model(_messages, **_kwargs):
+        while not release.is_set():
+            await asyncio.sleep(0.01)
+        yield {"content": "answer"}
+
+    monkeypatch.setattr(
+        "automata_api.infrastructure.llm.client.stream_chat_completion", model
+    )
+    session = client.post("/sessions", json={"title": "Cancel keeps queue"}).json()
+
+    with client.websocket_connect("/ws/chat") as websocket:
+        websocket.receive_json()
+        websocket.send_json(
+            {"type": "prompt", "session_id": session["id"], "prompt": "first"}
+        )
+        started = receive_matching(websocket, lambda event: event["type"] == "started")
+        receive_matching(
+            websocket,
+            lambda event: event.get("type") == "agent_step"
+            and event.get("run_id") == started["run_id"],
+        )
+
+        websocket.send_json(
+            {
+                "type": "prompt",
+                "session_id": session["id"],
+                "prompt": "second",
+                "delivery": "queue",
+                "request_id": "cancel-keeps-1",
+            }
+        )
+        accepted = receive_matching(
+            websocket, lambda event: event["type"] == "input_accepted"
+        )
+
+        websocket.send_json(
+            {
+                "type": "cancel_run",
+                "session_id": session["id"],
+                "run_id": started["run_id"],
+            }
+        )
+        terminal = receive_matching(
+            websocket,
+            lambda event: event.get("type") == "run_cancelled"
+            and event.get("run_id") == started["run_id"],
+        )
+        # A user cancellation is not a task failure: the follow-up is kept and
+        # only the queue's resume rule keeps it waiting.
+        assert "cancelled_input_ids" not in terminal
+        release.set()
+
+    kept = runs.get_input(session_id=session["id"], request_id="cancel-keeps-1")
+    assert kept is not None
+    assert kept["id"] == accepted["input_id"]
+    assert kept["status"] == "pending"

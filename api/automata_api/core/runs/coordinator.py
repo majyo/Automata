@@ -475,11 +475,9 @@ class RunCoordinator:
                 self._store.finish_run,
                 handle.run_id,
                 status="failed",
-                event={
-                    "type": "error",
-                    "code": error.code,
-                    "message": error.public_message,
-                },
+                event=await self._failed_run_event(
+                    handle, code=error.code, message=error.public_message
+                ),
                 error_code=error.code,
                 public_error=error.public_message,
             )
@@ -495,11 +493,9 @@ class RunCoordinator:
                 self._store.finish_run,
                 handle.run_id,
                 status="failed",
-                event={
-                    "type": "error",
-                    "code": "run_failed",
-                    "message": public_message,
-                },
+                event=await self._failed_run_event(
+                    handle, code="run_failed", message=public_message
+                ),
                 error_code="run_failed",
                 public_error=public_message,
             )
@@ -520,6 +516,26 @@ class RunCoordinator:
             await handle.event_sink.close()
             async with self._lock:
                 self._by_run.pop(handle.run_id, None)
+
+    async def _failed_run_event(
+        self, handle: RunHandle, *, code: str, message: str
+    ) -> dict[str, Any]:
+        """Build the terminal event of a failed Run.
+
+        The follow-ups queued behind this Run are withdrawn first: their
+        predecessor will never complete, so they would wait for good and block
+        everything queued after them. Their ids travel with the event so a
+        client that reconnects later settles the same entries.
+        """
+        cancelled = await asyncio.to_thread(
+            self._store.cancel_queued_inputs_for_run,
+            handle.run_id,
+            error_code="predecessor_failed",
+        )
+        event: dict[str, Any] = {"type": "error", "code": code, "message": message}
+        if cancelled:
+            event["cancelled_input_ids"] = [str(row["id"]) for row in cancelled]
+        return event
 
     async def _run_for_input(
         self, input_row: dict[str, Any], fallback_run_id: str

@@ -81,6 +81,13 @@ class RunStore(Protocol):
         error_code: str,
     ) -> int: ...
 
+    def cancel_queued_inputs_for_run(
+        self,
+        run_id: str,
+        *,
+        error_code: str,
+    ) -> list[dict[str, Any]]: ...
+
     def claim_next_queued_input(
         self,
         *,

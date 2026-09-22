@@ -218,3 +218,79 @@ def test_claimed_and_foreign_inputs_cannot_be_withdrawn(client):
 
     with pytest.raises(state.RunNotFoundError):
         runs.cancel_input(session_id=other["id"], input_id=steering["id"])
+
+
+def test_a_failed_run_withdraws_the_follow_ups_queued_behind_it(client):
+    session = client.post("/sessions", json={"title": "Failed"}).json()
+    failed, _ = runs.create_prompt_run(
+        session_id=session["id"],
+        prompt="first",
+        mode="act",
+        owner_instance_id="instance-a",
+    )
+    runs.transition_run(failed["id"], expected=("queued",), target="running")
+    first, _ = runs.enqueue_queued_input(
+        session_id=session["id"],
+        prompt="second",
+        mode="act",
+        skills=None,
+        request_id="failed-queue-1",
+    )
+    second, _ = runs.enqueue_queued_input(
+        session_id=session["id"],
+        prompt="third",
+        mode="act",
+        skills=None,
+        request_id="failed-queue-2",
+    )
+    runs.finish_run(failed["id"], status="failed", event={"type": "error"})
+
+    cancelled = runs.cancel_queued_inputs_for_run(
+        failed["id"], error_code="predecessor_failed"
+    )
+
+    assert [row["id"] for row in cancelled] == [first["id"], second["id"]]
+    assert {row["status"] for row in cancelled} == {"cancelled"}
+    assert {row["error_code"] for row in cancelled} == {"predecessor_failed"}
+
+    # Nothing is left to run, so the session's queue is not blocked for good.
+    assert (
+        runs.claim_next_queued_input(
+            session_id=session["id"], owner_instance_id="instance-a"
+        )
+        is None
+    )
+    assert runs.pending_queue_session_ids() == []
+
+    # Withdrawing twice is harmless: the run finalizer may run again.
+    assert (
+        runs.cancel_queued_inputs_for_run(failed["id"], error_code="predecessor_failed")
+        == cancelled
+    )
+
+
+def test_a_completed_run_keeps_its_follow_ups(client):
+    session = client.post("/sessions", json={"title": "Completed"}).json()
+    completed, _ = runs.create_prompt_run(
+        session_id=session["id"],
+        prompt="first",
+        mode="act",
+        owner_instance_id="instance-a",
+    )
+    runs.transition_run(completed["id"], expected=("queued",), target="running")
+    queued, _ = runs.enqueue_queued_input(
+        session_id=session["id"],
+        prompt="second",
+        mode="act",
+        skills=None,
+        request_id="completed-queue-1",
+    )
+    runs.finish_run(completed["id"], status="completed", event={"type": "done"})
+
+    # Nothing withdraws the follow-ups of a Run that completed: they resume.
+    materialized = runs.claim_next_queued_input(
+        session_id=session["id"], owner_instance_id="instance-a"
+    )
+    assert materialized is not None
+    _, second_input, _ = materialized
+    assert second_input["id"] == queued["id"]

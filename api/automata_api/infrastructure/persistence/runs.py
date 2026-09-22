@@ -79,6 +79,11 @@ class SqliteRunStore:
     ) -> int:
         return cancel_unapplied_inputs_for_run(run_id, **kwargs)
 
+    def cancel_queued_inputs_for_run(
+        self, run_id: str, **kwargs: Any
+    ) -> list[dict[str, Any]]:
+        return cancel_queued_inputs_for_run(run_id, **kwargs)
+
     def claim_next_queued_input(
         self, **kwargs: Any
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]] | None:
@@ -443,6 +448,45 @@ def cancel_input(*, session_id: str, input_id: str) -> dict[str, Any]:
         if updated is None:
             raise RunNotFoundError("Input not found")
         return input_row_from_db(updated)
+
+
+def cancel_queued_inputs_for_run(
+    run_id: str, *, error_code: str
+) -> list[dict[str, Any]]:
+    """Withdraw the queued follow-ups that were waiting on this Run.
+
+    A queued input records the Run it was submitted behind, and the queue only
+    resumes once that Run completed. When the Run fails instead, the follow-ups
+    would wait forever *and* block everything queued after them, because the
+    claim rule stops at the first item whose predecessor did not complete. They
+    are therefore cancelled here, with their ids returned so the caller can
+    report them to the client.
+    """
+    with db_lock, connect_db() as db:
+        db.execute("BEGIN IMMEDIATE")
+        db.execute(
+            """
+            UPDATE agent_inputs
+            SET status = 'cancelled', error_code = ?
+            WHERE predecessor_run_id = ?
+              AND delivery = 'queue'
+              AND status = 'pending'
+            """,
+            (error_code, run_id),
+        )
+        rows = db.execute(
+            """
+            SELECT *
+            FROM agent_inputs
+            WHERE predecessor_run_id = ?
+              AND delivery = 'queue'
+              AND status = 'cancelled'
+            ORDER BY position ASC
+            """,
+            (run_id,),
+        ).fetchall()
+        db.commit()
+        return [input_row_from_db(row) for row in rows]
 
 
 def cancel_unapplied_inputs_for_run(run_id: str, *, error_code: str) -> int:
