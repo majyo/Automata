@@ -13,6 +13,7 @@ import type { ApiRuntimeConfig } from "../types/api";
 import type {
   ApprovalDecision,
   ChatMessage,
+  PendingInput,
   SendMode,
   ToolApprovalRequest,
 } from "../types/chat";
@@ -261,6 +262,43 @@ export function useAgentSocket({
         return;
       }
 
+      if (payload.type === "input_accepted") {
+        chatDispatch({
+          type: "inputAccepted",
+          sessionId: payload.session_id,
+          requestId: payload.request_id,
+          inputId: payload.input_id ?? undefined,
+          position: payload.position ?? null,
+          runId: payload.run_id ?? null,
+        });
+        const queuedInputId = tracker.takeSteer(payload.request_id);
+        if (queuedInputId) {
+          // The steering input is accepted, so the queued copy is withdrawn:
+          // the prompt is delivered once, into the Run that is already active.
+          getClient().send({
+            type: "cancel_input",
+            session_id: payload.session_id,
+            input_id: queuedInputId,
+          });
+          chatDispatch({
+            type: "inputCancelling",
+            sessionId: payload.session_id,
+            inputId: queuedInputId,
+          });
+        }
+        return;
+      }
+
+      if (payload.type === "input_cancelled") {
+        chatDispatch({
+          type: "inputCancelled",
+          sessionId: payload.session_id,
+          inputId: payload.input_id,
+        });
+        setSocketStatus("Input withdrawn");
+        return;
+      }
+
       if (payload.type === "plan_error") {
         const message = payload.message ?? payload.code ?? "Plan error";
         if (payload.session_id) {
@@ -278,6 +316,24 @@ export function useAgentSocket({
       if (payload.type === "approval_error" || payload.type === "run_error") {
         if (payload.type === "run_error" && payload.session_id) {
           tracker.clearPending(payload.session_id);
+          if (payload.request_id) {
+            const refusedInputId = tracker.takeSteer(payload.request_id);
+            if (refusedInputId) {
+              // Steering was refused: the queued copy stays the only copy.
+              chatDispatch({
+                type: "inputSteerFailed",
+                sessionId: payload.session_id,
+                requestId: payload.request_id,
+              });
+            }
+          }
+          if (payload.input_id) {
+            chatDispatch({
+              type: "inputFailed",
+              sessionId: payload.session_id,
+              inputId: payload.input_id,
+            });
+          }
         }
         setSocketStatus(payload.message ?? payload.code ?? "Run request failed");
         return;
@@ -287,7 +343,7 @@ export function useAgentSocket({
         controller.acceptEvent(payload);
       }
     },
-    [chatDispatch, getController, refreshCompletedRun, updateActiveRun],
+    [chatDispatch, getClient, getController, refreshCompletedRun, updateActiveRun],
   );
 
   handlePayloadRef.current = handlePayload;
@@ -329,9 +385,34 @@ export function useAgentSocket({
         setSocketStatus("Could not create session");
         return false;
       }
-      if (tracker.activeRunId(sessionId) || tracker.isPending(sessionId)) {
-        setSocketStatus("This session already has an active run");
-        return false;
+
+      const activeRunId = tracker.activeRunId(sessionId);
+      const queueBehindActiveRun = Boolean(activeRunId) || tracker.isPending(sessionId);
+
+      if (queueBehindActiveRun) {
+        const requestId = crypto.randomUUID();
+        // Sending while the session is busy queues the prompt instead of
+        // racing the backend's one-Run-per-session rule. The message stays
+        // out of the transcript until the Run it becomes reports `started`.
+        chatDispatch({
+          type: "inputSubmitted",
+          sessionId,
+          requestId,
+          prompt: trimmedPrompt,
+          delivery: "queue",
+          runId: activeRunId,
+        });
+        setSocketStatus("Queued");
+        client.send({
+          type: "prompt",
+          session_id: sessionId,
+          prompt: trimmedPrompt,
+          ...(sendMode === "plan" ? { mode: "plan" as const } : {}),
+          ...(skills.length ? { skills } : {}),
+          delivery: "queue",
+          request_id: requestId,
+        });
+        return true;
       }
 
       tracker.markPending(sessionId);
@@ -352,7 +433,75 @@ export function useAgentSocket({
       });
       return true;
     },
-    [chatDispatch, ensureActiveSession, getClient],
+    [chatDispatch, ensureActiveSession, getClient, tracker],
+  );
+
+  /**
+   * Deliver an already-queued message into the Run that is active now.
+   *
+   * The queued copy is only withdrawn after the steering input is accepted
+   * (see `input_accepted` handling), so a refused steer never loses the
+   * prompt.
+   */
+  const steerInput = useCallback(
+    (input: PendingInput) => {
+      const client = getClient();
+      if (!input.inputId || input.steerRequestId) {
+        return;
+      }
+      if (!client.isOpen()) {
+        setSocketStatus("Backend offline");
+        return;
+      }
+      const runId = tracker.activeRunId(input.sessionId);
+      if (!runId) {
+        setSocketStatus("No active run to steer");
+        return;
+      }
+
+      const requestId = crypto.randomUUID();
+      tracker.beginSteer(requestId, input.inputId);
+      chatDispatch({
+        type: "inputSteerRequested",
+        sessionId: input.sessionId,
+        inputId: input.inputId,
+        requestId,
+      });
+      setSocketStatus("Steering");
+      client.send({
+        type: "prompt",
+        session_id: input.sessionId,
+        prompt: input.prompt,
+        delivery: "steer",
+        run_id: runId,
+        request_id: requestId,
+      });
+    },
+    [chatDispatch, getClient, tracker],
+  );
+
+  const cancelInput = useCallback(
+    (input: PendingInput) => {
+      const client = getClient();
+      if (!input.inputId || input.status === "cancelling") {
+        return;
+      }
+      if (!client.isOpen()) {
+        setSocketStatus("Backend offline");
+        return;
+      }
+      chatDispatch({
+        type: "inputCancelling",
+        sessionId: input.sessionId,
+        inputId: input.inputId,
+      });
+      client.send({
+        type: "cancel_input",
+        session_id: input.sessionId,
+        input_id: input.inputId,
+      });
+    },
+    [chatDispatch, getClient],
   );
 
   const approvePlan = useCallback(
@@ -459,6 +608,8 @@ export function useAgentSocket({
       ),
     connectSocket,
     sendPrompt,
+    steerInput,
+    cancelInput,
     approvePlan,
     respondToApproval,
     cancelRun,

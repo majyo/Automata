@@ -64,6 +64,82 @@ describe("projectRunEvent", () => {
     });
   });
 
+  it("shows a queued prompt as its own message when its Run starts", () => {
+    const event: SequencedSocketPayload = {
+      type: "started",
+      prompt: "then run the tests",
+      input_id: "input-1",
+      ...base,
+      seq: 9,
+    };
+    const projection = projectRunEvent(event, noContext);
+
+    expect(runTypes(projection)).toEqual([
+      "runSequenceAdvanced",
+      "runStarted",
+      "inputMaterialized",
+      "userMessageQueued",
+    ]);
+    expect(projection.actions[2]).toEqual({
+      type: "inputMaterialized",
+      sessionId: "session-1",
+      inputId: "input-1",
+    });
+    expect(projection.actions[3]).toEqual({
+      type: "userMessageQueued",
+      message: {
+        id: "run-1:input:input-1",
+        session_id: "session-1",
+        role: "user",
+        text: "then run the tests",
+      },
+    });
+  });
+
+  it("keeps a prompt that started its own Run out of the input list", () => {
+    const event: SequencedSocketPayload = {
+      type: "started",
+      prompt: "hello",
+      ...base,
+      seq: 1,
+    };
+    const projection = projectRunEvent(event, noContext);
+
+    expect(runTypes(projection)).toEqual(["runSequenceAdvanced", "runStarted"]);
+  });
+
+  it("inserts a steering message and opens a new agent segment after it", () => {
+    const event: SequencedSocketPayload = {
+      type: "input_applied",
+      input_id: "input-2",
+      message_id: "message-9",
+      delivery: "steer",
+      prompt: "focus on tests",
+      step: 2,
+      ...base,
+      seq: 12,
+    };
+    const projection = projectRunEvent(event, { agentSegment: 0 });
+
+    expect(runTypes(projection)).toEqual([
+      "runSequenceAdvanced",
+      "inputMaterialized",
+      "userMessageQueued",
+    ]);
+    expect(projection.actions[2]).toEqual({
+      type: "userMessageQueued",
+      message: {
+        id: "message-9",
+        session_id: "session-1",
+        role: "user",
+        text: "focus on tests",
+      },
+    });
+    // The continuation must not be appended above the new user message.
+    expect(projection.runtime).toEqual({ agentSegmentDelta: 1 });
+    expect(projection.effects).toEqual([{ kind: "status", status: "Streaming" }]);
+  });
+
   it("advances the agent segment for tool calls and results", () => {
     const toolCall: SequencedSocketPayload = {
       type: "tool_call",

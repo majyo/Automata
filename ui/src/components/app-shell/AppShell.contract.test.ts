@@ -53,6 +53,16 @@ function composerView(): ComposerView {
     permissionPreset: "default",
     permissionUpdating: false,
     sandboxSetupStatus: "Sandbox ready",
+    pendingInputs: [
+      {
+        requestId: "input-request-1",
+        sessionId: "session-1",
+        prompt: "then run the tests",
+        delivery: "queue",
+        status: "pending",
+        inputId: "input-1",
+      },
+    ],
   };
 }
 
@@ -133,10 +143,21 @@ describe("shell view models", () => {
       sendModeChange: () => undefined,
       permissionPresetChange: () => undefined,
       sandboxSetup: () => undefined,
+      steerInput: () => undefined,
+      cancelInput: () => undefined,
     };
 
     expect(Object.values(actions).every((value) => typeof value === "function")).toBe(
       true,
     );
+  });
+
+  it("carry queued inputs as data, with no delivery behaviour in the view", () => {
+    const view = composerView();
+
+    expect(view.pendingInputs).toHaveLength(1);
+    expect(view.pendingInputs[0]?.delivery).toBe("queue");
+    expect(Object.keys(view)).not.toContain("steerInput");
+    expect(Object.keys(view)).not.toContain("cancelInput");
   });
 });

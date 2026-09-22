@@ -241,7 +241,11 @@ function appendMessage(
   sessionId: string,
   message: ChatMessage,
 ): MessagesSliceUpdate {
-  return updateSessionMessages(state, sessionId, (messages) => [...messages, message]);
+  return updateSessionMessages(state, sessionId, (messages) =>
+    messages.some((existing) => existing.id === message.id)
+      ? messages
+      : [...messages, message],
+  );
 }
 
 const LIVE_OUTPUT_MAX_CHARS = 64 * 1024;

@@ -76,6 +76,48 @@ export function projectRunEvent(
       effects.push({ kind: "runActivated", sessionId, runId });
       actions.push({ type: "runStarted", runId, sessionId, sequence: seq });
       effects.push({ kind: "status", status: "Streaming" });
+      if (event.input_id) {
+        // A queued input became its own Run. The backend persisted the user
+        // message before starting the Run, so showing it here keeps the
+        // visible order identical to the durable one.
+        actions.push({
+          type: "inputMaterialized",
+          sessionId,
+          inputId: event.input_id,
+        });
+        actions.push({
+          type: "userMessageQueued",
+          message: {
+            id: `${runId}:input:${event.input_id}`,
+            session_id: sessionId,
+            role: "user",
+            text: event.prompt,
+          },
+        });
+      }
+      break;
+    }
+
+    case "input_applied": {
+      // Steering is applied between two assistant segments. The backend
+      // flushes the preceding segment before this event, so opening a new
+      // segment here keeps the continuation below the new user message.
+      runtime.agentSegmentDelta = 1;
+      actions.push({
+        type: "inputMaterialized",
+        sessionId,
+        inputId: event.input_id,
+      });
+      actions.push({
+        type: "userMessageQueued",
+        message: {
+          id: event.message_id,
+          session_id: sessionId,
+          role: "user",
+          text: event.prompt,
+        },
+      });
+      effects.push({ kind: "status", status: "Streaming" });
       break;
     }
 

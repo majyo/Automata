@@ -1,4 +1,4 @@
-import type { ApprovalDecision } from "../../types/chat";
+import type { ApprovalDecision, InputDelivery } from "../../types/chat";
 import type { SkillSelection } from "../../types/skills";
 import type { SocketPayload } from "../../types/socket";
 
@@ -19,6 +19,10 @@ export type AgentSocketCommand =
       prompt: string;
       mode?: "plan";
       skills?: SkillSelection[];
+      /** "steer" needs `run_id`; "queue" needs only `request_id`. */
+      delivery?: InputDelivery;
+      run_id?: string;
+      request_id?: string;
     }
   | { type: "approve_plan"; session_id: string; plan_id: string; request_id: string }
   | {
@@ -35,7 +39,8 @@ export type AgentSocketCommand =
       approval_id: string;
       decision: ApprovalDecision;
     }
-  | { type: "cancel_run"; session_id: string; run_id: string };
+  | { type: "cancel_run"; session_id: string; run_id: string }
+  | { type: "cancel_input"; session_id: string; input_id: string };
 
 export type AgentSocketConnectOptions = {
   url: string;

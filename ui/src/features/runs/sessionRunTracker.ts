@@ -9,7 +9,9 @@
  * - which sessions have a command in flight, so a plan approval or a prompt
  *   cannot be sent twice while the first is still being acknowledged;
  * - the request id chosen for a plan, so a retry after a lost reply is
- *   idempotent on the backend.
+ *   idempotent on the backend;
+ * - which queued input a steering attempt belongs to, so the queued copy is
+ *   only withdrawn once the steering input was actually accepted.
  *
  * Keeping this out of `useRef` makes the rules testable without rendering
  * React, and means a session switch no longer risks losing another
@@ -24,6 +26,7 @@ export class SessionRunTracker {
   private activeRunIds: Record<string, string> = {};
   private pendingSessions = new Set<string>();
   private planRequestIds: Record<string, string> = {};
+  private steerRequests: Record<string, string> = {};
   private listeners = new Set<RunTrackerListener>();
 
   /** Subscribe to active-Run changes; returns an unsubscribe function. */
@@ -104,6 +107,28 @@ export class SessionRunTracker {
   /** Drop a plan's request id once the backend has answered for it. */
   releasePlan(planId: string): void {
     delete this.planRequestIds[planId];
+  }
+
+  /**
+   * Remember that a steering attempt was sent for a queued input.
+   *
+   * Steering a queued message must withdraw the queued copy, but only once
+   * the steering input is accepted: if the Run refuses it, the queued item
+   * is still the user's only copy of the prompt. The acknowledgement is
+   * matched back through this request id.
+   */
+  beginSteer(requestId: string, inputId: string): void {
+    this.steerRequests[requestId] = inputId;
+  }
+
+  /** Consume the queued input id behind a steering request, if any. */
+  takeSteer(requestId: string): string | undefined {
+    const inputId = this.steerRequests[requestId];
+    if (inputId === undefined) {
+      return undefined;
+    }
+    delete this.steerRequests[requestId];
+    return inputId;
   }
 
   private emit(): void {

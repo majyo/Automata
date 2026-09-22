@@ -2,6 +2,7 @@ import type { FormEvent, RefObject } from "react";
 import type {
   ApprovalDecision,
   ChatMessage,
+  PendingInput,
   PersistedRunStatus,
   SendMode,
   ToolApprovalRequest,
@@ -75,6 +76,8 @@ export type ComposerView = {
   permissionPreset: PermissionPreset;
   permissionUpdating: boolean;
   sandboxSetupStatus: string;
+  /** Prompts submitted while the session was busy, in submission order. */
+  pendingInputs: PendingInput[];
 };
 
 export type ComposerActions = {
@@ -85,6 +88,8 @@ export type ComposerActions = {
   sendModeChange(sendMode: SendMode): void;
   permissionPresetChange(permissionPreset: PermissionPreset): void;
   sandboxSetup(): void;
+  steerInput(input: PendingInput): void;
+  cancelInput(input: PendingInput): void;
 };
 
 export type SkillsView = {

@@ -7,6 +7,7 @@ import { ToolApprovalCard } from "./ToolApprovalCard";
 import type {
   ApprovalDecision,
   ChatMessage,
+  PendingInput,
   SendMode,
   ToolApprovalRequest,
 } from "../../../types/chat";
@@ -26,6 +27,7 @@ type ConversationPanelProps = {
   sandboxSetupStatus: string;
   isStreaming: boolean;
   canSend: boolean;
+  pendingInputs: PendingInput[];
   approvals: ToolApprovalRequest[];
   skills: SkillRecord[];
   selectedSkillIds: Set<string>;
@@ -39,6 +41,8 @@ type ConversationPanelProps = {
   onSendModeChange(sendMode: SendMode): void;
   onPermissionPresetChange(permissionPreset: PermissionPreset): void;
   onSandboxSetup(): void;
+  onSteerInput(input: PendingInput): void;
+  onCancelInput(input: PendingInput): void;
   onApprovePlan(message: ChatMessage): void;
   onRespondToApproval(
     approval: ToolApprovalRequest,
@@ -63,6 +67,7 @@ export function ConversationPanel({
   sandboxSetupStatus,
   isStreaming,
   canSend,
+  pendingInputs,
   approvals,
   skills,
   selectedSkillIds,
@@ -76,6 +81,8 @@ export function ConversationPanel({
   onSendModeChange,
   onPermissionPresetChange,
   onSandboxSetup,
+  onSteerInput,
+  onCancelInput,
   onApprovePlan,
   onRespondToApproval,
   onCancelRun,
@@ -150,6 +157,7 @@ export function ConversationPanel({
               sandboxSetupStatus={sandboxSetupStatus}
               isStreaming={isStreaming}
               canSend={canSend}
+              pendingInputs={pendingInputs}
               skills={skills}
               selectedSkillIds={selectedSkillIds}
               skillErrors={skillErrors}
@@ -160,6 +168,8 @@ export function ConversationPanel({
               onPermissionPresetChange={onPermissionPresetChange}
               onSandboxSetup={onSandboxSetup}
               onCancel={onCancelRun}
+              onSteerInput={onSteerInput}
+              onCancelInput={onCancelInput}
               onToggleSkill={onToggleSkill}
               onToggleSkillEnabled={onToggleSkillEnabled}
               onRefreshSkills={onRefreshSkills}
@@ -198,6 +208,7 @@ export function ConversationPanel({
               sandboxSetupStatus={sandboxSetupStatus}
               isStreaming={isStreaming}
               canSend={canSend}
+              pendingInputs={pendingInputs}
               skills={skills}
               selectedSkillIds={selectedSkillIds}
               skillErrors={skillErrors}
@@ -208,6 +219,8 @@ export function ConversationPanel({
               onPermissionPresetChange={onPermissionPresetChange}
               onSandboxSetup={onSandboxSetup}
               onCancel={onCancelRun}
+              onSteerInput={onSteerInput}
+              onCancelInput={onCancelInput}
               onToggleSkill={onToggleSkill}
               onToggleSkillEnabled={onToggleSkillEnabled}
               onRefreshSkills={onRefreshSkills}

@@ -68,6 +68,7 @@ export function AppShell({
     defaultWorkingDirectory,
     sandboxSetupStatus,
     canSend,
+    pendingInputs,
   } = composerView;
   const {
     skills,
@@ -257,6 +258,7 @@ export function AppShell({
               sandboxSetupStatus={sandboxSetupStatus}
               isStreaming={isStreaming}
               canSend={canSend}
+              pendingInputs={pendingInputs}
               approvals={approvals}
               skills={skills}
               selectedSkillIds={selectedSkillIds}
@@ -270,6 +272,8 @@ export function AppShell({
               onSendModeChange={composerActions.sendModeChange}
               onPermissionPresetChange={composerActions.permissionPresetChange}
               onSandboxSetup={composerActions.sandboxSetup}
+              onSteerInput={composerActions.steerInput}
+              onCancelInput={composerActions.cancelInput}
               onApprovePlan={conversationActions.approvePlan}
               onRespondToApproval={conversationActions.respondToApproval}
               onCancelRun={conversationActions.cancelRun}

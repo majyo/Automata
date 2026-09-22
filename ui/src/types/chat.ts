@@ -17,9 +17,50 @@ export type ToolRunMetadata = {
   live_output?: ToolLiveOutput;
 };
 
+/**
+ * Metadata the backend stores on a user message that came from a steer or
+ * queue input; it is how a settled input is reconciled with its message.
+ */
+export type InputMessageMetadata = {
+  input_id?: string;
+  delivery?: InputDelivery;
+  request_id?: string;
+};
+
+export type MessageMetadata = ToolRunMetadata & InputMessageMetadata;
+
 export type PersistedPlanStatus = "pending" | "executing" | "failed" | "executed" | "superseded";
 export type PlanStatus = PersistedPlanStatus | "approving";
 export type SendMode = "execute" | "plan";
+
+/**
+ * Where a submitted prompt goes: a new Run, a steering message for the Run
+ * that is already active, or a queued follow-up that becomes its own Run
+ * once the session is free.
+ */
+export type InputDelivery = "new" | "steer" | "queue";
+
+export type PendingInputStatus = "sending" | "pending" | "cancelling";
+
+/**
+ * A prompt the user submitted while the session's Run was still active.
+ *
+ * It is deliberately not part of the conversation yet: the backend decides
+ * where the input lands, so the message bubble is only created when an
+ * `input_applied` event or the queued Run's `started` event reports it.
+ */
+export type PendingInput = {
+  requestId: string;
+  sessionId: string;
+  prompt: string;
+  delivery: Exclude<InputDelivery, "new">;
+  status: PendingInputStatus;
+  inputId?: string;
+  position?: number | null;
+  runId?: string | null;
+  /** Request id of an in-flight 插话 attempt for this queued input. */
+  steerRequestId?: string;
+};
 export type ToolRunStatus = "running" | "completed" | "failed";
 export type PersistedRunStatus =
   | "queued"
@@ -52,7 +93,7 @@ export type ChatMessage = {
   role: "user" | "agent" | "tool";
   text: string;
   kind?: "normal" | "plan" | "tool_run";
-  metadata?: ToolRunMetadata | null;
+  metadata?: MessageMetadata | null;
   plan_id?: string;
   plan_status?: PlanStatus;
   sequence?: number;

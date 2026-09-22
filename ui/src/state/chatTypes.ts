@@ -1,5 +1,7 @@
 import type {
   ChatMessage,
+  InputDelivery,
+  PendingInput,
   PersistedRunStatus,
   PlanStatus,
   ToolApprovalRequest,
@@ -19,6 +21,7 @@ export type ChatState = {
   runsById: Record<string, RunClientState>;
   activeRunIdBySession: Record<string, string | undefined>;
   approvalsByRun: Record<string, ToolApprovalRequest[]>;
+  inputsBySession: Record<string, PendingInput[]>;
 };
 
 type ToolCallPayload = Extract<SocketPayload, { type: "tool_call" }>;
@@ -92,6 +95,38 @@ export type ChatAction =
       sessionId: string;
       status: Extract<PersistedRunStatus, "completed" | "failed" | "cancelled" | "interrupted">;
       sequence?: number;
+    }
+  | {
+      type: "inputSubmitted";
+      sessionId: string;
+      requestId: string;
+      prompt: string;
+      delivery: Exclude<InputDelivery, "new">;
+      runId?: string;
+    }
+  | {
+      type: "inputAccepted";
+      sessionId: string;
+      requestId: string;
+      inputId?: string;
+      position?: number | null;
+      runId?: string | null;
+    }
+  | {
+      type: "inputSteerRequested";
+      sessionId: string;
+      inputId: string;
+      requestId: string;
+    }
+  | { type: "inputSteerFailed"; sessionId: string; requestId: string }
+  | { type: "inputCancelling"; sessionId: string; inputId: string }
+  | { type: "inputCancelled"; sessionId: string; inputId?: string }
+  | { type: "inputMaterialized"; sessionId: string; inputId: string }
+  | {
+      type: "inputFailed";
+      sessionId: string;
+      requestId?: string;
+      inputId?: string;
     };
 
 export const initialChatState: ChatState = {
@@ -99,4 +134,5 @@ export const initialChatState: ChatState = {
   runsById: {},
   activeRunIdBySession: {},
   approvalsByRun: {},
+  inputsBySession: {},
 };

@@ -1,4 +1,4 @@
-import type { PersistedPlanStatus, ToolRunMetadata } from "./chat";
+import type { MessageMetadata, PersistedPlanStatus } from "./chat";
 import type { PersistedRunStatus } from "./chat";
 import type { PermissionPreset } from "./session";
 
@@ -15,7 +15,7 @@ export type ApiMessage = {
   role: "user" | "agent" | "tool";
   kind?: "message" | "tool_run";
   content: string;
-  metadata?: ToolRunMetadata | null;
+  metadata?: MessageMetadata | null;
   sequence: number;
   created_at: string;
   plan_id?: string | null;

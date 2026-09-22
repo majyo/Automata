@@ -12,6 +12,7 @@ import {
   chatReducer,
   initialChatState,
   selectMessages,
+  selectPendingInputs,
   selectSessionApprovals,
 } from "./state/chatReducer";
 import type { PersistedRunStatus, SendMode } from "./types/chat";
@@ -53,6 +54,7 @@ function App() {
 
   const messages = selectMessages(chatState, sessions.activeSessionId);
   const approvals = selectSessionApprovals(chatState, sessions.activeSessionId);
+  const pendingInputs = selectPendingInputs(chatState, sessions.activeSessionId);
   const runStatusBySession = Object.values(chatState.runsById).reduce<
     Record<string, PersistedRunStatus>
   >((statuses, run) => {
@@ -60,10 +62,11 @@ function App() {
     return statuses;
   }, {});
   const messagesRef = useAutoScroll<HTMLDivElement>(messages);
+  // A session with a Run in flight accepts queued follow-ups, so only the
+  // absence of a session (and an updating permission preset) blocks sending.
   const canSend =
     Boolean(prompt.trim()) &&
     !sessions.permissionUpdating &&
-    !agentSocket.isSessionRunning(sessions.activeSessionId) &&
     Boolean(sessions.activeSessionId || sessions.isNewSessionDraft);
 
   useEffect(() => {
@@ -194,6 +197,7 @@ function App() {
         permissionPreset: sessions.permissionPreset,
         permissionUpdating: sessions.permissionUpdating,
         sandboxSetupStatus,
+        pendingInputs,
       }}
       composerActions={{
         chooseDirectory: handleChooseDirectory,
@@ -204,6 +208,8 @@ function App() {
         permissionPresetChange: (permissionPreset) =>
           void sessions.actions.setPermissionPreset(permissionPreset),
         sandboxSetup: () => void handleSandboxSetup(),
+        steerInput: agentSocket.steerInput,
+        cancelInput: agentSocket.cancelInput,
       }}
       skillsView={{
         skills: skills.skills,

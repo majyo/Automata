@@ -2,8 +2,9 @@ import { ArrowUp, Square } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { PermissionPresetToggle } from "./PermissionPresetToggle";
 import { SendModeToggle } from "./SendModeToggle";
+import { PendingInputList } from "../../features/runs/components/PendingInputList";
 import { SkillPicker } from "../../features/skills/components/SkillPicker";
-import type { SendMode } from "../../types/chat";
+import type { PendingInput, SendMode } from "../../types/chat";
 import type { PermissionPreset } from "../../types/session";
 import type { SkillRecord, SkillRuntimeNotice } from "../../types/skills";
 
@@ -17,6 +18,7 @@ type PromptComposerProps = {
   canSend: boolean;
   autoFocus?: boolean;
   draft?: boolean;
+  pendingInputs: PendingInput[];
   skills: SkillRecord[];
   selectedSkillIds: Set<string>;
   skillErrors: string[];
@@ -27,6 +29,8 @@ type PromptComposerProps = {
   onPermissionPresetChange(permissionPreset: PermissionPreset): void;
   onSandboxSetup(): void;
   onCancel(): void;
+  onSteerInput(input: PendingInput): void;
+  onCancelInput(input: PendingInput): void;
   onToggleSkill(skillId: string): void;
   onToggleSkillEnabled(skill: SkillRecord): Promise<void>;
   onRefreshSkills(): void;
@@ -42,6 +46,7 @@ export function PromptComposer({
   canSend,
   autoFocus,
   draft,
+  pendingInputs,
   skills,
   selectedSkillIds,
   skillErrors,
@@ -52,6 +57,8 @@ export function PromptComposer({
   onPermissionPresetChange,
   onSandboxSetup,
   onCancel,
+  onSteerInput,
+  onCancelInput,
   onToggleSkill,
   onToggleSkillEnabled,
   onRefreshSkills,
@@ -66,6 +73,12 @@ export function PromptComposer({
   }, [prompt]);
   return (
     <div className={`composer ${draft ? "draft" : ""}`}>
+      <PendingInputList
+        inputs={pendingInputs}
+        canSteer={isStreaming}
+        onSteer={onSteerInput}
+        onCancel={onCancelInput}
+      />
       <textarea
         ref={inputRef}
         id="prompt-input"
@@ -75,7 +88,11 @@ export function PromptComposer({
         value={prompt}
         onChange={(event) => onPromptChange(event.currentTarget.value)}
         placeholder={
-          draft ? "描述任务，或从上方建议开始…" : "输入消息，继续处理项目…"
+          draft
+            ? "描述任务，或从上方建议开始…"
+            : isStreaming
+              ? "输入消息，将排队到当前任务之后…"
+              : "输入消息，继续处理项目…"
         }
         onKeyDown={(event) => {
           if (
@@ -85,8 +102,7 @@ export function PromptComposer({
             event.keyCode !== 229
           ) {
             event.preventDefault();
-            if (canSend && !isStreaming)
-              event.currentTarget.form?.requestSubmit();
+            if (canSend) event.currentTarget.form?.requestSubmit();
           }
         }}
       />
@@ -116,20 +132,39 @@ export function PromptComposer({
             onRefresh={onRefreshSkills}
           />
         </div>
-        <button
-          className={`composer-submit ${isStreaming ? "stop" : ""}`}
-          type={isStreaming ? "button" : "submit"}
-          aria-label={isStreaming ? "停止任务" : "发送消息"}
-          title={isStreaming ? "停止任务" : "发送消息"}
-          disabled={isStreaming ? false : !canSend}
-          onClick={isStreaming ? onCancel : undefined}
-        >
-          {isStreaming ? (
-            <Square size={13} fill="currentColor" />
-          ) : (
+        {isStreaming ? (
+          <div className="composer-submit-group">
+            <button
+              className="composer-submit queue"
+              type="button"
+              aria-label="排队发送消息"
+              title="排队发送消息"
+              disabled={!canSend}
+              onClick={(event) => event.currentTarget.form?.requestSubmit()}
+            >
+              <ArrowUp size={18} />
+            </button>
+            <button
+              className="composer-submit stop"
+              type="button"
+              aria-label="停止任务"
+              title="停止任务"
+              onClick={onCancel}
+            >
+              <Square size={13} fill="currentColor" />
+            </button>
+          </div>
+        ) : (
+          <button
+            className="composer-submit"
+            type="submit"
+            aria-label="发送消息"
+            title="发送消息"
+            disabled={!canSend}
+          >
             <ArrowUp size={20} />
-          )}
-        </button>
+          </button>
+        )}
       </div>
     </div>
   );

@@ -18,6 +18,7 @@ function renderComposer(
     sandboxSetupStatus: "",
     isStreaming: false,
     canSend: true,
+    pendingInputs: [],
     skills: [],
     selectedSkillIds: new Set(),
     skillErrors: [],
@@ -28,6 +29,8 @@ function renderComposer(
     onPermissionPresetChange: vi.fn(),
     onSandboxSetup: vi.fn(),
     onCancel,
+    onSteerInput: vi.fn(),
+    onCancelInput: vi.fn(),
     onToggleSkill: vi.fn(),
     onToggleSkillEnabled: vi.fn(async () => {}),
     onRefreshSkills: vi.fn(),
@@ -70,13 +73,18 @@ describe("PromptComposer keyboard submission", () => {
     expect(getByRole("button", { name: "发送消息" })).toBeDisabled();
   });
 
-  it("keeps Enter from submitting during a run and exposes cancellation", () => {
+  it("queues with Enter during a run and still exposes cancellation", () => {
     const { input, onSubmit, onCancel, getByRole } = renderComposer({
       isStreaming: true,
     });
     fireEvent.keyDown(input, { key: "Enter" });
     fireEvent.click(getByRole("button", { name: "停止任务" }));
-    expect(onSubmit).not.toHaveBeenCalled();
+    expect(onSubmit).toHaveBeenCalledOnce();
     expect(onCancel).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the queue button disabled while there is nothing to send", () => {
+    const { getByRole } = renderComposer({ isStreaming: true, canSend: false });
+    expect(getByRole("button", { name: "排队发送消息" })).toBeDisabled();
   });
 });

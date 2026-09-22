@@ -1413,6 +1413,80 @@ p {
   gap: 7px;
   min-width: 0;
 }
+
+/* Messages submitted while the session is busy, shown above the input. */
+.pending-inputs {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px 0;
+}
+.pending-inputs-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 10px;
+  color: var(--md-on-surface-variant);
+  line-height: 1.6;
+}
+.pending-inputs ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.pending-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--md-outline-variant);
+  background: color-mix(
+    in srgb,
+    var(--md-surface-container-low) 70%,
+    transparent
+  );
+  padding: 3px 4px 3px 8px;
+}
+.pending-input-prompt {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  color: var(--md-on-surface-variant);
+}
+.pending-input.sending .pending-input-prompt,
+.pending-input.cancelling .pending-input-prompt {
+  opacity: 0.6;
+}
+.pending-input.cancelling .pending-input-prompt {
+  text-decoration: line-through;
+}
+.pending-input-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.pending-input-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 6px;
+  background: transparent;
+  font-size: 10px;
+  color: var(--md-on-surface-variant);
+  white-space: nowrap;
+}
+.pending-input-actions button svg {
+  width: 12px;
+  height: 12px;
+}
+.pending-input-actions button:hover:not(:disabled) {
+  background: var(--md-secondary-container);
+}
 .mode-toggle {
   display: inline-flex;
   align-items: stretch;
@@ -1447,6 +1521,12 @@ p {
   color: var(--md-on-warning-container);
   background: var(--md-warning-container);
 }
+.composer-submit-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
 .composer-submit {
   display: flex;
   align-items: center;
@@ -1463,6 +1543,13 @@ p {
 .composer-submit.stop {
   color: var(--md-on-error-container);
   background: var(--md-error-container);
+}
+.composer-submit.stop:hover:not(:disabled) {
+  background: color-mix(
+    in srgb,
+    var(--md-error-container),
+    var(--md-on-surface) 12%
+  );
 }
 .composer-footnote {
   display: flex;
@@ -1667,6 +1754,15 @@ p {
     font-size: 16px;
     min-height: 81px;
     padding: 13px;
+  }
+  .pending-inputs {
+    padding: 8px 9px 0;
+  }
+  .pending-inputs-heading > span:last-child {
+    display: none;
+  }
+  .composer-submit-group {
+    gap: 4px;
   }
   .composer-toolbar {
     padding: 6px 9px 10px;

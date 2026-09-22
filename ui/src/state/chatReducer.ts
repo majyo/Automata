@@ -1,10 +1,11 @@
 import { reduceMessages } from "../features/conversation/messagesSlice";
+import { reduceInputs } from "../features/runs/inputsSlice";
 import { reduceApprovals } from "../features/runs/approvalsSlice";
 import { reducePlans } from "../features/runs/plansSlice";
 import { reduceRuns } from "../features/runs/runsSlice";
 import { initialChatState } from "./chatTypes";
 import type { ChatAction, ChatState, RunClientState } from "./chatTypes";
-import type { ChatMessage, ToolApprovalRequest } from "../types/chat";
+import type { ChatMessage, PendingInput, ToolApprovalRequest } from "../types/chat";
 
 export { initialChatState };
 export type { ChatAction, ChatState, RunClientState };
@@ -19,8 +20,9 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
   const plans = reducePlans(state, action);
   const runs = reduceRuns(state, action);
   const approvals = reduceApprovals(state, action);
+  const inputs = reduceInputs(state, action);
 
-  if (!messages && !plans && !runs && !approvals) {
+  if (!messages && !plans && !runs && !approvals && !inputs) {
     return state;
   }
 
@@ -30,6 +32,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     ...(plans ?? {}),
     ...(runs ?? {}),
     ...(approvals ?? {}),
+    ...(inputs ?? {}),
   };
 }
 
@@ -57,4 +60,12 @@ export function selectSessionApprovals(
 ): ToolApprovalRequest[] {
   const run = selectActiveRun(state, sessionId);
   return run ? state.approvalsByRun[run.runId] ?? [] : [];
+}
+
+/** Inputs submitted for this session that the backend has not delivered yet. */
+export function selectPendingInputs(
+  state: ChatState,
+  sessionId: string | null,
+): PendingInput[] {
+  return sessionId ? state.inputsBySession[sessionId] ?? [] : [];
 }

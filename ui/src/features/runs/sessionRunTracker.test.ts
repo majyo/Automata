@@ -152,4 +152,28 @@ describe("SessionRunTracker", () => {
 
     expect(tracker.activeRunId("s1")).toBe("run-1");
   });
+
+  it("maps a steering request back to the queued input it replaces", () => {
+    const tracker = new SessionRunTracker();
+
+    tracker.beginSteer("steer-1", "input-1");
+
+    expect(tracker.takeSteer("steer-1")).toBe("input-1");
+  });
+
+  it("consumes a steering request only once", () => {
+    const tracker = new SessionRunTracker();
+    tracker.beginSteer("steer-1", "input-1");
+
+    tracker.takeSteer("steer-1");
+
+    // A second ack for the same request must not withdraw anything again.
+    expect(tracker.takeSteer("steer-1")).toBeUndefined();
+  });
+
+  it("has no steering target for an unknown request", () => {
+    const tracker = new SessionRunTracker();
+
+    expect(tracker.takeSteer("steer-unknown")).toBeUndefined();
+  });
 });

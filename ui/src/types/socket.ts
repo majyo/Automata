@@ -1,5 +1,10 @@
 import type { ApiMessage, ApiRun } from "./api";
-import type { ApprovalDecision, PersistedRunStatus, SendMode } from "./chat";
+import type {
+  ApprovalDecision,
+  InputDelivery,
+  PersistedRunStatus,
+  SendMode,
+} from "./chat";
 
 type SequencedRunEvent = {
   session_id: string;
@@ -8,9 +13,18 @@ type SequencedRunEvent = {
   schema_version: number;
 };
 
+/** Persisted status of one steer/queue input row. */
+export type InputStatus = "pending" | "applying" | "applied" | "cancelled" | "rejected";
+
 export type SocketPayload =
   | { type: "ready"; message?: string; active_runs?: ApiRun[] }
-  | ({ type: "started"; prompt: string; mode?: SendMode } & SequencedRunEvent)
+  | ({
+      type: "started";
+      prompt: string;
+      mode?: SendMode;
+      /** Set when a queued input materialized into this Run. */
+      input_id?: string;
+    } & SequencedRunEvent)
   | ({ type: "agent_step"; message?: string; step?: number } & SequencedRunEvent)
   | ({
       type: "context_compressed";
@@ -65,7 +79,18 @@ export type SocketPayload =
       status: "pending";
       content: string;
     } & SequencedRunEvent)
-  | ({ type: "plan_approved"; plan_id: string } & SequencedRunEvent)
+  | ({
+      type: "plan_approved";
+      plan_id: string;
+    } & SequencedRunEvent)
+  | ({
+      type: "input_applied";
+      input_id: string;
+      message_id: string;
+      delivery: InputDelivery;
+      prompt: string;
+      step?: number;
+    } & SequencedRunEvent)
   | ({ type: "token"; content?: string } & SequencedRunEvent)
   | ({ type: "done"; message?: ApiMessage } & SequencedRunEvent)
   | ({
@@ -93,7 +118,15 @@ export type SocketPayload =
   | ({ type: "run_cancelled"; code?: string; message?: string } & SequencedRunEvent)
   | ({ type: "run_interrupted"; code?: string; message?: string } & SequencedRunEvent)
   | { type: "approval_error"; run_id?: string; code?: string; message?: string }
-  | { type: "run_error"; session_id?: string; run_id?: string; code?: string; message?: string }
+  | {
+      type: "run_error";
+      session_id?: string;
+      run_id?: string;
+      code?: string;
+      message?: string;
+      request_id?: string;
+      input_id?: string;
+    }
   | {
       type: "plan_error";
       session_id?: string;
@@ -123,7 +156,20 @@ export type SocketPayload =
       run_id: string;
       status: PersistedRunStatus;
       last_sequence: number;
-    };
+    }
+  | {
+      type: "input_accepted";
+      session_id: string;
+      request_id: string;
+      input_id?: string | null;
+      delivery: InputDelivery;
+      status?: InputStatus | null;
+      position?: number | null;
+      run_id?: string | null;
+      target_run_id?: string | null;
+      idempotent?: boolean;
+    }
+  | { type: "input_cancelled"; session_id: string; input_id: string };
 
 export type SequencedSocketPayload = Extract<SocketPayload, { seq: number }>;
 export type SkillSocketPayload = Extract<
