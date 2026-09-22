@@ -37,7 +37,7 @@ class RunService:
         delivery: str = "new",
         run_id: str = "",
         request_id: str | None = None,
-    ) -> PromptSubmission | tuple[dict[str, Any], dict[str, Any]]:
+    ) -> PromptSubmission:
         resolved_mode = "plan" if mode == "plan" else "act"
         if delivery == "steer":
             if not run_id or not request_id:
@@ -79,7 +79,7 @@ class RunService:
             execute=execute,
             prompt_executor=self._execute_input,
         )
-        return run, user_message
+        return PromptSubmission(delivery="new", run=run, message=user_message)
 
     async def _execute_input(
         self, run: RunHandle, input_record: dict[str, Any]
@@ -169,6 +169,19 @@ class RunService:
 
     async def resume_queued_inputs(self) -> int:
         return await self.coordinator.resume_queued_inputs(self._execute_input)
+
+    async def cancel_input(self, *, session_id: str, input_id: str) -> dict[str, Any]:
+        """Withdraw a pending steering or queued input.
+
+        The store owns the state check so a withdrawal cannot race a
+        delivery attempt: an input that the loop already claimed stays
+        delivered instead of being silently dropped.
+        """
+        return await asyncio.to_thread(
+            self.store.cancel_input,
+            session_id=session_id,
+            input_id=input_id,
+        )
 
     async def active_runs(self):
         return await asyncio.to_thread(

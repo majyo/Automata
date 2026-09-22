@@ -151,3 +151,70 @@ def test_queue_stays_paused_after_a_successor_run_fails(client):
         )
         is None
     )
+
+
+def test_pending_inputs_can_be_withdrawn_before_delivery(client):
+    session = client.post("/sessions", json={"title": "Withdraw"}).json()
+    run, _ = runs.create_prompt_run(
+        session_id=session["id"],
+        prompt="start",
+        mode="act",
+        owner_instance_id="instance-a",
+    )
+    runs.transition_run(run["id"], expected=("queued",), target="running")
+    steering, _ = runs.enqueue_steering_input(
+        session_id=session["id"],
+        target_run_id=run["id"],
+        prompt="focus on tests",
+        request_id="withdraw-steer",
+    )
+    queued, _ = runs.enqueue_queued_input(
+        session_id=session["id"],
+        prompt="second",
+        mode="act",
+        skills=None,
+        request_id="withdraw-queue",
+    )
+
+    cancelled = runs.cancel_input(session_id=session["id"], input_id=steering["id"])
+    assert cancelled["status"] == "cancelled"
+    assert cancelled["error_code"] == "cancelled_by_user"
+
+    # Withdrawing twice is idempotent: a client may retry after a lost ack.
+    again = runs.cancel_input(session_id=session["id"], input_id=steering["id"])
+    assert again["status"] == "cancelled"
+
+    assert runs.claim_steering_inputs(run["id"]) == []
+
+    runs.finish_run(run["id"], status="completed", event={"type": "done"})
+    materialized = runs.claim_next_queued_input(
+        session_id=session["id"], owner_instance_id="instance-a"
+    )
+    assert materialized is not None
+    _, second_input, _ = materialized
+    assert second_input["id"] == queued["id"]
+
+
+def test_claimed_and_foreign_inputs_cannot_be_withdrawn(client):
+    other = client.post("/sessions", json={"title": "Other"}).json()
+    session = client.post("/sessions", json={"title": "Claimed"}).json()
+    run, _ = runs.create_prompt_run(
+        session_id=session["id"],
+        prompt="start",
+        mode="act",
+        owner_instance_id="instance-a",
+    )
+    runs.transition_run(run["id"], expected=("queued",), target="running")
+    steering, _ = runs.enqueue_steering_input(
+        session_id=session["id"],
+        target_run_id=run["id"],
+        prompt="focus on tests",
+        request_id="claimed-steer",
+    )
+    runs.claim_steering_inputs(run["id"])
+
+    with pytest.raises(state.RunStateError):
+        runs.cancel_input(session_id=session["id"], input_id=steering["id"])
+
+    with pytest.raises(state.RunNotFoundError):
+        runs.cancel_input(session_id=other["id"], input_id=steering["id"])

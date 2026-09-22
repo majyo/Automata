@@ -67,6 +67,13 @@ class RunStore(Protocol):
         error_code: str,
     ) -> dict[str, Any]: ...
 
+    def cancel_input(
+        self,
+        *,
+        session_id: str,
+        input_id: str,
+    ) -> dict[str, Any]: ...
+
     def cancel_unapplied_inputs_for_run(
         self,
         run_id: str,

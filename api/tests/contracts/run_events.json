@@ -85,10 +85,22 @@
       "content_truncated": false
     },
     {
-      "type": "plan_ready",
+      "type": "input_applied",
       "run_id": "run-sample",
       "session_id": "session-sample",
       "seq": 8,
+      "schema_version": 1,
+      "input_id": "input-sample",
+      "message_id": "msg-user-2",
+      "delivery": "steer",
+      "prompt": "Focus on the failing tests first",
+      "step": 2
+    },
+    {
+      "type": "plan_ready",
+      "run_id": "run-sample",
+      "session_id": "session-sample",
+      "seq": 9,
       "schema_version": 1,
       "plan_id": "plan-sample",
       "status": "pending",
@@ -98,7 +110,7 @@
       "type": "plan_approved",
       "run_id": "run-sample",
       "session_id": "session-sample",
-      "seq": 9,
+      "seq": 10,
       "schema_version": 1,
       "plan_id": "plan-sample"
     },
@@ -106,7 +118,7 @@
       "type": "context_compressed",
       "run_id": "run-sample",
       "session_id": "session-sample",
-      "seq": 10,
+      "seq": 11,
       "schema_version": 1,
       "scope": "history",
       "before_chars": 120000,
@@ -119,7 +131,7 @@
       "type": "skills_loaded",
       "run_id": "run-sample",
       "session_id": "session-sample",
-      "seq": 11,
+      "seq": 12,
       "schema_version": 1,
       "count": 3,
       "enabled_count": 2
@@ -128,7 +140,7 @@
       "type": "skills_warning",
       "run_id": "run-sample",
       "session_id": "session-sample",
-      "seq": 12,
+      "seq": 13,
       "schema_version": 1,
       "message": "Skill 'x' has no front matter"
     },
@@ -136,7 +148,7 @@
       "type": "skill_injected",
       "run_id": "run-sample",
       "session_id": "session-sample",
-      "seq": 13,
+      "seq": 14,
       "schema_version": 1,
       "name": "refactor",
       "path": "C:/workspace/.agents/skills/refactor/SKILL.md"
@@ -145,7 +157,7 @@
       "type": "tool_approval_required",
       "run_id": "run-sample",
       "session_id": "session-sample",
-      "seq": 14,
+      "seq": 15,
       "schema_version": 1,
       "approval_id": "approval-1",
       "tool_call_id": "call-2",
@@ -153,14 +165,20 @@
       "risk": "command",
       "reason": "Running commands requires approval",
       "summary": "pytest -q",
-      "preview": { "command": "pytest -q" },
-      "options": ["allow_once", "allow_for_run", "deny"]
+      "preview": {
+        "command": "pytest -q"
+      },
+      "options": [
+        "allow_once",
+        "allow_for_run",
+        "deny"
+      ]
     },
     {
       "type": "tool_approval_resolved",
       "run_id": "run-sample",
       "session_id": "session-sample",
-      "seq": 15,
+      "seq": 16,
       "schema_version": 1,
       "approval_id": "approval-1",
       "decision": "allow_once"
@@ -169,7 +187,7 @@
       "type": "run_cancel_requested",
       "run_id": "run-sample",
       "session_id": "session-sample",
-      "seq": 16,
+      "seq": 17,
       "schema_version": 1,
       "message": "Cancellation requested."
     },
@@ -177,7 +195,7 @@
       "type": "run_cancelled",
       "run_id": "run-sample",
       "session_id": "session-sample",
-      "seq": 17,
+      "seq": 18,
       "schema_version": 1,
       "code": "cancelled",
       "message": "Run cancelled."
@@ -186,7 +204,7 @@
       "type": "run_interrupted",
       "run_id": "run-sample",
       "session_id": "session-sample",
-      "seq": 18,
+      "seq": 19,
       "schema_version": 1,
       "code": "interrupted",
       "message": "Run interrupted."
@@ -195,7 +213,7 @@
       "type": "error",
       "run_id": "run-sample",
       "session_id": "session-sample",
-      "seq": 19,
+      "seq": 20,
       "schema_version": 1,
       "code": "agent_provider_error",
       "message": "The model provider rejected the request."
@@ -204,7 +222,7 @@
       "type": "done",
       "run_id": "run-sample",
       "session_id": "session-sample",
-      "seq": 20,
+      "seq": 21,
       "schema_version": 1,
       "message": {
         "id": "msg-agent-1",

@@ -19,6 +19,7 @@ PROMPT_TYPES = frozenset({"prompt", "approve_plan", "retry_plan"})
 ALL_COMMAND_TYPES = PROMPT_TYPES | {
     "tool_approval_response",
     "cancel_run",
+    "cancel_input",
     "resume_run",
 }
 
@@ -68,6 +69,14 @@ class CancelRunCommand:
 
 
 @dataclass(frozen=True)
+class CancelInputCommand:
+    """Withdraw one pending steering or queued input by its id."""
+
+    session_id: str
+    input_id: str
+
+
+@dataclass(frozen=True)
 class ResumeRunCommand:
     """Replay a Run's events after a cursor, then go live."""
 
@@ -89,6 +98,7 @@ Command = (
     | PlanExecutionCommand
     | ApprovalResponseCommand
     | CancelRunCommand
+    | CancelInputCommand
     | ResumeRunCommand
     | InvalidCommand
 )
@@ -97,6 +107,7 @@ UNSUPPORTED_MESSAGE = "Unsupported message type"
 MISSING_SESSION_ID = "Missing session_id"
 MISSING_PROMPT = "Missing prompt"
 MISSING_RUN_ID = "Missing run_id for steering input"
+MISSING_INPUT_ID = "Missing input_id"
 INVALID_DELIVERY = "Invalid prompt delivery"
 MISSING_PLAN_ID = "Missing plan_id"
 DUPLICATE_SIDE_EFFECT_CODE = "duplicate_side_effect_confirmation_required"
@@ -121,6 +132,14 @@ def decode_command(payload: Mapping[str, Any]) -> Command:
             run_id=_text(payload, "run_id"),
             session_id=_text(payload, "session_id"),
         )
+    if payload_type == "cancel_input":
+        session_id = _text(payload, "session_id")
+        if not session_id:
+            return InvalidCommand(MISSING_SESSION_ID)
+        input_id = _text(payload, "input_id")
+        if not input_id:
+            return InvalidCommand(MISSING_INPUT_ID)
+        return CancelInputCommand(session_id=session_id, input_id=input_id)
     if payload_type == "resume_run":
         return ResumeRunCommand(
             run_id=_text(payload, "run_id"),

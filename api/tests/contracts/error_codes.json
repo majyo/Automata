@@ -42,12 +42,39 @@
     },
     {
       "code": "run_not_steerable",
-      "envelope": { "type": "run_error", "code": "run_not_steerable" },
+      "envelope": {
+        "type": "run_error",
+        "code": "run_not_steerable",
+        "request_id": "input-request-sample-2"
+      },
       "emitted_by": "services/connection.py"
     },
     {
       "code": "input_request_conflict",
       "envelope": { "type": "run_error", "code": "input_request_conflict" },
+      "emitted_by": "services/connection.py"
+    },
+    {
+      "code": "missing_input_id",
+      "envelope": { "type": "error", "message": "Missing input_id" },
+      "emitted_by": "services/connection.py"
+    },
+    {
+      "code": "input_not_found",
+      "envelope": {
+        "type": "run_error",
+        "code": "input_not_found",
+        "input_id": "input-sample"
+      },
+      "emitted_by": "services/connection.py"
+    },
+    {
+      "code": "input_not_cancellable",
+      "envelope": {
+        "type": "run_error",
+        "code": "input_not_cancellable",
+        "input_id": "input-sample"
+      },
       "emitted_by": "services/connection.py"
     },
     {

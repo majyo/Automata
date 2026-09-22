@@ -71,6 +71,9 @@ class SqliteRunStore:
     def reject_input(self, input_id: str, **kwargs: Any) -> dict[str, Any]:
         return reject_input(input_id, **kwargs)
 
+    def cancel_input(self, **kwargs: Any) -> dict[str, Any]:
+        return cancel_input(**kwargs)
+
     def cancel_unapplied_inputs_for_run(
         self, run_id: str, **kwargs: Any
     ) -> int:
@@ -389,6 +392,50 @@ def reject_input(input_id: str, *, error_code: str) -> dict[str, Any]:
             """,
             (error_code, input_id),
         )
+        updated = db.execute(
+            "SELECT * FROM agent_inputs WHERE id = ?", (input_id,)
+        ).fetchone()
+        db.commit()
+        if updated is None:
+            raise RunNotFoundError("Input not found")
+        return input_row_from_db(updated)
+
+
+def cancel_input(*, session_id: str, input_id: str) -> dict[str, Any]:
+    """Cancel a still pending input on behalf of the user.
+
+    Only ``pending`` inputs can be withdrawn: once an input is ``applying``
+    the agent loop has already claimed it and the prompt is about to reach
+    the provider, so pretending otherwise would silently drop a message.
+    """
+    with db_lock, connect_db() as db:
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute(
+            "SELECT * FROM agent_inputs WHERE id = ? AND session_id = ?",
+            (input_id, session_id),
+        ).fetchone()
+        if row is None:
+            db.rollback()
+            raise RunNotFoundError("Input not found")
+        if str(row["status"]) == "cancelled":
+            db.commit()
+            return input_row_from_db(row)
+        if str(row["status"]) != "pending":
+            db.rollback()
+            raise RunStateError(
+                f"Input cannot be cancelled from state {row['status']}."
+            )
+        cursor = db.execute(
+            """
+            UPDATE agent_inputs
+            SET status = 'cancelled', error_code = ?
+            WHERE id = ? AND status = 'pending'
+            """,
+            ("cancelled_by_user", input_id),
+        )
+        if cursor.rowcount != 1:
+            db.rollback()
+            raise RunStateError("Input was claimed by another delivery attempt.")
         updated = db.execute(
             "SELECT * FROM agent_inputs WHERE id = ?", (input_id,)
         ).fetchone()

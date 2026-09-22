@@ -12,6 +12,7 @@ import pytest
 from automata_api.transport.websocket.commands import (
     DUPLICATE_SIDE_EFFECT_CODE,
     ApprovalResponseCommand,
+    CancelInputCommand,
     CancelRunCommand,
     InvalidCommand,
     PlanExecutionCommand,
@@ -190,6 +191,27 @@ def test_cancel_run_carries_the_session_guard():
     assert isinstance(command, CancelRunCommand)
     assert command.run_id == "r1"
     assert command.session_id == "s1"
+
+
+def test_cancel_input_carries_the_session_and_input_id():
+    command = decode_command(
+        {"type": "cancel_input", "session_id": "s1", "input_id": "i1"}
+    )
+
+    assert isinstance(command, CancelInputCommand)
+    assert command.session_id == "s1"
+    assert command.input_id == "i1"
+
+
+def test_cancel_input_requires_an_input_id():
+    missing_input = decode_command({"type": "cancel_input", "session_id": "s1"})
+
+    assert isinstance(missing_input, InvalidCommand)
+    assert missing_input.message == "Missing input_id"
+
+    missing_session = decode_command({"type": "cancel_input", "input_id": "i1"})
+    assert isinstance(missing_session, InvalidCommand)
+    assert missing_session.message == "Missing session_id"
 
 
 @pytest.mark.parametrize(

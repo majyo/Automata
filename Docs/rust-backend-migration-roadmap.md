@@ -174,11 +174,12 @@ POST   /sandbox/setup
 
 ```text
 authenticate
-prompt
+prompt          # delivery=new | steer | queue, request_id for idempotency
 approve_plan
 retry_plan
 tool_approval_response
 cancel_run
+cancel_input
 resume_run
 ```
 
@@ -210,6 +211,9 @@ run_resume_complete
 run_error
 error
 done
+input_accepted
+input_applied
+input_cancelled
 mcp_server_status
 mcp_server_candidate
 skills_loaded

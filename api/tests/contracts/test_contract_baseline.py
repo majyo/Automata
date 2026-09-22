@@ -71,6 +71,7 @@ def test_client_commands_only_use_published_fields():
         "delivery",
         "skills",
         "request_id",
+        "input_id",
         "approval_id",
         "decision",
         "after_sequence",

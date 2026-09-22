@@ -160,3 +160,141 @@ def receive_matching(websocket, predicate):
         event = websocket.receive_json()
         if predicate(event):
             return event
+
+
+def test_cancelled_queue_item_never_materializes(client, monkeypatch):
+    monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
+    release = threading.Event()
+
+    async def model(_messages, **_kwargs):
+        while not release.is_set():
+            await asyncio.sleep(0.01)
+        yield {"content": "first answer"}
+
+    monkeypatch.setattr(
+        "automata_api.infrastructure.llm.client.stream_chat_completion", model
+    )
+    session = client.post("/sessions", json={"title": "Cancel queue"}).json()
+
+    with client.websocket_connect("/ws/chat") as websocket:
+        websocket.receive_json()
+        websocket.send_json(
+            {"type": "prompt", "session_id": session["id"], "prompt": "first"}
+        )
+        first = receive_matching(websocket, lambda event: event["type"] == "started")
+        receive_matching(
+            websocket,
+            lambda event: event.get("type") == "agent_step"
+            and event.get("run_id") == first["run_id"],
+        )
+
+        websocket.send_json(
+            {
+                "type": "prompt",
+                "session_id": session["id"],
+                "prompt": "second",
+                "delivery": "queue",
+                "request_id": "cancel-queue-1",
+            }
+        )
+        accepted = receive_matching(
+            websocket, lambda event: event["type"] == "input_accepted"
+        )
+
+        websocket.send_json(
+            {
+                "type": "cancel_input",
+                "session_id": session["id"],
+                "input_id": accepted["input_id"],
+            }
+        )
+        cancelled = receive_matching(
+            websocket, lambda event: event["type"] == "input_cancelled"
+        )
+        assert cancelled["input_id"] == accepted["input_id"]
+
+        release.set()
+        done = receive_matching(
+            websocket,
+            lambda event: event.get("type") == "done"
+            and event.get("run_id") == first["run_id"],
+        )
+        assert done["message"]["content"] == "first answer"
+
+    messages = client.get(f"/sessions/{session['id']}/messages").json()
+    assert [message["content"] for message in messages] == ["first", "first answer"]
+
+
+def test_cancelling_the_same_input_twice_is_idempotent(client, monkeypatch):
+    monkeypatch.setenv("AUTOMATA_LLM_API_KEY", "test-key")
+    release = threading.Event()
+
+    async def model(_messages, **_kwargs):
+        while not release.is_set():
+            await asyncio.sleep(0.01)
+        yield {"content": "answer"}
+
+    monkeypatch.setattr(
+        "automata_api.infrastructure.llm.client.stream_chat_completion", model
+    )
+    session = client.post("/sessions", json={"title": "Idempotent cancel"}).json()
+
+    with client.websocket_connect("/ws/chat") as websocket:
+        websocket.receive_json()
+        websocket.send_json(
+            {"type": "prompt", "session_id": session["id"], "prompt": "first"}
+        )
+        first = receive_matching(websocket, lambda event: event["type"] == "started")
+        receive_matching(
+            websocket,
+            lambda event: event.get("type") == "agent_step"
+            and event.get("run_id") == first["run_id"],
+        )
+
+        websocket.send_json(
+            {
+                "type": "prompt",
+                "session_id": session["id"],
+                "prompt": "second",
+                "delivery": "queue",
+                "request_id": "cancel-queue-2",
+            }
+        )
+        accepted = receive_matching(
+            websocket, lambda event: event["type"] == "input_accepted"
+        )
+
+        for _ in range(2):
+            websocket.send_json(
+                {
+                    "type": "cancel_input",
+                    "session_id": session["id"],
+                    "input_id": accepted["input_id"],
+                }
+            )
+            cancelled = receive_matching(
+                websocket, lambda event: event["type"] == "input_cancelled"
+            )
+            assert cancelled["input_id"] == accepted["input_id"]
+
+        websocket.send_json(
+            {
+                "type": "cancel_input",
+                "session_id": session["id"],
+                "input_id": "missing-input",
+            }
+        )
+        error = receive_matching(
+            websocket, lambda event: event["type"] == "run_error"
+        )
+        assert error["code"] == "input_not_found"
+
+        release.set()
+        receive_matching(
+            websocket,
+            lambda event: event.get("type") == "done"
+            and event.get("run_id") == first["run_id"],
+        )
+
+    messages = client.get(f"/sessions/{session['id']}/messages").json()
+    assert [message["content"] for message in messages] == ["first", "answer"]

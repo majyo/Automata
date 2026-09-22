@@ -60,6 +60,11 @@
       "idempotent": false
     },
     {
+      "type": "input_cancelled",
+      "session_id": "session-sample",
+      "input_id": "input-sample"
+    },
+    {
       "type": "mcp_server_status",
       "run_id": "run-sample",
       "status": "warning",
@@ -82,6 +87,7 @@
     { "type": "retry_plan", "session_id": "session-sample", "plan_id": "plan-sample", "request_id": "request-sample", "confirm_possible_duplicate_side_effects": true },
     { "type": "tool_approval_response", "run_id": "run-sample", "approval_id": "approval-1", "decision": "allow_once" },
     { "type": "cancel_run", "run_id": "run-sample", "session_id": "session-sample" },
+    { "type": "cancel_input", "session_id": "session-sample", "input_id": "input-sample" },
     { "type": "resume_run", "session_id": "session-sample", "run_id": "run-sample", "after_sequence": 4 }
   ]
 }

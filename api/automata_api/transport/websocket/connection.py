@@ -22,6 +22,7 @@ from automata_api.transport.schemas import ChatPayload
 from automata_api.transport.security import authenticate_websocket
 from automata_api.transport.websocket.commands import (
     ApprovalResponseCommand,
+    CancelInputCommand,
     CancelRunCommand,
     InvalidCommand,
     PlanExecutionCommand,
@@ -100,6 +101,9 @@ class AgentConnection:
         if isinstance(command, CancelRunCommand):
             await self._handle_cancel(command)
             return
+        if isinstance(command, CancelInputCommand):
+            await self._handle_cancel_input(command)
+            return
         if isinstance(command, ResumeRunCommand):
             await self._resume_run(command)
             return
@@ -160,6 +164,7 @@ class AgentConnection:
                     "code": "run_not_found",
                     "session_id": session_id,
                     "run_id": command.run_id,
+                    "request_id": command.request_id,
                 }
             )
             return
@@ -170,6 +175,7 @@ class AgentConnection:
                     "code": "run_not_steerable",
                     "session_id": session_id,
                     "run_id": command.run_id,
+                    "request_id": command.request_id,
                     "message": str(error),
                 }
             )
@@ -336,6 +342,49 @@ class AgentConnection:
                     "run_id": run_id,
                 }
             )
+
+    async def _handle_cancel_input(self, command: CancelInputCommand) -> None:
+        """Withdraw a pending input and confirm it with the connection only.
+
+        Nothing is persisted for the acknowledgement: the withdrawal is
+        already durable in the input row, and a cancelled input never
+        reaches the Run event stream.
+        """
+        try:
+            await self.runs.cancel_input(
+                session_id=command.session_id,
+                input_id=command.input_id,
+            )
+        except run_repository.RunNotFoundError:
+            await self._send_input_error(
+                command, code="input_not_found", message="Input not found"
+            )
+            return
+        except run_repository.RunStateError as error:
+            await self._send_input_error(
+                command, code="input_not_cancellable", message=str(error)
+            )
+            return
+        await self.sender.send_json(
+            {
+                "type": "input_cancelled",
+                "session_id": command.session_id,
+                "input_id": command.input_id,
+            }
+        )
+
+    async def _send_input_error(
+        self, command: CancelInputCommand, *, code: str, message: str
+    ) -> None:
+        await self.sender.send_json(
+            {
+                "type": "run_error",
+                "code": code,
+                "session_id": command.session_id,
+                "input_id": command.input_id,
+                "message": message,
+            }
+        )
 
     async def _resume_run(self, command: ResumeRunCommand) -> None:
         outcome = await self.replay.resume(
