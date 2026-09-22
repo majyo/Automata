@@ -78,6 +78,8 @@ export type ComposerView = {
   sandboxSetupStatus: string;
   /** Prompts submitted while the session was busy, in submission order. */
   pendingInputs: PendingInput[];
+  /** Set when a cancelled or interrupted Run left the queue paused. */
+  queuePausedReason?: "cancelled" | "interrupted";
 };
 
 export type ComposerActions = {
@@ -90,6 +92,8 @@ export type ComposerActions = {
   sandboxSetup(): void;
   steerInput(input: PendingInput): void;
   cancelInput(input: PendingInput): void;
+  requeueInput(input: PendingInput): void;
+  dismissInput(input: PendingInput): void;
 };
 
 export type SkillsView = {

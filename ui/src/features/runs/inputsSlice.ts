@@ -110,6 +110,40 @@ export function reduceInputs(
     );
   }
 
+  if (action.type === "inputCancelledByRun") {
+    // Withdrawn on the user's behalf: the entry stays, with its text, so it can
+    // be queued again, but it is no longer waiting for anything.
+    const cancelled = new Set(action.inputIds);
+    return updateMatching(state, action.sessionId, (input) =>
+      input.inputId !== undefined && cancelled.has(input.inputId)
+        ? {
+            ...input,
+            status: "cancelled",
+            cancelReason: action.reason,
+            steerRequestId: undefined,
+          }
+        : input,
+    );
+  }
+
+  if (action.type === "inputRequeued") {
+    // The same entry becomes a new request, so the withdrawn text reuses its
+    // place in the list instead of appearing twice.
+    return updateMatching(state, action.sessionId, (input) =>
+      input.requestId === action.requestId
+        ? {
+            ...input,
+            requestId: action.nextRequestId,
+            status: "sending",
+            inputId: undefined,
+            position: null,
+            runId: null,
+            cancelReason: undefined,
+          }
+        : input,
+    );
+  }
+
   if (action.type === "inputMaterialized") {
     return dropSessionInputs(
       state,

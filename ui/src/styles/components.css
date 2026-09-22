@@ -1463,6 +1463,19 @@ p {
 .pending-input.cancelling .pending-input-prompt {
   text-decoration: line-through;
 }
+.pending-input.cancelled {
+  border-style: dashed;
+  background: transparent;
+}
+.pending-input.cancelled .pending-input-prompt {
+  opacity: 0.65;
+}
+.pending-input-note {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--md-on-surface-variant);
+  opacity: 0.8;
+}
 .pending-input-actions {
   display: inline-flex;
   align-items: center;

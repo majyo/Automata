@@ -145,6 +145,8 @@ describe("shell view models", () => {
       sandboxSetup: () => undefined,
       steerInput: () => undefined,
       cancelInput: () => undefined,
+      requeueInput: () => undefined,
+      dismissInput: () => undefined,
     };
 
     expect(Object.values(actions).every((value) => typeof value === "function")).toBe(

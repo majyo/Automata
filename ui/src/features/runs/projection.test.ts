@@ -142,6 +142,42 @@ describe("projectRunEvent", () => {
     expect(projection.effects).toEqual([{ kind: "status", status: "Streaming" }]);
   });
 
+  it("withdraws the follow-ups a failed Run was holding", () => {
+    const event: SequencedSocketPayload = {
+      type: "error",
+      code: "run_failed",
+      message: "Agent run failed: RuntimeError",
+      cancelled_input_ids: ["input-1", "input-2"],
+      ...base,
+      seq: 5,
+    };
+    const projection = projectRunEvent(event, noContext);
+
+    expect(projection.actions[1]).toEqual({
+      type: "inputCancelledByRun",
+      sessionId: "session-1",
+      inputIds: ["input-1", "input-2"],
+      reason: "predecessor_failed",
+    });
+  });
+
+  it("leaves the queue alone when a failure withdrew nothing", () => {
+    const event: SequencedSocketPayload = {
+      type: "error",
+      code: "run_failed",
+      message: "Agent run failed: RuntimeError",
+      ...base,
+      seq: 5,
+    };
+    const projection = projectRunEvent(event, noContext);
+
+    expect(runTypes(projection)).toEqual([
+      "runSequenceAdvanced",
+      "streamingFailed",
+      "runFinished",
+    ]);
+  });
+
   it("advances the agent segment for tool calls and results", () => {
     const toolCall: SequencedSocketPayload = {
       type: "tool_call",

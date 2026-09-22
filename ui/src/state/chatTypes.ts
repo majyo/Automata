@@ -120,6 +120,20 @@ export type ChatAction =
   | { type: "inputSteerFailed"; sessionId: string; requestId: string }
   | { type: "inputCancelling"; sessionId: string; inputId: string }
   | { type: "inputCancelled"; sessionId: string; inputId?: string }
+  | {
+      /** The backend withdrew these inputs because their Run failed. */
+      type: "inputCancelledByRun";
+      sessionId: string;
+      inputIds: string[];
+      reason: "predecessor_failed";
+    }
+  | {
+      /** The user queued a withdrawn input again, under a fresh request id. */
+      type: "inputRequeued";
+      sessionId: string;
+      requestId: string;
+      nextRequestId: string;
+    }
   | { type: "inputMaterialized"; sessionId: string; inputId: string }
   | {
       type: "inputFailed";

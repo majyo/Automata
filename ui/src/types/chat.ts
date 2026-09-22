@@ -40,7 +40,7 @@ export type SendMode = "execute" | "plan";
  */
 export type InputDelivery = "new" | "steer" | "queue";
 
-export type PendingInputStatus = "sending" | "pending" | "cancelling";
+export type PendingInputStatus = "sending" | "pending" | "cancelling" | "cancelled";
 
 /**
  * A prompt the user submitted while the session's Run was still active.
@@ -48,6 +48,10 @@ export type PendingInputStatus = "sending" | "pending" | "cancelling";
  * It is deliberately not part of the conversation yet: the backend decides
  * where the input lands, so the message bubble is only created when an
  * `input_applied` event or the queued Run's `started` event reports it.
+ *
+ * A cancelled entry stays in the list instead of disappearing: when the
+ * backend withdraws it because the Run it followed failed, the user still
+ * needs the text in order to queue it again.
  */
 export type PendingInput = {
   requestId: string;
@@ -58,6 +62,8 @@ export type PendingInput = {
   inputId?: string;
   position?: number | null;
   runId?: string | null;
+  /** Set when the backend withdrew this input instead of delivering it. */
+  cancelReason?: "predecessor_failed";
   /** Request id of an in-flight 插话 attempt for this queued input. */
   steerRequestId?: string;
 };

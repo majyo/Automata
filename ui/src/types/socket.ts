@@ -97,6 +97,8 @@ export type SocketPayload =
       type: "error";
       code?: string;
       message?: string;
+      /** Inputs the backend withdrew because this Run failed. */
+      cancelled_input_ids?: string[];
     } & SequencedRunEvent)
   /** A frame the backend refused outright; it belongs to no Run. */
   | { type: "error"; code?: string; message?: string }

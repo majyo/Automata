@@ -19,6 +19,7 @@ type PromptComposerProps = {
   autoFocus?: boolean;
   draft?: boolean;
   pendingInputs: PendingInput[];
+  queuePausedReason?: "cancelled" | "interrupted";
   skills: SkillRecord[];
   selectedSkillIds: Set<string>;
   skillErrors: string[];
@@ -31,6 +32,8 @@ type PromptComposerProps = {
   onCancel(): void;
   onSteerInput(input: PendingInput): void;
   onCancelInput(input: PendingInput): void;
+  onRequeueInput(input: PendingInput): void;
+  onDismissInput(input: PendingInput): void;
   onToggleSkill(skillId: string): void;
   onToggleSkillEnabled(skill: SkillRecord): Promise<void>;
   onRefreshSkills(): void;
@@ -47,6 +50,7 @@ export function PromptComposer({
   autoFocus,
   draft,
   pendingInputs,
+  queuePausedReason,
   skills,
   selectedSkillIds,
   skillErrors,
@@ -59,6 +63,8 @@ export function PromptComposer({
   onCancel,
   onSteerInput,
   onCancelInput,
+  onRequeueInput,
+  onDismissInput,
   onToggleSkill,
   onToggleSkillEnabled,
   onRefreshSkills,
@@ -76,8 +82,11 @@ export function PromptComposer({
       <PendingInputList
         inputs={pendingInputs}
         canSteer={isStreaming}
+        pausedReason={queuePausedReason}
         onSteer={onSteerInput}
         onCancel={onCancelInput}
+        onRequeue={onRequeueInput}
+        onDismiss={onDismissInput}
       />
       <textarea
         ref={inputRef}

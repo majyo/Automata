@@ -31,6 +31,8 @@ function renderComposer(
     onCancel,
     onSteerInput: vi.fn(),
     onCancelInput: vi.fn(),
+    onRequeueInput: vi.fn(),
+    onDismissInput: vi.fn(),
     onToggleSkill: vi.fn(),
     onToggleSkillEnabled: vi.fn(async () => {}),
     onRefreshSkills: vi.fn(),

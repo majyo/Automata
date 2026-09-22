@@ -303,6 +303,16 @@ export function projectRunEvent(
     case "error": {
       runtime.terminal = true;
       const message = event.message ?? "Agent run failed";
+      if (event.cancelled_input_ids?.length) {
+        // The follow-ups queued behind this Run were withdrawn because their
+        // predecessor will never complete.
+        actions.push({
+          type: "inputCancelledByRun",
+          sessionId,
+          inputIds: event.cancelled_input_ids,
+          reason: "predecessor_failed",
+        });
+      }
       actions.push({
         type: "streamingFailed",
         messageId: `${runId}:error`,

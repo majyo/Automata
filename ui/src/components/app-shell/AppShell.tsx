@@ -69,6 +69,7 @@ export function AppShell({
     sandboxSetupStatus,
     canSend,
     pendingInputs,
+    queuePausedReason,
   } = composerView;
   const {
     skills,
@@ -259,6 +260,7 @@ export function AppShell({
               isStreaming={isStreaming}
               canSend={canSend}
               pendingInputs={pendingInputs}
+              queuePausedReason={queuePausedReason}
               approvals={approvals}
               skills={skills}
               selectedSkillIds={selectedSkillIds}
@@ -274,6 +276,8 @@ export function AppShell({
               onSandboxSetup={composerActions.sandboxSetup}
               onSteerInput={composerActions.steerInput}
               onCancelInput={composerActions.cancelInput}
+              onRequeueInput={composerActions.requeueInput}
+              onDismissInput={composerActions.dismissInput}
               onApprovePlan={conversationActions.approvePlan}
               onRespondToApproval={conversationActions.respondToApproval}
               onCancelRun={conversationActions.cancelRun}

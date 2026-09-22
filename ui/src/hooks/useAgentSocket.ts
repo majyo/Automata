@@ -548,6 +548,61 @@ export function useAgentSocket({
     [chatDispatch, getClient],
   );
 
+  /**
+   * Queue a withdrawn prompt again.
+   *
+   * The entry keeps its text and gets a fresh request id, so the backend sees a
+   * new input rather than the cancelled one. With nothing running the re-queued
+   * prompt starts immediately, which is what "run it anyway" means after the
+   * Run it followed failed.
+   */
+  const requeueInput = useCallback(
+    (input: PendingInput) => {
+      const client = getClient();
+      if (!client.isOpen()) {
+        setSocketStatus("Backend offline");
+        return;
+      }
+      const requestId = crypto.randomUUID();
+      chatDispatch({
+        type: "inputRequeued",
+        sessionId: input.sessionId,
+        requestId: input.requestId,
+        nextRequestId: requestId,
+      });
+      setSocketStatus("Queued");
+      const accepted = client.send({
+        type: "prompt",
+        session_id: input.sessionId,
+        prompt: input.prompt,
+        delivery: "queue",
+        request_id: requestId,
+      });
+      if (!accepted) {
+        chatDispatch({
+          type: "inputFailed",
+          sessionId: input.sessionId,
+          requestId,
+        });
+        setSocketStatus("Backend offline");
+        client.scheduleReconnect();
+      }
+    },
+    [chatDispatch, getClient],
+  );
+
+  /** Drop a withdrawn entry the user does not want to see any more. */
+  const dismissInput = useCallback(
+    (input: PendingInput) => {
+      chatDispatch({
+        type: "inputCancelled",
+        sessionId: input.sessionId,
+        inputId: input.inputId,
+      });
+    },
+    [chatDispatch],
+  );
+
   const approvePlan = useCallback(
     (message: ChatMessage) => {
       const client = getClient();
@@ -654,6 +709,8 @@ export function useAgentSocket({
     sendPrompt,
     steerInput,
     cancelInput,
+    requeueInput,
+    dismissInput,
     approvePlan,
     respondToApproval,
     cancelRun,

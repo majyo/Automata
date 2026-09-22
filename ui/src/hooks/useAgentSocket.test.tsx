@@ -309,6 +309,47 @@ describe("useAgentSocket input delivery", () => {
       inputId: "input-1",
     });
   });
+
+  it("queues a withdrawn message again under a fresh request id", () => {
+    const { result, socket, chatDispatch } = renderSocket();
+    const withdrawn = queuedInput({
+      status: "cancelled",
+      cancelReason: "predecessor_failed",
+    });
+
+    act(() => result.current.requeueInput(withdrawn));
+
+    expect(chatDispatch).toHaveBeenCalledWith({
+      type: "inputRequeued",
+      sessionId: "session-1",
+      requestId: "queue-request-1",
+      nextRequestId: "uuid-1",
+    });
+    expect(socket.commands()).toEqual([
+      {
+        type: "prompt",
+        session_id: "session-1",
+        prompt: "then run the tests",
+        delivery: "queue",
+        request_id: "uuid-1",
+      },
+    ]);
+  });
+
+  it("drops a withdrawn entry without asking the backend", () => {
+    const { result, socket, chatDispatch } = renderSocket();
+    const withdrawn = queuedInput({ status: "cancelled" });
+    chatDispatch.mockClear();
+
+    act(() => result.current.dismissInput(withdrawn));
+
+    expect(socket.commands()).toEqual([]);
+    expect(chatDispatch).toHaveBeenCalledWith({
+      type: "inputCancelled",
+      sessionId: "session-1",
+      inputId: "input-1",
+    });
+  });
 });
 
 describe("useAgentSocket busy guard", () => {

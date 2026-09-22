@@ -62,6 +62,18 @@ function App() {
     return statuses;
   }, {});
   const messagesRef = useAutoScroll<HTMLDivElement>(messages);
+  const sessionRunStatus = sessions.activeSessionId
+    ? runStatusBySession[sessions.activeSessionId]
+    : undefined;
+  // A cancelled or interrupted Run leaves the queue paused: the backend only
+  // resumes a follow-up whose predecessor completed, so the waiting messages
+  // need an explanation and a way out.
+  const queuePausedReason =
+    !agentSocket.isStreaming &&
+    pendingInputs.some((input) => input.status === "pending") &&
+    (sessionRunStatus === "cancelled" || sessionRunStatus === "interrupted")
+      ? sessionRunStatus
+      : undefined;
   // A session with a Run in flight accepts queued follow-ups, so only the
   // absence of a session (and an updating permission preset) blocks sending.
   const canSend =
@@ -198,6 +210,7 @@ function App() {
         permissionUpdating: sessions.permissionUpdating,
         sandboxSetupStatus,
         pendingInputs,
+        queuePausedReason,
       }}
       composerActions={{
         chooseDirectory: handleChooseDirectory,
@@ -210,6 +223,8 @@ function App() {
         sandboxSetup: () => void handleSandboxSetup(),
         steerInput: agentSocket.steerInput,
         cancelInput: agentSocket.cancelInput,
+        requeueInput: agentSocket.requeueInput,
+        dismissInput: agentSocket.dismissInput,
       }}
       skillsView={{
         skills: skills.skills,

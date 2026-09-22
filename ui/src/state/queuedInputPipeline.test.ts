@@ -234,4 +234,57 @@ describe("queued input pipeline", () => {
     expect(pipeline.texts("user")).toEqual(["first", "second"]);
     expect(pipeline.texts("agent")).toEqual(["first answer", "second ans"]);
   });
+
+  it("withdraws a queued prompt when its Run fails, keeping it for requeue", () => {
+    const pipeline = createPipeline();
+    startFirstRun(pipeline);
+    queueWhileFirstRunStreams(pipeline);
+
+    // The Run the follow-up was waiting on fails, and reports what it withdrew.
+    pipeline.accept({
+      type: "error",
+      code: "run_failed",
+      message: "Agent run failed: RuntimeError",
+      cancelled_input_ids: ["input-1"],
+      run_id: "run-1",
+      ...base,
+      seq: 3,
+    });
+
+    const waiting = pipeline.state().inputsBySession["session-1"];
+    expect(waiting).toHaveLength(1);
+    expect(waiting[0]).toMatchObject({
+      prompt: "second",
+      status: "cancelled",
+      cancelReason: "predecessor_failed",
+    });
+    // The prompt is not in the transcript: it was never delivered.
+    expect(pipeline.texts("user")).toEqual(["first"]);
+
+    // Queueing it again under a fresh request id makes it its own Run.
+    pipeline.dispatch({
+      type: "inputRequeued",
+      sessionId: "session-1",
+      requestId: "queue-request-1",
+      nextRequestId: "queue-request-2",
+    });
+    pipeline.dispatch({
+      type: "inputAccepted",
+      sessionId: "session-1",
+      requestId: "queue-request-2",
+      inputId: "input-2",
+      position: 1,
+    });
+    pipeline.accept({
+      type: "started",
+      prompt: "second",
+      input_id: "input-2",
+      run_id: "run-3",
+      ...base,
+      seq: 1,
+    });
+
+    expect(pipeline.state().inputsBySession["session-1"]).toEqual([]);
+    expect(pipeline.texts("user")).toEqual(["first", "second"]);
+  });
 });

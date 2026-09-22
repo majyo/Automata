@@ -28,6 +28,7 @@ type ConversationPanelProps = {
   isStreaming: boolean;
   canSend: boolean;
   pendingInputs: PendingInput[];
+  queuePausedReason?: "cancelled" | "interrupted";
   approvals: ToolApprovalRequest[];
   skills: SkillRecord[];
   selectedSkillIds: Set<string>;
@@ -43,6 +44,8 @@ type ConversationPanelProps = {
   onSandboxSetup(): void;
   onSteerInput(input: PendingInput): void;
   onCancelInput(input: PendingInput): void;
+  onRequeueInput(input: PendingInput): void;
+  onDismissInput(input: PendingInput): void;
   onApprovePlan(message: ChatMessage): void;
   onRespondToApproval(
     approval: ToolApprovalRequest,
@@ -68,6 +71,7 @@ export function ConversationPanel({
   isStreaming,
   canSend,
   pendingInputs,
+  queuePausedReason,
   approvals,
   skills,
   selectedSkillIds,
@@ -83,6 +87,8 @@ export function ConversationPanel({
   onSandboxSetup,
   onSteerInput,
   onCancelInput,
+  onRequeueInput,
+  onDismissInput,
   onApprovePlan,
   onRespondToApproval,
   onCancelRun,
@@ -158,6 +164,7 @@ export function ConversationPanel({
               isStreaming={isStreaming}
               canSend={canSend}
               pendingInputs={pendingInputs}
+              queuePausedReason={queuePausedReason}
               skills={skills}
               selectedSkillIds={selectedSkillIds}
               skillErrors={skillErrors}
@@ -170,6 +177,8 @@ export function ConversationPanel({
               onCancel={onCancelRun}
               onSteerInput={onSteerInput}
               onCancelInput={onCancelInput}
+              onRequeueInput={onRequeueInput}
+              onDismissInput={onDismissInput}
               onToggleSkill={onToggleSkill}
               onToggleSkillEnabled={onToggleSkillEnabled}
               onRefreshSkills={onRefreshSkills}
@@ -209,6 +218,7 @@ export function ConversationPanel({
               isStreaming={isStreaming}
               canSend={canSend}
               pendingInputs={pendingInputs}
+              queuePausedReason={queuePausedReason}
               skills={skills}
               selectedSkillIds={selectedSkillIds}
               skillErrors={skillErrors}
@@ -221,6 +231,8 @@ export function ConversationPanel({
               onCancel={onCancelRun}
               onSteerInput={onSteerInput}
               onCancelInput={onCancelInput}
+              onRequeueInput={onRequeueInput}
+              onDismissInput={onDismissInput}
               onToggleSkill={onToggleSkill}
               onToggleSkillEnabled={onToggleSkillEnabled}
               onRefreshSkills={onRefreshSkills}

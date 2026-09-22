@@ -86,6 +86,57 @@ describe("reduceInputs", () => {
     expect(updated.inputsBySession["session-1"][0].status).toBe("cancelling");
   });
 
+  it("keeps a withdrawn message with its text so it can be queued again", () => {
+    const updated = reduceInputs(
+      state([entry(), entry({ requestId: "r2", inputId: "input-2" })]),
+      {
+        type: "inputCancelledByRun",
+        sessionId: "session-1",
+        inputIds: ["input-1"],
+        reason: "predecessor_failed",
+      },
+    )!;
+
+    expect(updated.inputsBySession["session-1"]).toEqual([
+      expect.objectContaining({
+        inputId: "input-1",
+        prompt: "then run the tests",
+        status: "cancelled",
+        cancelReason: "predecessor_failed",
+      }),
+      expect.objectContaining({ inputId: "input-2", status: "pending" }),
+    ]);
+  });
+
+  it("returns a withdrawn entry to waiting under a fresh request id", () => {
+    const withdrawn = reduceInputs(state([entry()]), {
+      type: "inputCancelledByRun",
+      sessionId: "session-1",
+      inputIds: ["input-1"],
+      reason: "predecessor_failed",
+    })!;
+    const requeued = reduceInputs(withdrawn, {
+      type: "inputRequeued",
+      sessionId: "session-1",
+      requestId: "request-1",
+      nextRequestId: "request-2",
+    })!;
+
+    expect(requeued.inputsBySession["session-1"]).toEqual([
+      {
+        requestId: "request-2",
+        sessionId: "session-1",
+        prompt: "then run the tests",
+        delivery: "queue",
+        status: "sending",
+        inputId: undefined,
+        position: null,
+        runId: null,
+        cancelReason: undefined,
+      },
+    ]);
+  });
+
   it("drops an entry once the backend confirms the withdrawal", () => {
     const updated = reduceInputs(state([entry()]), {
       type: "inputCancelled",
