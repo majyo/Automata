@@ -135,6 +135,18 @@ describe("queued input pipeline", () => {
     expect(pipeline.texts("user")).toEqual(["first"]);
   });
 
+  it("keeps a waiting message across a session load while its Run streams", () => {
+    const pipeline = createPipeline();
+    startFirstRun(pipeline);
+    queueWhileFirstRunStreams(pipeline);
+
+    // A session switch reloads the history while Run 1 is still streaming.
+    pipeline.load([FIRST_USER]);
+
+    expect(pipeline.state().inputsBySession["session-1"]).toHaveLength(1);
+    expect(pipeline.texts()).toEqual(["first", "first answer"]);
+  });
+
   it("shows the queued prompt once when the reload wins the race", () => {
     const pipeline = createPipeline();
     startFirstRun(pipeline);
