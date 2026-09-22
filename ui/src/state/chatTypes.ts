@@ -34,7 +34,6 @@ export type ChatAction =
       type: "messagesLoaded";
       sessionId: string;
       messages: ChatMessage[];
-      preserveTransient?: boolean;
     }
   | { type: "sessionMessagesCleared"; sessionId: string }
   | { type: "userMessageQueued"; message: ChatMessage }

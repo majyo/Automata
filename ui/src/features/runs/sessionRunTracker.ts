@@ -70,6 +70,17 @@ export class SessionRunTracker {
     this.pendingSessions.delete(sessionId);
   }
 
+  /**
+   * Forget every in-flight command guard.
+   *
+   * A fresh connection re-derives the truth from the backend's active Run
+   * list, so a guard that outlived a dropped socket would only make later
+   * prompts wait behind a command that no longer exists.
+   */
+  clearPendingSessions(): void {
+    this.pendingSessions.clear();
+  }
+
   isPending(sessionId: string): boolean {
     return this.pendingSessions.has(sessionId);
   }

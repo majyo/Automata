@@ -1,6 +1,6 @@
 import type { ChatAction, ChatState, RunClientState } from "../../state/chatTypes";
 import type { PersistedRunStatus } from "../../types/chat";
-import { isTerminalRunStatus } from "./runStatus";
+import { isTerminalRunStatus } from "../../shared/runStatus";
 
 export type RunsSliceState = Pick<ChatState, "runsById" | "activeRunIdBySession">;
 export type RunsSliceUpdate = Pick<ChatState, "runsById" | "activeRunIdBySession">;

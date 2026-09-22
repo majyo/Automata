@@ -98,6 +98,8 @@ export type SocketPayload =
       code?: string;
       message?: string;
     } & SequencedRunEvent)
+  /** A frame the backend refused outright; it belongs to no Run. */
+  | { type: "error"; code?: string; message?: string }
   | ({
       type: "tool_approval_required";
       approval_id: string;

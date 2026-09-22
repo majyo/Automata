@@ -310,3 +310,50 @@ describe("useAgentSocket input delivery", () => {
     });
   });
 });
+
+describe("useAgentSocket busy guard", () => {
+  it("stops queueing after the backend refuses a frame outright", async () => {
+    const { result, socket } = renderSocket();
+
+    await act(async () => {
+      await result.current.sendPrompt("first", "execute", []);
+    });
+
+    act(() => socket.receive({ type: "error", message: "Session not found" }));
+
+    await act(async () => {
+      await result.current.sendPrompt("second", "execute", []);
+    });
+
+    // Without dropping the guard the second prompt would have been queued
+    // behind a Run that never started.
+    expect(socket.commands()[1]).toEqual({
+      type: "prompt",
+      session_id: "session-1",
+      prompt: "second",
+    });
+  });
+
+  it("forgets a Run the backend no longer reports as active", async () => {
+    const { result, socket } = renderSocket();
+    startRun(socket);
+
+    act(() =>
+      socket.receive({
+        type: "ready",
+        message: "Automata agent is ready.",
+        active_runs: [],
+      }),
+    );
+
+    await act(async () => {
+      await result.current.sendPrompt("after reconnect", "execute", []);
+    });
+
+    expect(socket.commands()[socket.commands().length - 1]).toEqual({
+      type: "prompt",
+      session_id: "session-1",
+      prompt: "after reconnect",
+    });
+  });
+});

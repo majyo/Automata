@@ -176,4 +176,18 @@ describe("SessionRunTracker", () => {
 
     expect(tracker.takeSteer("steer-unknown")).toBeUndefined();
   });
+
+  it("forgets in-flight command guards when the socket is new", () => {
+    const tracker = new SessionRunTracker();
+    tracker.markPending("s1");
+    tracker.markPending("s2");
+    tracker.setActiveRun("s1", "run-1");
+
+    tracker.clearPendingSessions();
+
+    expect(tracker.isPending("s1")).toBe(false);
+    expect(tracker.isPending("s2")).toBe(false);
+    // The active Run is backend truth, not a local guard.
+    expect(tracker.activeRunId("s1")).toBe("run-1");
+  });
 });

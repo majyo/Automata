@@ -79,7 +79,8 @@ export function projectRunEvent(
       if (event.input_id) {
         // A queued input became its own Run. The backend persisted the user
         // message before starting the Run, so showing it here keeps the
-        // visible order identical to the durable one.
+        // visible order identical to the durable one. The input id is what
+        // stops this bubble and the persisted message both being shown.
         actions.push({
           type: "inputMaterialized",
           sessionId,
@@ -92,6 +93,7 @@ export function projectRunEvent(
             session_id: sessionId,
             role: "user",
             text: event.prompt,
+            metadata: { input_id: event.input_id, delivery: "queue" },
           },
         });
       }
@@ -115,6 +117,7 @@ export function projectRunEvent(
           session_id: sessionId,
           role: "user",
           text: event.prompt,
+          metadata: { input_id: event.input_id, delivery: event.delivery },
         },
       });
       effects.push({ kind: "status", status: "Streaming" });

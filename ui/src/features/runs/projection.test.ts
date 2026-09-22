@@ -92,6 +92,7 @@ describe("projectRunEvent", () => {
         session_id: "session-1",
         role: "user",
         text: "then run the tests",
+        metadata: { input_id: "input-1", delivery: "queue" },
       },
     });
   });
@@ -133,6 +134,7 @@ describe("projectRunEvent", () => {
         session_id: "session-1",
         role: "user",
         text: "focus on tests",
+        metadata: { input_id: "input-2", delivery: "steer" },
       },
     });
     // The continuation must not be appended above the new user message.

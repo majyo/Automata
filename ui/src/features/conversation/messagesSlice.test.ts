@@ -1,10 +1,20 @@
 import { describe, expect, it } from "vitest";
-import type { ChatAction } from "../../state/chatTypes";
-import type { ChatMessage } from "../../types/chat";
+import type { ChatAction, RunClientState } from "../../state/chatTypes";
+import type { ChatMessage, PersistedRunStatus } from "../../types/chat";
 import { reduceMessages } from "./messagesSlice";
 import type { MessagesSliceState } from "./messagesSlice";
 
 const empty: MessagesSliceState = { messagesBySession: {} };
+
+function runState(runId: string, status: PersistedRunStatus): RunClientState {
+  return {
+    runId,
+    sessionId: "session-1",
+    status,
+    lastSequence: 1,
+    isReplaying: false,
+  };
+}
 
 function message(overrides: Partial<ChatMessage>): ChatMessage {
   return {
@@ -121,39 +131,42 @@ describe("reduceMessages", () => {
     });
   });
 
-  it("reloads persisted messages and preserves transient streaming cards", () => {
+  it("keeps what a live run is streaming when the history reloads", () => {
     const state: MessagesSliceState = {
       messagesBySession: {
         "session-1": [
-          message({ id: "run-1:agent:0", role: "agent", text: "streamed" }),
-          message({ id: "stale:agent:0", role: "agent", text: "gone" }),
+          message({ id: "run-1:agent:0", role: "agent", text: "streaming" }),
+          message({ id: "run-2:agent:0", role: "agent", text: "finished" }),
+          message({ id: "orphan:agent:0", role: "agent", text: "unknown run" }),
+          message({ id: "optimistic-user", text: "uuid id" }),
           message({ id: "persisted-1", text: "kept", sequence: 3 }),
         ],
+      },
+      runsById: {
+        "run-1": runState("run-1", "running"),
+        "run-2": runState("run-2", "completed"),
       },
     };
 
     const persisted = message({ id: "persisted-1", text: "kept", sequence: 3 });
-    const reloadedAgent = message({ id: "run-1:agent:0", role: "agent", text: "final" });
     const updated = reduceMessages(state, {
       type: "messagesLoaded",
       sessionId: "session-1",
-      messages: [persisted, reloadedAgent],
-      preserveTransient: true,
+      messages: [persisted],
     })!;
 
     expect(updated.messagesBySession["session-1"].map((item) => item.id)).toEqual([
       "persisted-1",
       "run-1:agent:0",
-      "stale:agent:0",
     ]);
-    expect(updated.messagesBySession["session-1"][1].text).toBe("final");
   });
 
-  it("drops transient messages on a plain reload", () => {
+  it("drops the streamed messages of runs that already finished", () => {
     const state: MessagesSliceState = {
       messagesBySession: {
         "session-1": [message({ id: "run-1:agent:0", role: "agent", text: "streamed" })],
       },
+      runsById: { "run-1": runState("run-1", "cancelled") },
     };
 
     const updated = reduceMessages(state, {
@@ -163,6 +176,33 @@ describe("reduceMessages", () => {
     })!;
 
     expect(updated.messagesBySession["session-1"]).toEqual([]);
+  });
+
+  it("does not show a queued prompt twice once its message is persisted", () => {
+    const queued: ChatMessage = message({
+      id: "run-2:input:input-1",
+      text: "second",
+      metadata: { input_id: "input-1", delivery: "queue" },
+    });
+    const state: MessagesSliceState = {
+      messagesBySession: {
+        "session-1": [queued, message({ id: "run-2:agent:0", role: "agent", text: "part" })],
+      },
+      runsById: { "run-2": runState("run-2", "running") },
+    };
+
+    const updated = reduceMessages(state, {
+      type: "messagesLoaded",
+      sessionId: "session-1",
+      messages: [
+        message({ id: "message-user-2", text: "second", sequence: 3, metadata: { input_id: "input-1" } }),
+      ],
+    })!;
+
+    expect(updated.messagesBySession["session-1"].map((item) => item.id)).toEqual([
+      "message-user-2",
+      "run-2:agent:0",
+    ]);
   });
 
   it("clears a single session without touching the others", () => {

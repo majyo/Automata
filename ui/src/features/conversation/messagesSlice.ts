@@ -1,7 +1,9 @@
-import type { ChatAction, ChatState } from "../../state/chatTypes";
+import type { ChatAction, ChatState, RunClientState } from "../../state/chatTypes";
+import { isTerminalRunStatus } from "../../shared/runStatus";
 import type { ChatMessage } from "../../types/chat";
 
-export type MessagesSliceState = Pick<ChatState, "messagesBySession">;
+export type MessagesSliceState = Pick<ChatState, "messagesBySession"> &
+  Partial<Pick<ChatState, "runsById">>;
 export type MessagesSliceUpdate = Pick<ChatState, "messagesBySession">;
 
 /**
@@ -10,25 +12,38 @@ export type MessagesSliceUpdate = Pick<ChatState, "messagesBySession">;
  *
  * Plan message updates live in features/runs/plansSlice; this slice owns plain
  * conversation messages, tool cards and streaming text.
+ *
+ * A session load merges the persisted history with whatever is still being
+ * streamed: a Run that has not reached a terminal status keeps the messages it
+ * is still producing, and everything else is dropped because the history now
+ * owns it. That is what lets a queued Run stream while the load triggered by
+ * the Run it followed is still in flight.
  */
 export function reduceMessages(
   state: MessagesSliceState,
   action: ChatAction,
 ): MessagesSliceUpdate | null {
   if (action.type === "messagesLoaded") {
-    const transient = action.preserveTransient
-      ? (state.messagesBySession[action.sessionId] ?? []).filter(
-          (message) => message.id.includes(":") && message.sequence === undefined,
-        )
-      : [];
     const persistedIds = new Set(action.messages.map((message) => message.id));
+    const persistedInputIds = new Set(
+      action.messages
+        .map((message) => message.metadata?.input_id)
+        .filter((inputId): inputId is string => Boolean(inputId)),
+    );
+    const streaming = (state.messagesBySession[action.sessionId] ?? []).filter(
+      (message) =>
+        isStreamedMessage(message) &&
+        !persistedIds.has(message.id) &&
+        !(
+          message.metadata?.input_id &&
+          persistedInputIds.has(message.metadata.input_id)
+        ) &&
+        belongsToLiveRun(message.id, state.runsById ?? {}),
+    );
     return {
       messagesBySession: {
         ...state.messagesBySession,
-        [action.sessionId]: [
-          ...action.messages,
-          ...transient.filter((message) => !persistedIds.has(message.id)),
-        ],
+        [action.sessionId]: [...action.messages, ...streaming],
       },
     };
   }
@@ -45,7 +60,6 @@ export function reduceMessages(
     }
     return appendMessage(state, action.message.session_id, action.message);
   }
-
   if (action.type === "tokenReceived") {
     if (!action.content) {
       return null;
@@ -241,11 +255,40 @@ function appendMessage(
   sessionId: string,
   message: ChatMessage,
 ): MessagesSliceUpdate {
+  // An input message is identified by the input it came from, not by the
+  // bubble id: the backend persists the queued prompt under its own message id,
+  // so a reload can arrive before the Run start that would add the bubble.
+  const inputId = message.metadata?.input_id;
   return updateSessionMessages(state, sessionId, (messages) =>
-    messages.some((existing) => existing.id === message.id)
+    messages.some(
+      (existing) =>
+        existing.id === message.id ||
+        (inputId !== undefined && existing.metadata?.input_id === inputId),
+    )
       ? messages
       : [...messages, message],
   );
+}
+
+/** A message the client is producing; the backend has not persisted it yet. */
+function isStreamedMessage(message: ChatMessage): boolean {
+  return message.sequence === undefined && message.id.includes(":");
+}
+
+/**
+ * Whether a streamed message id (`<runId>:<kind>:<local id>`) belongs to a Run
+ * that is still going, so a reloading history must not delete it.
+ */
+function belongsToLiveRun(
+  id: string,
+  runs: Record<string, RunClientState>,
+): boolean {
+  const separator = id.indexOf(":");
+  if (separator <= 0) {
+    return false;
+  }
+  const run = runs[id.slice(0, separator)];
+  return run !== undefined && !isTerminalRunStatus(run.status);
 }
 
 const LIVE_OUTPUT_MAX_CHARS = 64 * 1024;

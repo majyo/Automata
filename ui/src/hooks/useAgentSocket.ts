@@ -5,7 +5,7 @@ import type {
 } from "../features/runs/projection";
 import { RunStreamController } from "../features/runs/runStreamController";
 import type { RunResumeRequest, RunRuntime } from "../features/runs/runStreamController";
-import { isTerminalRunStatus } from "../features/runs/runStatus";
+import { isTerminalRunStatus } from "../shared/runStatus";
 import { SessionRunTracker } from "../features/runs/sessionRunTracker";
 import { AgentSocketClient } from "../platform/api/agentSocketClient";
 import type { ChatAction } from "../state/chatReducer";
@@ -177,6 +177,9 @@ export function useAgentSocket({
         setSocketStatus(payload.message ?? "Ready");
         const activeRuns = payload.active_runs ?? [];
         const discoveredIds = new Set(activeRuns.map((run) => run.id));
+        // A new connection re-derives the truth from the backend, so guards
+        // left over from the previous socket must not make later prompts wait.
+        tracker.clearPendingSessions();
         for (const run of activeRuns) {
           const hadRuntime = Boolean(controller.runtimeIfKnown(run.id));
           const runtime = controller.runtimeFor(run.id, run.session_id);
@@ -201,6 +204,12 @@ export function useAgentSocket({
           const runtime = controller.runtimeIfKnown(runId);
           if (runtime) {
             controller.requestResume(runId, sessionId, runtime.lastSequence);
+          }
+          // The backend does not report this Run, so it is over: keeping it
+          // active would queue every later prompt behind a finished Run and
+          // then deliver it immediately.
+          if (tracker.activeRunId(sessionId) === runId) {
+            updateActiveRun(sessionId);
           }
         }
         return;
@@ -339,11 +348,31 @@ export function useAgentSocket({
         return;
       }
 
+      if (payload.type === "error" && !isSequencedRunEvent(payload)) {
+        // A frame the backend refused outright (unknown session, missing
+        // field) belongs to no Run, so the in-flight guard must be dropped:
+        // otherwise the session would queue everything sent afterwards.
+        const sessionId = activeSessionIdRef.current;
+        if (sessionId) {
+          tracker.clearPending(sessionId);
+        }
+        setSocketStatus(payload.message ?? payload.code ?? "Request failed");
+        return;
+      }
+
       if (isSequencedRunEvent(payload)) {
         controller.acceptEvent(payload);
       }
     },
-    [chatDispatch, getClient, getController, refreshCompletedRun, updateActiveRun],
+    [
+      activeSessionIdRef,
+      chatDispatch,
+      getClient,
+      getController,
+      refreshCompletedRun,
+      tracker,
+      updateActiveRun,
+    ],
   );
 
   handlePayloadRef.current = handlePayload;
@@ -403,7 +432,7 @@ export function useAgentSocket({
           runId: activeRunId,
         });
         setSocketStatus("Queued");
-        client.send({
+        const accepted = client.send({
           type: "prompt",
           session_id: sessionId,
           prompt: trimmedPrompt,
@@ -412,6 +441,14 @@ export function useAgentSocket({
           delivery: "queue",
           request_id: requestId,
         });
+        if (!accepted) {
+          // The socket closed between the check and the send: drop the entry
+          // again instead of leaving a message that will never be delivered.
+          chatDispatch({ type: "inputFailed", sessionId, requestId });
+          setSocketStatus("Backend offline");
+          client.scheduleReconnect();
+          return false;
+        }
         return true;
       }
 
@@ -424,13 +461,20 @@ export function useAgentSocket({
       };
       chatDispatch({ type: "userMessageQueued", message: userMessage });
       setSocketStatus("Starting");
-      client.send({
+      const sent = client.send({
         type: "prompt",
         session_id: sessionId,
         prompt: trimmedPrompt,
         ...(sendMode === "plan" ? { mode: "plan" } : {}),
         ...(skills.length ? { skills } : {}),
       });
+      if (!sent) {
+        // Otherwise the guard would stay set and queue every later prompt.
+        tracker.clearPending(sessionId);
+        setSocketStatus("Backend offline");
+        client.scheduleReconnect();
+        return false;
+      }
       return true;
     },
     [chatDispatch, ensureActiveSession, getClient, tracker],

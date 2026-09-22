@@ -44,7 +44,6 @@ export function useSessions({ apiConfigRef, chatDispatch }: UseSessionsOptions) 
         type: "messagesLoaded",
         sessionId,
         messages: loadedMessages,
-        preserveTransient: true,
       });
     },
     [apiConfigRef, chatDispatch],
