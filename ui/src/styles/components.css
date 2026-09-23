@@ -1055,28 +1055,13 @@ p {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 0 max(32px, calc((100% - 850px) / 2));
-}
-.conversation-start {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-  margin: 26px 0 30px;
-  color: var(--md-on-surface-variant);
-  font-size: 10px;
-  letter-spacing: 1px;
-}
-.conversation-start > span {
-  width: 30px;
-  height: 1px;
-  background: var(--md-outline-variant);
+  padding: 22px max(32px, calc((100% - 850px) / 2)) 4px;
 }
 .message {
   display: flex;
   align-items: flex-start;
   gap: 14px;
-  margin: 0 0 29px;
+  margin: 0 0 24px;
   min-width: 0;
 }
 .avatar {
@@ -1111,14 +1096,13 @@ p {
   align-items: center;
   min-height: 32px;
   gap: 9px;
-  margin-bottom: 9px;
+  margin-bottom: 6px;
 }
 .message-byline strong {
   font-size: 11px;
   font-weight: 650;
   letter-spacing: 0.5px;
 }
-.message-byline > span,
 .message-byline time {
   font-size: 10px;
   color: var(--md-on-surface-variant);
@@ -1143,12 +1127,7 @@ p {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-top: 14px;
-}
-.message-action-rule {
-  width: 20px;
-  height: 1px;
-  background: var(--md-outline-variant);
+  margin-top: 8px;
 }
 .copy-message {
   display: inline-flex;
@@ -1162,15 +1141,6 @@ p {
 .copy-message:hover {
   color: var(--md-primary);
   background: var(--md-secondary-container);
-}
-.conversation-end {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 9px;
-  color: var(--md-on-surface-variant);
-  font-size: 10px;
-  margin: 20px 0 28px;
 }
 .empty-state {
   height: 100%;
@@ -1198,19 +1168,8 @@ p {
   line-height: 1.8;
 }
 .composer-form {
-  padding: 0 max(32px, calc((100% - 850px) / 2)) 19px;
+  padding: 8px max(32px, calc((100% - 850px) / 2)) 16px;
   flex-shrink: 0;
-}
-.composer-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 11px;
-  font-size: 11px;
-  color: var(--md-on-surface-variant);
-}
-.composer-heading > span:first-child {
-  color: var(--md-primary);
 }
 
 /* An open page for starting work, with ruled prompts instead of a dialog. */
@@ -1235,10 +1194,9 @@ p {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding-top: 55px;
+  padding-top: 40px;
 }
-.new-session-dialog > .composer,
-.new-session-dialog > .composer-footnote {
+.new-session-dialog > .composer {
   flex-shrink: 0;
 }
 .welcome-heading h2 {
@@ -1246,7 +1204,7 @@ p {
   font-weight: 450;
   letter-spacing: -1px;
   line-height: 1.4;
-  margin: 14px 0 12px;
+  margin: 0 0 10px;
 }
 .welcome-heading p {
   color: var(--md-on-surface-variant);
@@ -1270,12 +1228,7 @@ p {
 .starter-prompts button:hover {
   background: var(--md-secondary-container);
 }
-.starter-number {
-  font-family: var(--md-font-mono);
-  font-size: 11px;
-  color: var(--md-on-surface-variant);
-}
-.starter-prompts button > span:nth-child(2) {
+.starter-prompts button > span {
   display: flex;
   align-items: baseline;
   gap: 20px;
@@ -1297,7 +1250,7 @@ p {
   display: grid;
   gap: 8px;
   min-width: 0;
-  margin: auto 0 19px;
+  margin: auto 0 16px;
 }
 .field-label {
   font-size: 11px;
@@ -1341,11 +1294,6 @@ p {
   padding: 0 7px;
   font-size: 11px;
 }
-.field-helper {
-  font-size: 10px;
-  color: var(--md-on-surface-variant);
-  line-height: 1.7;
-}
 
 /* Prompt entry and its existing execution, permission, and skill controls. */
 .composer {
@@ -1383,15 +1331,19 @@ p {
 .composer textarea {
   display: block;
   width: 100%;
-  min-height: 84px;
+  min-height: 52px;
   max-height: 180px;
   resize: none;
   outline: none;
   background: transparent;
   border: 0;
-  padding: 17px 16px 8px;
+  padding: 14px 16px 6px;
   font-size: 15px;
   line-height: 1.8;
+}
+.composer.draft textarea {
+  min-height: 84px;
+  padding-top: 17px;
 }
 .composer textarea::placeholder {
   color: var(--md-on-surface-variant);
@@ -1404,7 +1356,7 @@ p {
   align-items: flex-end;
   justify-content: space-between;
   gap: 9px;
-  padding: 9px 12px 12px;
+  padding: 6px 12px 10px;
 }
 .composer-actions {
   display: flex;
@@ -1564,15 +1516,6 @@ p {
     var(--md-on-surface) 12%
   );
 }
-.composer-footnote {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 12px;
-  font-size: 10px;
-  color: var(--md-on-surface-variant);
-  line-height: 1.6;
-}
 .skill-picker {
   position: static;
 }
@@ -1643,17 +1586,6 @@ p {
   letter-spacing: 1px;
   font-weight: 400;
 }
-.label-slash {
-  color: var(--md-outline);
-  margin: 0 10px;
-}
-.tiny-square {
-  display: inline-block;
-  width: 4px;
-  height: 4px;
-  background: var(--md-outline);
-  flex-shrink: 0;
-}
 .status-dot {
   border-radius: 0;
   width: 5px;
@@ -1683,17 +1615,9 @@ p {
     padding: 13px 2px;
   }
 }
-@media (max-width: 1050px) {
-  .composer-footnote > span:last-child {
-    display: none;
-  }
-}
 @media (max-height: 780px) and (min-width: 761px) {
   .new-session-content {
     padding-top: 18px;
-  }
-  .welcome-heading > .eyebrow {
-    display: none;
   }
   .welcome-heading h2 {
     font-size: 28px;
@@ -1705,13 +1629,10 @@ p {
   .starter-prompts button {
     padding: 9px 2px;
   }
-  .new-session-content .field-helper {
-    display: none;
-  }
 }
 @media (max-width: 760px) {
   .messages {
-    padding: 0;
+    padding: 16px 0 4px;
   }
   .message {
     gap: 10px;
@@ -1735,7 +1656,7 @@ p {
     padding: 12px 13px;
   }
   .composer-form {
-    padding: 0 0 13px;
+    padding: 6px 0 12px;
   }
   .new-session-stage {
     padding: 0;
@@ -1756,7 +1677,7 @@ p {
     padding: 12px 2px;
     gap: 15px;
   }
-  .starter-prompts button > span:nth-child(2) {
+  .starter-prompts button > span {
     display: grid;
     gap: 6px;
   }
@@ -1765,8 +1686,11 @@ p {
   }
   .composer textarea {
     font-size: 16px;
+    padding: 12px 13px 6px;
+  }
+  .composer.draft textarea {
     min-height: 81px;
-    padding: 13px;
+    padding-top: 13px;
   }
   .pending-inputs {
     padding: 8px 9px 0;

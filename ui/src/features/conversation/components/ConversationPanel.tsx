@@ -103,7 +103,6 @@ export function ConversationPanel({
           <form className="new-session-dialog" onSubmit={onSubmit}>
             <div className="new-session-content">
               <div className="welcome-heading">
-                <span className="eyebrow">开始一个新任务</span>
                 <h2>今天，处理什么项目？</h2>
                 <p>选择工作目录，描述你要完成的事。</p>
               </div>
@@ -127,7 +126,7 @@ export function ConversationPanel({
                     prompt:
                       "请帮助我排查当前项目的问题，先查看项目结构和现有测试，再根据我提供的现象定位原因。",
                   },
-                ].map((item, index) => (
+                ].map((item) => (
                   <button
                     type="button"
                     key={item.title}
@@ -136,7 +135,6 @@ export function ConversationPanel({
                       document.getElementById("prompt-input")?.focus();
                     }}
                   >
-                    <span className="starter-number">0{index + 1}</span>
                     <span>
                       <strong>{item.title}</strong>
                       <small>{item.description}</small>
@@ -183,10 +181,6 @@ export function ConversationPanel({
               onToggleSkillEnabled={onToggleSkillEnabled}
               onRefreshSkills={onRefreshSkills}
             />
-            <div className="composer-footnote">
-              <span>先选择执行方式与工具权限，再发送消息。</span>
-              <span>Enter 发送 · Shift + Enter 换行</span>
-            </div>
           </form>
         </div>
       ) : (
@@ -199,10 +193,6 @@ export function ConversationPanel({
           />
 
           <form className="composer-form" onSubmit={onSubmit}>
-            <div className="composer-heading">
-              <span>继续会话</span>
-              <span>{isStreaming ? "正在处理任务" : "描述下一步要做的事"}</span>
-            </div>
             {approvals[0] ? (
               <ToolApprovalCard
                 approval={approvals[0]}
@@ -237,14 +227,6 @@ export function ConversationPanel({
               onToggleSkillEnabled={onToggleSkillEnabled}
               onRefreshSkills={onRefreshSkills}
             />
-            <div className="composer-footnote">
-              <span>
-                {sendMode === "plan"
-                  ? "先生成计划，确认后执行。"
-                  : "按当前权限设置执行任务。"}
-              </span>
-              <span>Enter 发送 · Shift + Enter 换行</span>
-            </div>
           </form>
         </>
       )}

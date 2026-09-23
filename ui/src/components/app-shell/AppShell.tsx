@@ -4,7 +4,6 @@ import { ConversationPanel } from "../../features/conversation/components/Conver
 import { Sidebar } from "./Sidebar";
 import { InspectorSheet } from "./InspectorSheet";
 import { Topbar } from "./Topbar";
-import { AutomataMark } from "./AutomataMark";
 import type {
   ComposerActions,
   ComposerView,
@@ -191,7 +190,6 @@ export function AppShell({
           >
             {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
           </button>
-          <AutomataMark className="masthead-mark" />
         </nav>
       </header>
       <div className="app-content">
@@ -311,19 +309,6 @@ export function AppShell({
           onClose={() => setIsInspectorOpen(false)}
         />
       </div>
-      <footer className="app-footer" inert={sidebarModal || inspectorModal}>
-        <span>
-          <span className="tiny-square" />
-          本地工作区
-        </span>
-        <span className="footer-center">
-          AUTOMATA <span className="label-slash">/</span> 编程助手
-        </span>
-        <span>
-          {sessions.length} 个会话
-          <span className="footer-rule" />
-        </span>
-      </footer>
     </div>
   );
 }

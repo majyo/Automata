@@ -1,4 +1,4 @@
-import { ArrowUpRight, FolderOpen, Plus, Search, X } from "lucide-react";
+import { ArrowUpRight, Plus, Search, X } from "lucide-react";
 import { useState } from "react";
 import { SessionList } from "./SessionList";
 import type { PersistedRunStatus } from "../../types/chat";
@@ -59,7 +59,6 @@ export function Sidebar({
     >
       <div className="sidebar-heading">
         <span className="eyebrow">会话目录</span>
-        <span className="tiny-square" />
         <button
           className="icon-button sidebar-close"
           type="button"
@@ -103,12 +102,6 @@ export function Sidebar({
           </button>
         )}
       </label>
-      <div className="sidebar-toolbar">
-        <span>{query ? "搜索结果" : "全部会话"}</span>
-        <span className="count">
-          {String(visibleSessions.length).padStart(2, "0")}
-        </span>
-      </div>
 
       <SessionList
         sessions={visibleSessions}
@@ -131,13 +124,6 @@ export function Sidebar({
             : "还没有会话。新建一个，开始处理项目。"}
         </p>
       )}
-      <div className="sidebar-footer">
-        <FolderOpen size={18} />
-        <div>
-          <strong>本地工作区</strong>
-          <span>按项目保存会话记录</span>
-        </div>
-      </div>
     </aside>
   );
 }

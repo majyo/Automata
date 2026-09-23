@@ -29,9 +29,6 @@ export function Topbar({
         <PanelLeft size={18} />
       </button>
       <div className="topbar-title">
-        <div className="eyebrow">
-          工作区 <span className="label-slash">/</span> <span>会话</span>
-        </div>
         <h1>{title}</h1>
         {displayedWorkingDirectory && (
           <span className="topbar-subtitle" title={displayedWorkingDirectory}>

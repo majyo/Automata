@@ -55,7 +55,6 @@ export function MessageBubble({
       <div className="message-content">
         <div className="message-byline">
           <strong>{user ? "你" : "AUTOMATA"}</strong>
-          <span>{user ? "任务" : "编程助手"}</span>
           {date && !Number.isNaN(date.getTime()) && (
             <time dateTime={message.created_at}>
               {date.toLocaleTimeString("zh-CN", {
@@ -76,7 +75,6 @@ export function MessageBubble({
         )}
         {!user && message.text && (
           <div className="message-actions">
-            <span className="message-action-rule" />
             <button
               className="copy-message"
               type="button"

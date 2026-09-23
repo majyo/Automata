@@ -27,13 +27,6 @@ export function MessageList({
       aria-label="会话记录"
       aria-busy={isStreaming}
     >
-      {messages.length > 0 && (
-        <div className="conversation-start">
-          <span />
-          会话记录
-          <span />
-        </div>
-      )}
       {messages.length === 0 && (
         <div className="empty-state">
           <div className="empty-state-icon">
@@ -57,12 +50,6 @@ export function MessageList({
             onApprovePlan={onApprovePlan}
           />
         ),
-      )}
-      {messages.length > 0 && (
-        <div className="conversation-end">
-          <span className="tiny-square" />
-          {isStreaming ? "正在处理…" : "已显示全部记录"}
-        </div>
       )}
     </div>
   );

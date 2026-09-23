@@ -71,11 +71,6 @@ export function InspectorSheet({
                 ? formatDirectoryName(workingDirectory)
                 : "选择工作目录"}
             </h3>
-            <p>
-              {workingDirectory
-                ? "会话将在此目录下读取文件与执行任务。"
-                : "新建会话时选择要处理的项目文件夹。"}
-            </p>
           </div>
           <div className="inspector-section-title">
             <span>会话信息</span>
@@ -132,14 +127,6 @@ export function InspectorSheet({
               </button>
             </div>
           </details>
-          <div className="inspector-note">
-            <span className="tiny-square" />
-            <span>
-              {permissionPreset === "full_access"
-                ? "工具可直接访问本机文件与网络。"
-                : "工具按当前沙箱与审批设置执行。"}
-            </span>
-          </div>
         </div>
       </div>
     </aside>

@@ -92,7 +92,7 @@ export function PromptComposer({
         ref={inputRef}
         id="prompt-input"
         aria-label="输入任务消息"
-        rows={2}
+        rows={draft ? 2 : 1}
         autoFocus={autoFocus}
         value={prompt}
         onChange={(event) => onPromptChange(event.currentTarget.value)}

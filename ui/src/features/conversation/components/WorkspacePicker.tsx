@@ -52,11 +52,6 @@ export function WorkspacePicker({
           <span>浏览</span>
         </button>
       </div>
-      <span className="field-helper">
-        {locked
-          ? "本次会话使用固定的工作目录。"
-          : "选择本地文件夹，或直接输入完整路径。"}
-      </span>
     </section>
   );
 }
