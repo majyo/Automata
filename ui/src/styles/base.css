@@ -2,19 +2,22 @@
    so the desktop webview works without a network font dependency. */
 :root {
   --md-font:
-    "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei", system-ui,
-    sans-serif;
+    "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI",
+    "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", system-ui, sans-serif;
+  --md-font-display:
+    "Segoe UI Variable Display", "Segoe UI", "Microsoft YaHei UI",
+    "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", system-ui, sans-serif;
   --md-font-mono: "Cascadia Code", "Cascadia Mono", Consolas, monospace;
-  --md-type-headline-small: 1.5rem;
-  --md-type-title-large: 1.25rem;
-  --md-type-title-medium: 1rem;
-  --md-type-title-small: 0.929rem;
-  --md-type-body-large: 1.071rem;
-  --md-type-body-medium: 1rem;
-  --md-type-body-small: 0.857rem;
-  --md-type-label-large: 0.929rem;
-  --md-type-label-medium: 0.857rem;
-  --md-type-label-small: 0.786rem;
+  /* One type scale for the whole app. CJK faces only ship regular and bold,
+     so weights stay at 400 and 600 and sizes never drop below 11px. */
+  --type-caption: 11px;
+  --type-label: 12px;
+  --type-body-sm: 13px;
+  --type-body: 15px;
+  --type-title: 17px;
+  --type-headline: 22px;
+  --type-display: clamp(26px, 2.2vw, 34px);
+  --header-height: 52px;
   --md-shape-xs: 2px;
   --md-shape-sm: 2px;
   --md-shape-md: 3px;
@@ -27,7 +30,7 @@
   --md-duration-medium: 200ms;
   --md-duration-long: 320ms;
   font-family: var(--md-font);
-  font-size: 14px;
+  font-size: var(--type-body-sm);
   color: var(--md-on-surface);
   background: var(--md-surface);
   font-synthesis: none;
@@ -73,6 +76,8 @@
   --md-elev-2: 0 4px 16px #333b2510;
   --md-elev-3: 0 12px 40px #333b2525;
   --paper-glow: #faf7eb70;
+  --md-hover: color-mix(in srgb, var(--md-on-surface) 6%, transparent);
+  --md-pressed: color-mix(in srgb, var(--md-on-surface) 10%, transparent);
 }
 
 :root[data-theme="dark"] {
@@ -112,6 +117,8 @@
   --md-elev-2: 0 4px 16px #0d120933;
   --md-elev-3: 0 12px 40px #0d120966;
   --paper-glow: #67704c10;
+  --md-hover: color-mix(in srgb, var(--md-on-surface) 7%, transparent);
+  --md-pressed: color-mix(in srgb, var(--md-on-surface) 12%, transparent);
 }
 
 * {
@@ -163,6 +170,10 @@ h2,
 h3,
 p {
   margin: 0;
+}
+strong,
+b {
+  font-weight: 600;
 }
 ::selection {
   background: var(--md-primary-container);

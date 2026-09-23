@@ -12,10 +12,8 @@ p {
 
 .eyebrow {
   color: var(--md-on-surface-variant);
-  font-size: var(--md-type-label-small);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-size: var(--type-caption);
+  font-weight: 400;
 }
 
 /* --------------------------------------------------------------------------
@@ -29,7 +27,7 @@ p {
   gap: 7px;
   height: 36px;
   padding: 0 14px;
-  font-size: var(--md-type-label-large);
+  font-size: var(--type-body-sm);
   font-weight: 600;
   white-space: nowrap;
   border-radius: var(--md-shape-sm);
@@ -60,7 +58,7 @@ p {
 }
 
 .button-tonal:hover:not(:disabled) {
-  background: var(--md-surface-container);
+  background: var(--md-hover);
   border-color: var(--md-outline);
 }
 
@@ -99,11 +97,11 @@ p {
 
 .icon-button:hover:not(:disabled) {
   color: var(--md-on-surface);
-  background: var(--md-surface-container-high);
+  background: var(--md-hover);
 }
 
 .icon-button:active:not(:disabled) {
-  background: var(--md-surface-container-highest);
+  background: var(--md-pressed);
 }
 
 .icon-button:disabled {
@@ -133,10 +131,9 @@ p {
   max-width: 100%;
   padding: 2px 8px;
   overflow: hidden;
-  font-size: var(--md-type-label-small);
+  font-size: var(--type-caption);
   font-style: normal;
   font-weight: 600;
-  letter-spacing: 0.02em;
   text-overflow: ellipsis;
   white-space: nowrap;
   border-radius: var(--md-shape-xs);
@@ -220,20 +217,20 @@ p {
 .markdown-body h3,
 .markdown-body h4 {
   margin: 14px 0 6px;
-  font-weight: 650;
+  font-weight: 600;
   line-height: 1.4;
 }
 
 .markdown-body h1 {
-  font-size: var(--md-type-title-large, 1.4em);
+  font-size: var(--type-title);
 }
 
 .markdown-body h2 {
-  font-size: 1.25em;
+  font-size: var(--type-title);
 }
 
 .markdown-body h3 {
-  font-size: 1.1em;
+  font-size: 1em;
 }
 
 .markdown-body h4 {
@@ -280,8 +277,8 @@ p {
 
 .markdown-body pre code {
   padding: 0;
-  font-size: var(--md-type-body-small);
-  line-height: 1.5;
+  font-size: var(--type-label);
+  line-height: 1.6;
   background: transparent;
   border-radius: 0;
 }
@@ -372,7 +369,7 @@ p {
 }
 
 .markdown-body .hljs-strong {
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .message.tool,
@@ -423,7 +420,7 @@ p {
   min-height: 38px;
   padding: 4px 10px;
   color: var(--md-on-surface);
-  font-size: var(--md-type-title-small);
+  font-size: var(--type-body-sm);
   font-weight: 600;
   text-align: left;
   background: transparent;
@@ -432,7 +429,7 @@ p {
 }
 
 .tool-run-group-header:hover {
-  background: var(--md-surface-container);
+  background: var(--md-hover);
 }
 
 .tool-run-group-title {
@@ -477,7 +474,7 @@ p {
 .tool-run-line {
   min-width: 0;
   color: var(--md-on-surface-variant);
-  font-size: var(--md-type-body-small);
+  font-size: var(--type-label);
   line-height: 1.4;
 }
 
@@ -499,7 +496,7 @@ p {
 }
 
 .tool-run-line-toggle:hover {
-  background: var(--md-surface-container);
+  background: var(--md-hover);
 }
 
 .tool-run-line-toggle > svg {
@@ -543,7 +540,7 @@ p {
   overflow: hidden;
   color: currentColor;
   font-family: var(--md-font-mono);
-  font-size: var(--md-type-body-small);
+  font-size: var(--type-label);
   opacity: 0.85;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -566,7 +563,7 @@ p {
   gap: 8px;
   min-width: 0;
   color: var(--md-on-surface);
-  font-size: var(--md-type-body-small);
+  font-size: var(--type-label);
 }
 
 .tool-run-detail-heading strong {
@@ -582,7 +579,7 @@ p {
   flex: 0 0 auto;
   padding: 1px 7px;
   color: var(--md-on-surface-variant);
-  font-size: var(--md-type-label-small);
+  font-size: var(--type-caption);
   font-weight: 600;
   background: var(--md-surface-container-high);
   border-radius: var(--md-shape-xs);
@@ -612,10 +609,8 @@ p {
 
 .tool-run-detail-block span {
   color: var(--md-on-surface-variant);
-  font-size: var(--md-type-label-small);
+  font-size: var(--type-caption);
   font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
 }
 
 .tool-run-detail-block pre {
@@ -626,7 +621,7 @@ p {
   padding: 8px 10px;
   color: var(--md-on-surface-variant);
   font-family: var(--md-font-mono);
-  font-size: var(--md-type-body-small);
+  font-size: var(--type-label);
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
@@ -666,7 +661,7 @@ p {
 }
 
 .plan-header:hover {
-  background: var(--md-surface-container);
+  background: var(--md-hover);
 }
 
 .plan-bubble.collapsed .plan-header {
@@ -678,8 +673,8 @@ p {
   align-items: center;
   gap: 8px;
   min-width: 0;
-  font-size: var(--md-type-title-small);
-  font-weight: 650;
+  font-size: var(--type-body-sm);
+  font-weight: 600;
 }
 
 .plan-header-title svg {
@@ -701,10 +696,9 @@ p {
   flex: 0 0 auto;
   padding: 2px 8px;
   color: var(--md-on-surface-variant);
-  font-size: var(--md-type-label-small);
+  font-size: var(--type-caption);
   font-style: normal;
   font-weight: 600;
-  letter-spacing: 0.02em;
   background: var(--md-surface-container-high);
   border-radius: var(--md-shape-xs);
 }
@@ -727,8 +721,8 @@ p {
 .plan-bubble > .plan-text {
   padding: 12px 14px;
   color: var(--md-on-surface);
-  font-size: var(--md-type-body-medium);
-  line-height: 1.6;
+  font-size: var(--type-body);
+  line-height: 1.75;
 }
 
 .plan-actions {
@@ -770,24 +764,22 @@ p {
 }
 
 .approval-heading strong {
-  font-size: var(--md-type-title-small);
+  font-size: var(--type-body-sm);
   line-height: 1.35;
 }
 
 .approval-heading span {
   color: var(--md-on-surface-variant);
-  font-size: var(--md-type-body-small);
+  font-size: var(--type-label);
   line-height: 1.45;
 }
 
 .approval-heading em {
   padding: 2px 7px;
   color: var(--md-warning);
-  font-size: var(--md-type-label-small);
+  font-size: var(--type-caption);
   font-style: normal;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font-weight: 600;
   border: 1px solid color-mix(in srgb, var(--md-warning) 45%, transparent);
   border-radius: var(--md-shape-xs);
 }
@@ -799,7 +791,7 @@ p {
   padding: 8px 10px;
   color: var(--md-on-surface-variant);
   font-family: var(--md-font-mono);
-  font-size: var(--md-type-body-small);
+  font-size: var(--type-label);
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
@@ -817,7 +809,7 @@ p {
 .approval-actions button {
   min-height: 32px;
   padding: 0 12px;
-  font-size: var(--md-type-label-large);
+  font-size: var(--type-body-sm);
   font-weight: 600;
   border-radius: var(--md-shape-sm);
   cursor: pointer;
@@ -856,7 +848,7 @@ p {
   height: 30px;
   padding: 0 10px;
   color: var(--md-on-surface-variant);
-  font-size: var(--md-type-label-medium);
+  font-size: var(--type-label);
   font-weight: 600;
   background: var(--md-surface-container);
   border: 1px solid var(--md-outline-variant);
@@ -864,10 +856,9 @@ p {
   cursor: pointer;
 }
 
-.skill-picker-trigger:hover:not(:disabled),
-.skill-picker-trigger.active {
+.skill-picker-trigger:hover:not(:disabled) {
   color: var(--md-on-surface);
-  background: var(--md-surface-container-high);
+  background: var(--md-hover);
 }
 
 .skill-picker-trigger.active {
@@ -914,7 +905,7 @@ p {
 
 .skill-picker-heading span {
   color: var(--md-on-surface-variant);
-  font-size: var(--md-type-body-small);
+  font-size: var(--type-label);
 }
 
 .skill-picker-heading button,
@@ -948,7 +939,7 @@ p {
 }
 
 .skill-picker-item:hover {
-  background: var(--md-surface-container);
+  background: var(--md-hover);
 }
 
 .skill-picker-item.disabled {
@@ -1003,25 +994,25 @@ p {
 }
 
 .skill-picker-copy span {
-  font-size: var(--md-type-body-small);
+  font-size: var(--type-label);
 }
 
 .skill-picker-copy small {
-  font-size: 10px;
+  font-size: var(--type-caption);
 }
 
 .skill-picker-diagnostic {
   grid-column: 1 / -1;
   margin: 0 8px 5px 32px;
   color: var(--md-error);
-  font-size: var(--md-type-body-small);
+  font-size: var(--type-label);
 }
 
 .skill-picker-empty,
 .skill-picker-notices p {
   margin: 0;
   color: var(--md-on-surface-variant);
-  font-size: var(--md-type-body-small);
+  font-size: var(--type-label);
 }
 
 .skill-picker-empty {
@@ -1079,9 +1070,9 @@ p {
   height: 24px;
 }
 .avatar.user-avatar {
-  color: var(--md-primary);
+  color: var(--md-on-surface-variant);
   border-color: var(--md-outline-variant);
-  background: var(--md-primary-container);
+  background: transparent;
 }
 .avatar.user-avatar svg {
   width: 16px;
@@ -1099,12 +1090,11 @@ p {
   margin-bottom: 6px;
 }
 .message-byline strong {
-  font-size: 11px;
-  font-weight: 650;
-  letter-spacing: 0.5px;
+  font-size: var(--type-label);
+  font-weight: 600;
 }
 .message-byline time {
-  font-size: 10px;
+  font-size: var(--type-caption);
   color: var(--md-on-surface-variant);
 }
 .message-byline time {
@@ -1112,15 +1102,15 @@ p {
   font-family: var(--md-font-mono);
 }
 .message-bubble {
-  font-size: 15px;
-  line-height: 1.9;
+  font-size: var(--type-body);
+  line-height: 1.75;
   color: var(--md-on-surface);
   overflow-wrap: anywhere;
 }
 .message.user .message-bubble {
   white-space: pre-wrap;
-  padding: 14px 18px;
-  background: var(--md-secondary-container);
+  padding: 12px 16px;
+  background: var(--md-surface-container-lowest);
   border-left: 2px solid var(--md-outline);
 }
 .message-actions {
@@ -1136,11 +1126,11 @@ p {
   padding: 4px;
   background: transparent;
   color: var(--md-on-surface-variant);
-  font-size: 10px;
+  font-size: var(--type-caption);
 }
 .copy-message:hover {
-  color: var(--md-primary);
-  background: var(--md-secondary-container);
+  color: var(--md-on-surface);
+  background: var(--md-hover);
 }
 .empty-state {
   height: 100%;
@@ -1158,12 +1148,13 @@ p {
   margin-bottom: 20px;
 }
 .empty-state h3 {
-  font-size: 22px;
-  font-weight: 450;
+  font-family: var(--md-font-display);
+  font-size: var(--type-headline);
+  font-weight: 400;
 }
 .empty-state p {
   margin-top: 13px;
-  font-size: 13px;
+  font-size: var(--type-body-sm);
   color: var(--md-on-surface-variant);
   line-height: 1.8;
 }
@@ -1200,15 +1191,16 @@ p {
   flex-shrink: 0;
 }
 .welcome-heading h2 {
-  font-size: clamp(26px, 2.2vw, 36px);
-  font-weight: 450;
-  letter-spacing: -1px;
-  line-height: 1.4;
+  font-family: var(--md-font-display);
+  font-size: var(--type-display);
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
   margin: 0 0 10px;
 }
 .welcome-heading p {
   color: var(--md-on-surface-variant);
-  font-size: 13px;
+  font-size: var(--type-body-sm);
   line-height: 1.8;
 }
 .starter-prompts {
@@ -1226,7 +1218,7 @@ p {
   background: transparent;
 }
 .starter-prompts button:hover {
-  background: var(--md-secondary-container);
+  background: var(--md-hover);
 }
 .starter-prompts button > span {
   display: flex;
@@ -1235,12 +1227,12 @@ p {
   flex: 1;
 }
 .starter-prompts strong {
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--type-body-sm);
+  font-weight: 600;
 }
 .starter-prompts small {
   color: var(--md-on-surface-variant);
-  font-size: 11px;
+  font-size: var(--type-label);
 }
 .starter-prompts svg {
   color: var(--md-outline);
@@ -1253,7 +1245,7 @@ p {
   margin: auto 0 16px;
 }
 .field-label {
-  font-size: 11px;
+  font-size: var(--type-label);
   color: var(--md-on-surface-variant);
 }
 .text-field {
@@ -1283,7 +1275,7 @@ p {
   border: 0;
   background: transparent;
   font-family: var(--md-font-mono);
-  font-size: 12px;
+  font-size: var(--type-label);
   color: var(--md-on-surface);
 }
 .text-field > svg {
@@ -1292,7 +1284,7 @@ p {
 .text-field .icon-button {
   width: auto;
   padding: 0 7px;
-  font-size: 11px;
+  font-size: var(--type-label);
 }
 
 /* Prompt entry and its existing execution, permission, and skill controls. */
@@ -1338,8 +1330,8 @@ p {
   background: transparent;
   border: 0;
   padding: 14px 16px 6px;
-  font-size: 15px;
-  line-height: 1.8;
+  font-size: var(--type-body);
+  line-height: 1.75;
 }
 .composer.draft textarea {
   min-height: 84px;
@@ -1376,7 +1368,7 @@ p {
   display: flex;
   justify-content: space-between;
   gap: 10px;
-  font-size: 10px;
+  font-size: var(--type-caption);
   color: var(--md-on-surface-variant);
   line-height: 1.6;
 }
@@ -1405,7 +1397,7 @@ p {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font-size: 11px;
+  font-size: var(--type-label);
   color: var(--md-on-surface-variant);
 }
 .pending-input.sending .pending-input-prompt,
@@ -1424,7 +1416,7 @@ p {
 }
 .pending-input-note {
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: var(--type-caption);
   color: var(--md-on-surface-variant);
   opacity: 0.8;
 }
@@ -1441,7 +1433,7 @@ p {
   height: 22px;
   padding: 0 6px;
   background: transparent;
-  font-size: 10px;
+  font-size: var(--type-caption);
   color: var(--md-on-surface-variant);
   white-space: nowrap;
 }
@@ -1450,7 +1442,7 @@ p {
   height: 12px;
 }
 .pending-input-actions button:hover:not(:disabled) {
-  background: var(--md-secondary-container);
+  background: var(--md-hover);
 }
 .mode-toggle {
   display: inline-flex;
@@ -1467,7 +1459,7 @@ p {
   gap: 5px;
   padding: 0 6px;
   background: transparent;
-  font-size: 10px;
+  font-size: var(--type-label);
   color: var(--md-on-surface-variant);
   white-space: nowrap;
 }
@@ -1476,7 +1468,7 @@ p {
   height: 12px;
 }
 .mode-toggle button:hover:not(:disabled) {
-  background: var(--md-secondary-container);
+  background: var(--md-hover);
 }
 .mode-toggle button.active {
   color: var(--md-on-primary-container);
@@ -1524,15 +1516,19 @@ p {
   align-items: center;
   height: 28px;
   gap: 5px;
-  font-size: 10px;
+  font-size: var(--type-label);
+  font-weight: 400;
   background: transparent;
   padding: 0 6px;
   color: var(--md-on-surface-variant);
 }
-.skill-picker-trigger:hover,
+.skill-picker-trigger:hover:not(:disabled) {
+  color: var(--md-on-surface);
+  background: var(--md-hover);
+}
 .skill-picker-trigger.active {
+  color: var(--md-on-primary-container);
   background: var(--md-primary-container);
-  color: var(--md-primary);
 }
 .skill-picker-popover {
   left: 0;
@@ -1550,10 +1546,6 @@ p {
 .markdown-body pre {
   margin: 14px 0;
   padding: 15px;
-}
-.markdown-body pre code {
-  font-size: 12px;
-  line-height: 1.7;
 }
 .markdown-body a {
   text-decoration: underline;
@@ -1580,12 +1572,6 @@ p {
 .approval-actions {
   flex-wrap: wrap;
 }
-.eyebrow {
-  color: var(--md-on-surface-variant);
-  font-size: 10px;
-  letter-spacing: 1px;
-  font-weight: 400;
-}
 .status-dot {
   border-radius: 0;
   width: 5px;
@@ -1595,7 +1581,7 @@ p {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  font-size: 11px;
+  font-size: var(--type-caption);
   background: none;
   max-width: 160px;
 }
@@ -1620,7 +1606,7 @@ p {
     padding-top: 18px;
   }
   .welcome-heading h2 {
-    font-size: 28px;
+    font-size: var(--type-headline);
     margin: 0 0 8px;
   }
   .starter-prompts {
@@ -1650,7 +1636,7 @@ p {
     min-height: 28px;
   }
   .message-bubble {
-    font-size: 14px;
+    font-size: var(--type-body);
   }
   .message.user .message-bubble {
     padding: 12px 13px;
@@ -1668,7 +1654,7 @@ p {
     padding-top: 24px;
   }
   .welcome-heading h2 {
-    font-size: 27px;
+    font-size: var(--type-headline);
   }
   .starter-prompts {
     margin: 22px 0;
@@ -1708,7 +1694,7 @@ p {
     gap: 5px;
   }
   .mode-toggle button {
-    font-size: 10px;
+    font-size: var(--type-caption);
     padding: 0 5px;
   }
   .composer-submit {

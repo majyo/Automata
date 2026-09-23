@@ -127,7 +127,7 @@ function App() {
         sessions.actions.setDraftWorkingDirectory(selected);
       }
     } catch {
-      agentSocket.setSocketStatus("Type a working directory path");
+      agentSocket.setSocketStatus("请输入工作目录路径");
     }
   }
 
@@ -145,7 +145,7 @@ function App() {
   }
 
   async function handleSandboxSetup() {
-    setSandboxSetupStatus("Preparing sandbox...");
+    setSandboxSetupStatus("正在准备沙箱…");
     try {
       const result = await setupSandbox(
         apiConfig,
@@ -153,12 +153,12 @@ function App() {
       );
       setSandboxSetupStatus(
         result.ready
-          ? `Sandbox ready (${result.backend})`
-          : "Sandbox setup did not complete",
+          ? `沙箱已就绪（${result.backend}）`
+          : "沙箱准备未完成",
       );
     } catch (error) {
       setSandboxSetupStatus(
-        error instanceof Error ? error.message : "Sandbox setup failed",
+        error instanceof Error ? error.message : "沙箱准备失败",
       );
     }
   }

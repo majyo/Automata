@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { Moon, Search, Sun } from "lucide-react";
 import { ConversationPanel } from "../../features/conversation/components/ConversationPanel";
 import { Sidebar } from "./Sidebar";
 import { InspectorSheet } from "./InspectorSheet";
@@ -100,7 +99,7 @@ export function AppShell({
     );
     if (!panel) return;
     const returnTarget = shellRef.current?.querySelector<HTMLElement>(
-      sidebarModal ? ".masthead-search" : ".topbar-actions button",
+      sidebarModal ? ".sidebar-toggle" : ".topbar-actions button",
     );
     const controls = () =>
       Array.from(
@@ -153,45 +152,8 @@ export function AppShell({
     ? "新建会话"
     : (activeSession?.title ?? "开始工作");
 
-  function focusSessionSearch() {
-    if (window.innerWidth < 1160) setIsInspectorOpen(false);
-    setIsSidebarOpen(true);
-    requestAnimationFrame(() =>
-      document.getElementById("session-search")?.focus(),
-    );
-  }
-
   return (
     <div className="app-shell" ref={shellRef}>
-      <header className="masthead" inert={sidebarModal || inspectorModal}>
-        <div className="brand">
-          <strong>
-            AUTOMATA<span className="brand-period">.</span>
-          </strong>
-        </div>
-        <nav className="masthead-actions" aria-label="全局操作">
-          <button
-            className="masthead-search"
-            type="button"
-            onClick={focusSessionSearch}
-            aria-label="查找会话"
-          >
-            <Search size={17} />
-            <span>查找会话</span>
-          </button>
-          <button
-            className="icon-button"
-            type="button"
-            onClick={() =>
-              setTheme((current) => (current === "dark" ? "light" : "dark"))
-            }
-            aria-label={theme === "dark" ? "切换浅色主题" : "切换深色主题"}
-            title={theme === "dark" ? "切换浅色主题" : "切换深色主题"}
-          >
-            {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
-          </button>
-        </nav>
-      </header>
       <div className="app-content">
         {isSidebarOpen && (
           <button
@@ -206,6 +168,10 @@ export function AppShell({
           modal={sidebarModal}
           inactive={inspectorModal}
           onClose={() => setIsSidebarOpen(false)}
+          theme={theme}
+          onToggleTheme={() =>
+            setTheme((current) => (current === "dark" ? "light" : "dark"))
+          }
           sessions={sessions}
           activeSessionId={activeSessionId}
           editingSessionId={editingSessionId}

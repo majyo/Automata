@@ -9,17 +9,17 @@ type SendModeToggleProps = {
 
 export function SendModeToggle({ sendMode, disabled, onChange }: SendModeToggleProps) {
   return (
-    <div className="mode-toggle" role="group" aria-label="Prompt mode">
+    <div className="mode-toggle" role="group" aria-label="发送方式">
       <button
         type="button"
         className={sendMode === "execute" ? "active" : ""}
         onClick={() => onChange("execute")}
         disabled={disabled}
         aria-pressed={sendMode === "execute"}
-        title="Execute prompt"
+        title="直接执行任务"
       >
         <Play size={14} />
-        Execute
+        执行
       </button>
       <button
         type="button"
@@ -27,10 +27,10 @@ export function SendModeToggle({ sendMode, disabled, onChange }: SendModeToggleP
         onClick={() => onChange("plan")}
         disabled={disabled}
         aria-pressed={sendMode === "plan"}
-        title="Generate a plan"
+        title="先生成计划，确认后再执行"
       >
         <CheckCircle2 size={14} />
-        Plan
+        计划
       </button>
     </div>
   );

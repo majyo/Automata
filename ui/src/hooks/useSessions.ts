@@ -178,7 +178,7 @@ export function useSessions({ apiConfigRef, chatDispatch }: UseSessionsOptions) 
 
     const session = await createSession(
       apiConfigRef.current,
-      "New session",
+      "新会话",
       stateRef.current.draftWorkingDirectory,
       undefined,
       stateRef.current.draftPermissionPreset,

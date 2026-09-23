@@ -23,7 +23,7 @@ export function PlanBubble({ message, isStreaming, onApprovePlan }: PlanBubblePr
       >
         <span className="plan-header-title">
           <CheckCircle2 size={16} />
-          Plan
+          计划
         </span>
         <span className="plan-header-meta">
           <em className={`plan-status ${message.plan_status ?? "pending"}`}>{formatPlanStatus(message.plan_status)}</em>
@@ -41,7 +41,7 @@ export function PlanBubble({ message, isStreaming, onApprovePlan }: PlanBubblePr
               disabled={isStreaming || (message.plan_status !== "pending" && !canRetry)}
             >
               {canRetry ? <RotateCcw size={15} /> : <Play size={15} />}
-              {canRetry ? "Retry plan" : "Approve plan"}
+              {canRetry ? "重试计划" : "批准计划"}
             </button>
           </div>
         </>

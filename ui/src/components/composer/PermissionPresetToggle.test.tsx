@@ -15,10 +15,10 @@ describe("PermissionPresetToggle", () => {
       />,
     );
 
-    const fullAccess = getByRole("button", { name: "Full Access" });
+    const fullAccess = getByRole("button", { name: "完全访问" });
     expect(fullAccess).toHaveAttribute(
       "title",
-      "Run eligible tool calls without approval. No sandbox is active.",
+      "无需批准直接运行工具调用，不启用沙箱。",
     );
     fireEvent.click(fullAccess);
     expect(onChange).toHaveBeenCalledWith("full_access");
@@ -33,12 +33,12 @@ describe("PermissionPresetToggle", () => {
       />,
     );
 
-    expect(getByRole("button", { name: "Full Access" })).toHaveAttribute(
+    expect(getByRole("button", { name: "完全访问" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
-    expect(getByRole("button", { name: "Default" })).toBeDisabled();
-    expect(getByRole("button", { name: "Full Access" })).toBeDisabled();
+    expect(getByRole("button", { name: "沙箱" })).toBeDisabled();
+    expect(getByRole("button", { name: "完全访问" })).toBeDisabled();
   });
 
   it("runs explicit sandbox setup and exposes its current status", () => {
@@ -53,7 +53,7 @@ describe("PermissionPresetToggle", () => {
       />,
     );
 
-    const setup = getByRole("button", { name: "Prepare Sandbox" });
+    const setup = getByRole("button", { name: "准备沙箱" });
     expect(setup).toHaveAttribute(
       "title",
       "Sandbox ready (windows-appcontainer)",

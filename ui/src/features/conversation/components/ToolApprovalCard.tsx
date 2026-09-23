@@ -7,21 +7,29 @@ type ToolApprovalCardProps = {
 };
 
 const labels: Record<ApprovalDecision, string> = {
-  allow_once: "Allow once",
-  allow_for_run: "Allow for this run",
-  deny: "Deny",
+  allow_once: "允许一次",
+  allow_for_run: "本次运行内允许",
+  deny: "拒绝",
+};
+
+const riskLabels: Record<ToolApprovalRequest["risk"], string> = {
+  read: "读取",
+  write: "写入",
+  command: "命令",
+  destructive: "破坏性",
+  external: "外部访问",
 };
 
 export function ToolApprovalCard({ approval, onRespond }: ToolApprovalCardProps) {
   return (
-    <section className={`approval-card risk-${approval.risk}`} aria-label="Tool approval required">
+    <section className={`approval-card risk-${approval.risk}`} aria-label="需要批准工具调用">
       <div className="approval-heading">
         <ShieldAlert size={18} />
         <div>
           <strong>{approval.summary}</strong>
           <span>{approval.reason}</span>
         </div>
-        <em>{approval.risk}</em>
+        <em>{riskLabels[approval.risk] ?? approval.risk}</em>
       </div>
       {Object.keys(approval.preview).length > 0 ? (
         <pre>{JSON.stringify(approval.preview, null, 2)}</pre>

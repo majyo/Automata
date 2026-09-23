@@ -265,7 +265,7 @@ describe("projectRunEvent", () => {
       type: "runEventAppended",
       id: "run-1:context:5",
       sessionId: "session-1",
-      text: "Context compressed: tool context\nCompressed 4 messages.",
+      text: "上下文已压缩：工具上下文\n已压缩 4 条消息。",
     });
     expect(projection.effects).toEqual([]);
   });

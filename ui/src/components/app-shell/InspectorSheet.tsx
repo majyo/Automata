@@ -96,7 +96,7 @@ export function InspectorSheet({
             <div>
               <dt>工具权限</dt>
               <dd>
-                {permissionPreset === "full_access" ? "完全访问" : "默认沙箱"}
+                {permissionPreset === "full_access" ? "完全访问" : "沙箱"}
               </dd>
             </div>
             <div>

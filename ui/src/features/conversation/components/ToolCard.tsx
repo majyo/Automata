@@ -69,7 +69,7 @@ function ToolRunGroupContent({ messages }: ToolRunGroupProps) {
   const [isListExpanded, setIsListExpanded] = useState(true);
   const summaries = messages.map((message) => summarizeToolRun(message.id, message.metadata ?? null));
   const status = groupStatus(summaries);
-  const countLabel = `${summaries.length} tool call${summaries.length === 1 ? "" : "s"}`;
+  const countLabel = `${summaries.length} 次工具调用`;
 
   return (
     <div className={`tool-run-group-shell ${status}`}>
@@ -81,7 +81,7 @@ function ToolRunGroupContent({ messages }: ToolRunGroupProps) {
       >
         <span className="tool-run-group-title">
           <Terminal size={14} />
-          <span>{groupHeaderLabel(summaries, status, countLabel)}</span>
+          <span>{groupHeaderLabel(summaries, countLabel)}</span>
         </span>
         {isListExpanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
       </button>
@@ -131,13 +131,13 @@ function ToolRunLine({ summary }: { summary: ToolRunSummary }) {
             </span>
           </div>
           <div className="tool-run-detail-grid">
-            <ToolRunDetailBlock label="Arguments" value={summary.argumentsDisplayText || "{}"} />
+            <ToolRunDetailBlock label="参数" value={summary.argumentsDisplayText || "{}"} />
             <ToolRunDetailBlock
-              label="Result"
+              label="结果"
               value={
                 summary.result
-                  ? summary.resultDisplayText || "(empty)"
-                  : summary.liveOutputDisplayText || "Running..."
+                  ? summary.resultDisplayText || "（空）"
+                  : summary.liveOutputDisplayText || "运行中…"
               }
             />
           </div>
@@ -222,33 +222,29 @@ function groupStatus(summaries: ToolRunSummary[]): ToolRunStatus {
 
 function lineState(status: ToolRunStatus): string {
   if (status === "running") {
-    return "Running";
+    return "运行中";
   }
   if (status === "failed") {
-    return "Failed";
+    return "失败";
   }
-  return "Ran";
+  return "已运行";
 }
 
-function groupState(status: ToolRunStatus): string {
-  return lineState(status);
-}
-
-function groupHeaderLabel(summaries: ToolRunSummary[], status: ToolRunStatus, countLabel: string): string {
+function groupHeaderLabel(summaries: ToolRunSummary[], countLabel: string): string {
   const running = summaries.filter((summary) => summary.status === "running").length;
   const failed = summaries.filter((summary) => summary.status === "failed").length;
   const completed = summaries.length - running - failed;
   const parts: string[] = [];
   if (running > 0) {
-    parts.push(`${running} running`);
+    parts.push(`${running} 个进行中`);
   }
   if (completed > 0) {
-    parts.push(`${completed} succeeded`);
+    parts.push(`${completed} 个成功`);
   }
   if (failed > 0) {
-    parts.push(`${failed} failed`);
+    parts.push(`${failed} 个失败`);
   }
-  return `${groupState(status)} ${countLabel} · ${parts.join(" · ")}`;
+  return `${countLabel}：${parts.join("，")}`;
 }
 
 function extractReadableToolText(tool: string, argumentsText: string, resultText: string): string {

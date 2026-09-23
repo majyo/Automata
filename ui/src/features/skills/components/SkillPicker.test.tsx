@@ -35,7 +35,7 @@ describe("SkillPicker", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /skills/i }));
+    fireEvent.click(screen.getByRole("button", { name: /技能/ }));
     expect(screen.getByText("repo · tools/review")).toBeInTheDocument();
     expect(screen.getByText("repo · ui/review")).toBeInTheDocument();
     fireEvent.click(screen.getAllByText("Review the current change")[1]);

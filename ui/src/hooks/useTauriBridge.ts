@@ -3,13 +3,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 
 export function useTauriBridge() {
-  const [bridgeStatus, setBridgeStatus] = useState("Desktop bridge not checked");
+  const [bridgeStatus, setBridgeStatus] = useState("尚未检查桌面连接");
 
   async function runBridgeCheck() {
     try {
       setBridgeStatus(await invoke<string>("agent_status", { workspace: "automata" }));
     } catch {
-      setBridgeStatus("Open with npm run tauri dev to use the desktop bridge");
+      setBridgeStatus("请通过 npm run tauri dev 启动，以使用桌面连接");
     }
   }
 
@@ -17,7 +17,7 @@ export function useTauriBridge() {
     const selected = await open({
       directory: true,
       multiple: false,
-      title: "Select working directory",
+      title: "选择工作目录",
     });
 
     return typeof selected === "string" && selected.trim() ? selected : null;

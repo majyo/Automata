@@ -65,7 +65,7 @@ export function SkillPicker({
         onClick={() => setOpen((current) => !current)}
       >
         <Wrench size={13} />
-        <span>{selectedCount ? `${selectedCount} skills` : "Skills"}</span>
+        <span>{selectedCount ? `${selectedCount} 个技能` : "技能"}</span>
         <ChevronDown size={12} />
       </button>
 
@@ -73,13 +73,13 @@ export function SkillPicker({
         <div className="skill-picker-popover">
           <div className="skill-picker-heading">
             <div>
-              <strong>Skills</strong>
-              <span>Applied to this prompt only</span>
+              <strong>技能</strong>
+              <span>仅对本条消息生效</span>
             </div>
             <button
               type="button"
-              aria-label="Reload skills"
-              title="Reload skills"
+              aria-label="重新加载技能"
+              title="重新加载技能"
               disabled={disabled || isLoading}
               onClick={onRefresh}
             >
@@ -91,8 +91,8 @@ export function SkillPicker({
             {skills.length === 0 ? (
               <p className="skill-picker-empty">
                 {isLoading
-                  ? "Loading skills..."
-                  : "No skills found for this workspace."}
+                  ? "正在加载技能…"
+                  : "当前工作区没有可用的技能。"}
               </p>
             ) : (
               skills.map((skill) => {
@@ -129,7 +129,7 @@ export function SkillPicker({
                       disabled={disabled}
                       onClick={() => void onToggleEnabled(skill)}
                     >
-                      {skill.enabled ? "Disable" : "Enable"}
+                      {skill.enabled ? "停用" : "启用"}
                     </button>
                     {skill.diagnostics.some(
                       (item) =>

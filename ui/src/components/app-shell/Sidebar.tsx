@@ -1,4 +1,4 @@
-import { ArrowUpRight, Plus, Search, X } from "lucide-react";
+import { Moon, Plus, Search, Sun, X } from "lucide-react";
 import { useState } from "react";
 import { SessionList } from "./SessionList";
 import type { PersistedRunStatus } from "../../types/chat";
@@ -9,6 +9,8 @@ type SidebarProps = {
   modal: boolean;
   inactive: boolean;
   onClose(): void;
+  theme: "light" | "dark";
+  onToggleTheme(): void;
   sessions: SessionSummary[];
   activeSessionId: string | null;
   editingSessionId: string | null;
@@ -29,6 +31,8 @@ export function Sidebar({
   modal,
   inactive,
   onClose,
+  theme,
+  onToggleTheme,
   sessions,
   activeSessionId,
   editingSessionId,
@@ -58,7 +62,18 @@ export function Sidebar({
       inert={inactive}
     >
       <div className="sidebar-heading">
-        <span className="eyebrow">会话目录</span>
+        <strong className="brand">
+          AUTOMATA<span className="brand-period">.</span>
+        </strong>
+        <button
+          className="icon-button"
+          type="button"
+          onClick={onToggleTheme}
+          aria-label={theme === "dark" ? "切换浅色主题" : "切换深色主题"}
+          title={theme === "dark" ? "切换浅色主题" : "切换深色主题"}
+        >
+          {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
+        </button>
         <button
           className="icon-button sidebar-close"
           type="button"
@@ -77,9 +92,8 @@ export function Sidebar({
           onCreateSession();
         }}
       >
-        <Plus size={17} />
+        <Plus size={16} />
         <span>新建会话</span>
-        <ArrowUpRight size={16} />
       </button>
 
       <label className="session-search">
