@@ -1,11 +1,4 @@
-import {
-  ArrowUpRight,
-  Check,
-  FolderOpen,
-  Pencil,
-  Trash2,
-  X,
-} from "lucide-react";
+import { Check, FolderOpen, Pencil, Trash2, X } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import type { PersistedRunStatus } from "../../types/chat";
 import type { SessionSummary } from "../../types/session";
@@ -111,13 +104,12 @@ export function SessionListItem({
           onClick={() => onSelect(session.id)}
           aria-current={isActive ? "page" : undefined}
         >
-          <span className="session-directory">
-            <FolderOpen size={12} />
-            {formatDirectoryName(session.working_directory)}
-          </span>
           <strong>{session.title}</strong>
-          <span className="session-item-bottom">
-            <span>{session.message_count} 条消息</span>
+          <span className="session-meta">
+            <span className="session-directory">
+              <FolderOpen size={12} />
+              <span>{formatDirectoryName(session.working_directory)}</span>
+            </span>
             {status ? (
               <em
                 className={`session-run-status ${runStatus === "failed" ? "tone-error" : runStatus === "waiting_approval" ? "tone-warning" : ""}`}
@@ -126,7 +118,9 @@ export function SessionListItem({
                 {status}
               </em>
             ) : (
-              <ArrowUpRight size={13} />
+              <span className="session-count">
+                {session.message_count} 条
+              </span>
             )}
           </span>
         </button>

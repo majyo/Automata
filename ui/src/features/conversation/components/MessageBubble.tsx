@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Copy, UserRound } from "lucide-react";
+import { Check, Copy } from "lucide-react";
 import { AutomataMark } from "../../../components/app-shell/AutomataMark";
 import { MarkdownContent } from "./MarkdownContent";
 import { PlanBubble } from "./PlanBubble";
@@ -47,24 +47,30 @@ export function MessageBubble({
 
   const user = message.role === "user";
   const date = message.created_at ? new Date(message.created_at) : null;
+  // The left gutter carries who is speaking (the agent's mark) and, on
+  // hover, when; the text column stays free of a repeated byline row.
   return (
-    <article className={`message ${message.role}`}>
-      <div className={`avatar ${user ? "user-avatar" : ""}`}>
-        {user ? <UserRound size={16} /> : <AutomataMark />}
+    <article
+      className={`message ${message.role}`}
+      aria-label={user ? "你的消息" : "AUTOMATA 的回复"}
+    >
+      <div className="message-gutter">
+        {user ? null : (
+          <div className="avatar">
+            <AutomataMark />
+          </div>
+        )}
+        {date && !Number.isNaN(date.getTime()) && (
+          <time className="message-time" dateTime={message.created_at}>
+            {date.toLocaleTimeString("zh-CN", {
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: false,
+            })}
+          </time>
+        )}
       </div>
       <div className="message-content">
-        <div className="message-byline">
-          <strong>{user ? "你" : "AUTOMATA"}</strong>
-          {date && !Number.isNaN(date.getTime()) && (
-            <time dateTime={message.created_at}>
-              {date.toLocaleTimeString("zh-CN", {
-                hour: "2-digit",
-                minute: "2-digit",
-                hour12: false,
-              })}
-            </time>
-          )}
-        </div>
         {user ? (
           <p className="message-bubble">{message.text || "…"}</p>
         ) : (

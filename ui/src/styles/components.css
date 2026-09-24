@@ -1069,37 +1069,38 @@ p {
   width: 24px;
   height: 24px;
 }
-.avatar.user-avatar {
-  color: var(--md-on-surface-variant);
-  border-color: var(--md-outline-variant);
-  background: transparent;
+.message-gutter {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 32px;
+  flex-shrink: 0;
 }
-.avatar.user-avatar svg {
-  width: 16px;
-  height: 16px;
+.message-time {
+  font-family: var(--md-font-mono);
+  font-size: var(--type-caption);
+  line-height: 1;
+  color: var(--md-on-surface-variant);
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity var(--md-duration-short) var(--md-easing);
+}
+/* A user turn has no avatar, so its time lines up with the first text line. */
+.message.user .message-time {
+  margin-top: 19px;
+}
+.message:hover .message-time,
+.message:focus-within .message-time {
+  opacity: 1;
 }
 .message-content {
   min-width: 0;
   flex: 1;
 }
-.message-byline {
-  display: flex;
-  align-items: center;
-  min-height: 32px;
-  gap: 9px;
-  margin-bottom: 6px;
-}
-.message-byline strong {
-  font-size: var(--type-label);
-  font-weight: 600;
-}
-.message-byline time {
-  font-size: var(--type-caption);
-  color: var(--md-on-surface-variant);
-}
-.message-byline time {
-  margin-left: auto;
-  font-family: var(--md-font-mono);
+/* Centre the first line of agent text on the 32px mark beside it. */
+.message.agent .message-content {
+  padding-top: 3px;
 }
 .message-bubble {
   font-size: var(--type-body);
@@ -1632,8 +1633,11 @@ p {
     width: 21px;
     height: 21px;
   }
-  .message-byline {
-    min-height: 28px;
+  .message-gutter {
+    width: 28px;
+  }
+  .message.agent .message-content {
+    padding-top: 1px;
   }
   .message-bubble {
     font-size: var(--type-body);

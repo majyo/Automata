@@ -176,11 +176,16 @@
 }
 .session-select {
   display: grid;
-  gap: 10px;
+  gap: 2px;
   width: 100%;
-  padding: 14px 12px;
+  padding: 9px 12px;
   text-align: left;
   background: transparent;
+}
+/* Leave room for the rename/delete actions while they are showing. */
+.session-item:hover .session-select,
+.session-item:focus-within .session-select {
+  padding-right: 62px;
 }
 .session-select strong {
   font-size: var(--type-body-sm);
@@ -190,31 +195,35 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.session-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--type-caption);
+  line-height: 1.5;
+  color: var(--md-on-surface-variant);
+}
 .session-directory {
   display: flex;
-  gap: 6px;
+  flex: 1;
+  gap: 5px;
   align-items: center;
   min-width: 0;
-  color: var(--md-on-surface-variant);
-  font-size: var(--type-caption);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  padding-right: 42px;
 }
 .session-directory svg {
   flex-shrink: 0;
 }
-.session-item-bottom {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 5px;
-  font-size: var(--type-caption);
-  color: var(--md-on-surface-variant);
+.session-directory span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.session-count {
+  flex-shrink: 0;
 }
 .session-run-status {
-  font-size: var(--type-caption);
+  flex-shrink: 0;
   font-style: normal;
   display: inline-flex;
   gap: 5px;
@@ -222,10 +231,11 @@
 }
 .session-actions {
   position: absolute;
-  top: 6px;
+  top: 50%;
   right: 6px;
   display: flex;
   opacity: 0;
+  transform: translateY(-50%);
 }
 .session-item:hover .session-actions,
 .session-item:focus-within .session-actions {
@@ -251,7 +261,7 @@
 .session-edit {
   display: flex;
   align-items: center;
-  min-height: 108px;
+  min-height: 56px;
   gap: 3px;
   padding: 9px;
 }
@@ -499,6 +509,12 @@
 }
 @media (hover: none) {
   .session-actions {
+    opacity: 1;
+  }
+  .session-select {
+    padding-right: 62px;
+  }
+  .message-time {
     opacity: 1;
   }
 }
