@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ConversationPanel } from "../../features/conversation/components/ConversationPanel";
 import { Sidebar } from "./Sidebar";
 import { InspectorSheet } from "./InspectorSheet";
@@ -14,6 +14,8 @@ import type {
   SessionView,
   SkillsActions,
   SkillsView,
+  WorkspaceFilesActions,
+  WorkspaceFilesView,
 } from "./viewModel";
 
 type Theme = "light" | "dark";
@@ -31,6 +33,8 @@ type AppShellProps = {
   composerActions: ComposerActions;
   skillsView: SkillsView;
   skillsActions: SkillsActions;
+  filesView: WorkspaceFilesView;
+  filesActions: WorkspaceFilesActions;
 };
 
 export function AppShell({
@@ -44,6 +48,8 @@ export function AppShell({
   composerActions,
   skillsView,
   skillsActions,
+  filesView,
+  filesActions,
 }: AppShellProps) {
   const {
     sessions,
@@ -85,6 +91,15 @@ export function AppShell({
   const shellRef = useRef<HTMLDivElement>(null);
   const sidebarModal = isSidebarOpen && viewportWidth <= 760;
   const inspectorModal = isInspectorOpen && viewportWidth < 1160;
+  const closeInspector = useCallback(() => {
+    const panel = shellRef.current?.querySelector<HTMLElement>(".inspector-sheet");
+    if (!panel?.classList.contains("open")) return;
+    if (document.activeElement instanceof HTMLElement && panel.contains(document.activeElement)) {
+      document.activeElement.blur();
+    }
+    setIsInspectorOpen(false);
+    requestAnimationFrame(() => shellRef.current?.querySelector<HTMLButtonElement>(".topbar-actions button")?.focus());
+  }, []);
 
   useEffect(() => {
     const onResize = () => setViewportWidth(window.innerWidth);
@@ -106,7 +121,10 @@ export function AppShell({
         panel.querySelectorAll<HTMLElement>(
           "button:not(:disabled), input:not(:disabled), summary, [tabindex='0']",
         ),
-      ).filter((element) => element.getClientRects().length > 0);
+      ).filter((element) => element.getClientRects().length > 0
+        && element.tabIndex >= 0
+        && !element.closest("[inert]")
+        && window.getComputedStyle(element).visibility !== "hidden");
     controls()[0]?.focus();
     function trapFocus(event: KeyboardEvent) {
       if (event.key !== "Tab") return;
@@ -132,12 +150,12 @@ export function AppShell({
     function closePanels(event: KeyboardEvent) {
       if (event.key === "Escape") {
         setIsSidebarOpen(false);
-        setIsInspectorOpen(false);
+        closeInspector();
       }
     }
     window.addEventListener("keydown", closePanels);
     return () => window.removeEventListener("keydown", closePanels);
-  }, []);
+  }, [closeInspector]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -193,7 +211,7 @@ export function AppShell({
           onDeleteSession={sessionActions.deleteSession}
         />
 
-        <main className="workspace" inert={sidebarModal || inspectorModal}>
+        <main className="workspace" aria-label="对话区域" inert={sidebarModal || inspectorModal}>
           <Topbar
             title={title}
             displayedWorkingDirectory={displayedWorkingDirectory}
@@ -204,7 +222,8 @@ export function AppShell({
               setIsInspectorOpen(false);
             }}
             onToggleInspector={() => {
-              setIsInspectorOpen((open) => !open);
+              if (isInspectorOpen) closeInspector();
+              else setIsInspectorOpen(true);
               setIsSidebarOpen(false);
             }}
           />
@@ -255,8 +274,8 @@ export function AppShell({
           <button
             className="panel-backdrop inspector-backdrop"
             type="button"
-            aria-label="关闭工作区概览遮罩"
-            onClick={() => setIsInspectorOpen(false)}
+            aria-label="关闭文件面板遮罩"
+            onClick={closeInspector}
           />
         )}
         <InspectorSheet
@@ -265,6 +284,9 @@ export function AppShell({
           socketStatus={socketStatus}
           activeSession={activeSession}
           workingDirectory={displayedWorkingDirectory}
+          filesView={filesView}
+          filesActions={filesActions}
+          compact={viewportWidth <= 760}
           messageCount={messages.length}
           permissionPreset={permissionPreset}
           runStatus={
@@ -272,7 +294,7 @@ export function AppShell({
           }
           onRunBridgeCheck={connectionActions.runBridgeCheck}
           open={isInspectorOpen}
-          onClose={() => setIsInspectorOpen(false)}
+          onClose={closeInspector}
         />
       </div>
     </div>

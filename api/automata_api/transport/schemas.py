@@ -5,6 +5,33 @@ from pydantic import BaseModel, Field, model_validator
 from automata_api.core.tools.permissions import PermissionPreset
 
 
+class WorkspaceEntryRecord(BaseModel):
+    name: str
+    path: str
+    kind: Literal["directory", "file"]
+    size: int | None
+    modified_at: str | None
+    accessible: bool
+    access_error: str | None
+
+
+class WorkspaceDirectoryRecord(BaseModel):
+    workspace: str
+    path: str
+    entries: list[WorkspaceEntryRecord]
+    truncated: bool
+
+
+class WorkspaceTextRecord(BaseModel):
+    workspace: str
+    path: str
+    content: str
+    encoding: str
+    size: int
+    modified_at: str
+    truncated: bool
+
+
 class CreateSessionRequest(BaseModel):
     title: str | None = None
     working_directory: str | None = None

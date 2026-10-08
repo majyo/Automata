@@ -11,7 +11,18 @@ export async function requestJson<T>(config: ApiRuntimeConfig, path: string, ini
   });
 
   if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
+    let message = `Request failed: ${response.status}`;
+    try {
+      const body = await response.json();
+      if (typeof body.detail === "string") {
+        message = body.detail;
+      } else if (typeof body.detail?.message === "string") {
+        message = body.detail.message;
+      }
+    } catch {
+      // A non-JSON error still has a useful status code.
+    }
+    throw new Error(message);
   }
 
   return (await response.json()) as T;

@@ -36,6 +36,7 @@ from automata_api.core.tools.management import (
     SandboxAdministration,
     SkillCatalog,
 )
+from automata_api.core.workspace import WorkspaceBrowser
 from automata_api.infrastructure.extensions.catalog import (
     LocalMcpCatalog,
     LocalSkillCatalog,
@@ -53,6 +54,7 @@ from automata_api.infrastructure.processes.process_sessions import ProcessSessio
 from automata_api.infrastructure.sandbox.administration import (
     LocalSandboxAdministration,
 )
+from automata_api.infrastructure.workspace.browser import LocalWorkspaceBrowser
 
 
 @dataclass
@@ -69,6 +71,7 @@ class AppContainer:
     mcp: McpCatalog = field(default_factory=LocalMcpCatalog)
     skills: SkillCatalog = field(default_factory=LocalSkillCatalog)
     sandbox: SandboxAdministration = field(default_factory=LocalSandboxAdministration)
+    workspace_browser: WorkspaceBrowser = field(default_factory=LocalWorkspaceBrowser)
     event_hub: RunEventHub = field(default_factory=RunEventHub)
     process_supervisor: ProcessSupervisor = field(default_factory=ProcessSupervisor)
     process_sessions: ProcessSessionManager = field(

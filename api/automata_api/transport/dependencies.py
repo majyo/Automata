@@ -12,6 +12,7 @@ from fastapi import Request, WebSocket
 from automata_api.bootstrap.container import AppContainer
 from automata_api.core.runs.ports import RunStore
 from automata_api.core.sessions.ports import ConversationStore, SessionStore
+from automata_api.core.workspace import WorkspaceBrowser
 
 
 def container_from_request(request: Request) -> AppContainer:
@@ -60,3 +61,7 @@ def skill_catalog(request: Request):
 
 def sandbox_administration(request: Request):
     return container_from_request(request).sandbox
+
+
+def workspace_browser(request: Request) -> WorkspaceBrowser:
+    return container_from_request(request).workspace_browser

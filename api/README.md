@@ -224,6 +224,26 @@ The UI connects to:
 ws://127.0.0.1:8765/ws/chat
 ```
 
+## Workspace browsing
+
+```text
+GET /workspace/directory?workspace=<working-directory>&path=<relative-directory>
+GET /workspace/text?workspace=<working-directory>&path=<relative-file>
+```
+
+Both endpoints require the same bearer token as session APIs. Directory browsing
+is one level deep, sorts folders first, and returns relative paths and file
+metadata, up to 2000 entries. Text previews support UTF-8, BOM-marked UTF-16/32
+and GB18030, with normalized newlines and limits of 256 KiB and 5000 lines.
+Responses include a `truncated` flag when a limit is reached.
+
+Requested paths must stay inside the resolved workspace, including symlink and
+Windows junction targets. External links are listed as inaccessible. Absolute
+file paths and Windows alternate data streams are rejected. Missing paths return
+404, inaccessible or escaping paths return 403, and binary/unsupported text
+returns 415. These read-only UI capabilities are independent of agent tool calls
+and run off the HTTP event loop through the injected `WorkspaceBrowser` port.
+
 ## Sessions
 
 ```text

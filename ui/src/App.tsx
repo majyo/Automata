@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { AppShell } from "./components/app-shell/AppShell";
 import { useAgentSocket } from "./hooks/useAgentSocket";
@@ -7,6 +7,7 @@ import { useAutoScroll } from "./hooks/useAutoScroll";
 import { useSessions } from "./hooks/useSessions";
 import { useSkills } from "./hooks/useSkills";
 import { useTauriBridge } from "./hooks/useTauriBridge";
+import { useWorkspaceFiles } from "./features/files/useWorkspaceFiles";
 import { setupSandbox } from "./api/sandbox";
 import {
   chatReducer,
@@ -19,6 +20,7 @@ import type { PersistedRunStatus, SendMode } from "./types/chat";
 import "./styles/base.css";
 import "./styles/layout.css";
 import "./styles/components.css";
+import "./styles/files.css";
 
 function App() {
   const [chatState, chatDispatch] = useReducer(chatReducer, initialChatState);
@@ -31,6 +33,13 @@ function App() {
   const sessions = useSessions({
     apiConfigRef,
     chatDispatch,
+  });
+
+  const files = useWorkspaceFiles({
+    config: apiConfig,
+    workspace: sessions.displayedWorkingDirectory,
+    sessionKey: sessions.activeSessionId ?? "draft",
+    enabled: isConfigReady,
   });
 
   const skills = useSkills({
@@ -51,6 +60,14 @@ function App() {
     reloadSessionMessages: sessions.actions.reloadSessionMessages,
     onSkillEvent: skills.handleRuntimeEvent,
   });
+
+  const wasStreaming = useRef(false);
+  useEffect(() => {
+    if (wasStreaming.current && !agentSocket.isStreaming) {
+      files.actions.refresh();
+    }
+    wasStreaming.current = agentSocket.isStreaming;
+  }, [agentSocket.isStreaming, files.actions.refresh]);
 
   const messages = selectMessages(chatState, sessions.activeSessionId);
   const approvals = selectSessionApprovals(chatState, sessions.activeSessionId);
@@ -190,6 +207,8 @@ function App() {
         socketStatus: agentSocket.socketStatus,
       }}
       connectionActions={{ runBridgeCheck }}
+      filesView={files.view}
+      filesActions={files.actions}
       conversationView={{
         messages,
         messagesRef,

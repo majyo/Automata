@@ -43,9 +43,9 @@ export function Topbar({
           className={`icon-button ${isInspectorOpen ? "active" : ""}`}
           type="button"
           onClick={onToggleInspector}
-          aria-label="切换工作区概览"
+          aria-label={isInspectorOpen ? "收起文件面板" : "展开文件面板"}
           aria-pressed={isInspectorOpen}
-          title="工作区概览"
+          title={isInspectorOpen ? "收起文件面板" : "展开文件面板"}
         >
           <PanelRight size={18} />
         </button>

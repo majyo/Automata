@@ -9,6 +9,7 @@ import type {
 } from "../../types/chat";
 import type { PermissionPreset, SessionSummary } from "../../types/session";
 import type { SkillRecord, SkillRuntimeNotice } from "../../types/skills";
+export type { WorkspaceFilesActions, WorkspaceFilesView } from "../../features/files/model";
 
 /**
  * The models `AppShell` renders.
